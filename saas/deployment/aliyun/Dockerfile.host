@@ -168,6 +168,7 @@ RUN printf '%s\n' 'export PATH="/opt/venv/bin:/opt/omnigent-host-cli/.github/ci-
  && /opt/venv/bin/python -B -I -c \
       'import sys; from omnigent import _build_info; assert _build_info.COMMIT_SHA == sys.argv[1]' \
       "${SOURCE_REVISION}" \
+ && /opt/venv/bin/python -B -I -m omnigent.harnesses.codex_native.executor_artifact \
  && node -e 'const v=process.versions.node.split(".").map(Number);if(v[0]<22||(v[0]===22&&v[1]<13))process.exit(1)' \
  && mkdir -p /tmp/omnigent-host-readiness \
  && HOME=/tmp/omnigent-host-readiness \

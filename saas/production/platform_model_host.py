@@ -18,7 +18,9 @@ from omnigent.host.frames import HarnessAvailability
 from omnigent.host.identity import HostIdentity
 from omnigent.host.runner_zygote import ZygoteRunnerProc
 from omnigent.onboarding.provider_config import default_provider_for_harness, load_config
+from omnigent.runner.identity import RUNNER_ID_ENV_VAR
 from omnigent.runner.policy import REQUIRED_START_SANDBOX_ENV
+from omnigent.runner.session_channels import SESSION_MODEL_CHANNEL_ENV
 from saas.production.platform_model_relay import PlatformModelRelay, validated_model_gateway_url
 from saas.runner_adapter.platform_model_gateway import (
     DEFAULT_PLATFORM_MODEL_TOKEN_TTL_SECONDS,
@@ -113,7 +115,14 @@ class PlatformModelHostProcess(HostProcess):
             session_id = UUID(env[PRIMARY_SESSION_ID_ENV_VAR])
         except (KeyError, ValueError):
             raise OSError("Platform model Runner requires a canonical session identity") from None
-        if env.get(PLATFORM_MODEL_CREDENTIAL_ENV) or env.get(PLATFORM_MODEL_RELAY_BASE_URL_ENV):
+        if any(
+            env.get(name)
+            for name in (
+                PLATFORM_MODEL_CREDENTIAL_ENV,
+                PLATFORM_MODEL_RELAY_BASE_URL_ENV,
+                SESSION_MODEL_CHANNEL_ENV,
+            )
+        ):
             raise OSError("Platform model Runner credential is already present")
         relay = PlatformModelRelay(
             authority=self._platform_model_tokens,
@@ -122,10 +131,14 @@ class PlatformModelHostProcess(HostProcess):
             gateway_base_url=self._platform_model_gateway_base,
         )
         try:
+            url, channel = relay.start_session_channel(
+                runner_id=env[RUNNER_ID_ENV_VAR], session_id=env[PRIMARY_SESSION_ID_ENV_VAR]
+            )
             env[REQUIRED_START_SANDBOX_ENV] = "1"
+            env[SESSION_MODEL_CHANNEL_ENV] = channel
             env[PLATFORM_MODEL_RELAY_BASE_URL_ENV] = json.dumps(
                 {
-                    "platform-deepseek": {"openai": relay.start()},
+                    "platform-deepseek": {"openai": url},
                 }
             )
             env[PLATFORM_MODEL_CREDENTIAL_ENV] = relay.capability
@@ -144,6 +157,7 @@ class PlatformModelHostProcess(HostProcess):
             # out of Host-side retained dictionaries and exception formatting.
             env.pop(PLATFORM_MODEL_CREDENTIAL_ENV, None)
             env.pop(PLATFORM_MODEL_RELAY_BASE_URL_ENV, None)
+            env.pop(SESSION_MODEL_CHANNEL_ENV, None)
 
 
 def run_platform_model_host(environ: Mapping[str, str] = os.environ) -> None:

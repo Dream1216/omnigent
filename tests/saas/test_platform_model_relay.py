@@ -4,7 +4,9 @@ import asyncio
 import json
 import subprocess
 import sys
+import tempfile
 import threading
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -12,6 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from omnigent.onboarding.provider_config import _loopback_transport_url
+from omnigent.runner.identity import token_bound_runner_id
+from omnigent.runner.session_channels import SessionRelayChannel
 from saas.production.platform_model_relay import PlatformModelRelay
 from saas.runner_adapter.platform_model_gateway import (
     PlatformModelGatewayTokenAuthority,
@@ -43,6 +47,89 @@ def _success():
 
 def _expired():
     return httpx.Response(401, json={"error": {"code": "platform_model_authentication_expired"}})
+
+
+def test_host_channel_metadata_is_bound_and_revoked_with_private_endpoint():
+    relay, _authority = _relay(lambda request: _success())
+    runner_id = token_bound_runner_id("model-channel-test-binding")
+    _url, raw = relay.start_session_channel(runner_id=runner_id)
+    channel = SessionRelayChannel.from_json(
+        raw, session_id=str(relay.session_id), runner_id=runner_id
+    )
+    root = Path(channel.socket_path).parent
+    try:
+        assert channel.generation == relay.generation
+        with pytest.raises(ValueError, match="identity"):
+            SessionRelayChannel.from_json(raw, session_id=str(uuid4()), runner_id=runner_id)
+        with pytest.raises(ValueError, match="identity"):
+            SessionRelayChannel.from_json(
+                raw,
+                session_id=str(relay.session_id),
+                runner_id=token_bound_runner_id("other-binding"),
+            )
+        with pytest.raises(RuntimeError, match="restarted"):
+            relay.start_session_channel(runner_id=runner_id)
+        Path(channel.socket_path).unlink()
+        Path(channel.socket_path).write_text("replacement")
+        with pytest.raises(ValueError, match="endpoint changed"):
+            channel.verify(session_id=channel.session_id, runner_id=runner_id)
+    finally:
+        relay.close()
+    assert (root / "model.sock").read_text() == "replacement"
+    (root / "model.sock").unlink()
+    root.rmdir()
+
+
+@pytest.mark.parametrize("replace_socket", [False, True])
+def test_private_model_socket_preserves_auth_and_owns_only_its_inode(replace_socket):
+    relay, authority = _relay(lambda request: _success())
+    # Keep Unix socket paths below the platform limit; pytest roots can exceed it.
+    with tempfile.TemporaryDirectory(prefix="omni-relay-", dir="/tmp") as directory:
+        path = Path(directory).resolve() / "model.sock"
+        endpoint = relay.start(private_socket_path=path)
+        try:
+            assert path.stat().st_mode & 0o777 == 0o600
+            with httpx.Client(
+                transport=httpx.HTTPTransport(uds=str(path)), base_url="http://relay"
+            ) as client:
+                assert client.post("/v1/responses", json={}).status_code == 403
+                response = client.post(
+                    "/v1/responses",
+                    headers={"Authorization": f"Bearer {relay.capability}"},
+                    json={"model": "allowed-model"},
+                )
+                assert response.status_code == 200
+                assert response.content == b'data: {"done":true}\n\n'
+            claims = authority.validate(relay._last_token, now=1000)
+            assert claims.session_id == relay.session_id
+            assert endpoint.startswith("http://127.0.0.1:")
+            if replace_socket:
+                path.unlink()
+                path.write_text("new owner")
+        finally:
+            relay.close()
+        if replace_socket:
+            assert path.read_text() == "new owner"
+        else:
+            assert not path.exists()
+        with pytest.raises(RuntimeError, match="cannot be restarted"):
+            relay.start(private_socket_path=path)
+
+
+@pytest.mark.parametrize("invalid", ["public_parent", "existing_path"])
+def test_private_model_socket_rejects_unowned_scope_without_deleting_files(invalid):
+    relay, _ = _relay(lambda request: _success())
+    with tempfile.TemporaryDirectory(prefix="omni-relay-", dir="/tmp") as directory:
+        parent = Path(directory).resolve()
+        path = parent / "model.sock"
+        if invalid == "public_parent":
+            parent.chmod(0o755)
+        else:
+            path.write_text("preserve")
+        with pytest.raises(OSError):
+            relay.start(private_socket_path=path)
+        if invalid == "existing_path":
+            assert path.read_text() == "preserve"
 
 
 def test_default_token_lifetime_is_eight_hours_and_expiry_is_specific():

@@ -32,6 +32,7 @@ from omnigent.models.model_fallbacks import CODEX_DEFAULT_MODEL
 from omnigent.util.json_types import JsonObject as _JsonObject
 
 if TYPE_CHECKING:
+    from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
     from omnigent.onboarding.provider_config import ProviderEntry
     from omnigent.spec.types import AgentSpec
 
@@ -2219,9 +2220,8 @@ class CodexNativeAppServer:
         :meth:`start`: ``None`` when the tool-call policy hook is active
         (registered + trusted), or a human-readable reason string when it
         is NOT enforced for this session — codex too old, or the trust
-        handshake failed. Hook problems are non-fatal (fail-open): the
-        session still starts and this reason is surfaced as a web-UI
-        notice rather than blocking session creation. Not a constructor
+        handshake failed. Standalone hook problems surface a notice;
+        required policy hooks instead fail startup. Not a constructor
         input — defaults ``None`` until ``start``.
     :param pinned_model: Session-pinned model id written into the
         per-session ``config.toml`` at start, or ``None``. Keeps the
@@ -2245,6 +2245,8 @@ class CodexNativeAppServer:
         trust keeps that interactive screen from stranding a resumed web
         session (see :func:`trust_all_codex_hooks`). Interactive CLI
         sessions leave it disabled so a human reviews their own hooks.
+    :param require_policy_hooks: Fail startup when framework policy hooks cannot
+        be verified. Supplied by the trusted managed execution composition.
     :param policy_notice_pending: One-shot flag: ``True`` once a degrade
         reason is recorded, until the runner's terminal-ensure handler
         surfaces it to Omnigent (which posts a single durable banner). Prevents
@@ -2285,6 +2287,9 @@ class CodexNativeAppServer:
     codex_cli_version: tuple[int, int, int] | None = None
     trust_project: bool = False
     trust_all_hooks: bool = False
+    require_policy_hooks: bool = False
+    required_policy_generation: str | None = None
+    execution: CodexSandboxLaunch | None = None
     router_hooks_registered: bool = False
     reconcile_process_registry: bool = True
     config_profile: str | None = None
@@ -2315,22 +2320,38 @@ class CodexNativeAppServer:
         proc_env = codex_app_server_diagnostic_env(
             {**self.env, "CODEX_HOME": str(self.codex_home)}
         )
+        host_cwd = str(self.cwd)
         self.process_owner_lock = acquire_codex_native_process_owner_lock()
         try:
+            if self.execution is not None:
+                if (
+                    self.session_id != self.execution.session_id
+                    or not self.require_policy_hooks
+                    or self.required_policy_generation != self.execution.model_channel.generation
+                ):
+                    raise ValueError("Codex execution and required policy identities differ")
+                if resolved_listen != f"unix://{self.socket_path}":
+                    raise ValueError("Managed Codex requires its private Unix control transport")
+                executable, proc_env, host_cwd = self.execution.prepare_spawn(executable, proc_env)
+                argv = [executable, *argv[1:]]
             self.proc = await asyncio.create_subprocess_exec(
                 *argv,
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
                 env=proc_env,
-                cwd=str(self.cwd),
+                cwd=host_cwd,
                 executable=executable,
                 **_proc.spawn_kwargs(),
             )
+            _proc.remember_process_group(self.proc)
+            _proc.refresh_process_tree(self.proc)
         except BaseException:
             if self.process_owner_lock is not None:
                 self.process_owner_lock.close()
                 self.process_owner_lock = None
+            if self.execution is not None:
+                self.execution.close()
             raise
         if self.process_owner_lock is not None:
             register_codex_native_process(
@@ -2382,6 +2403,8 @@ class CodexNativeAppServer:
         # silently disables enforcement — a genuine trust failure is then
         # caught below.
         codex_version = await _codex_cli_version(self.codex_path)
+        if self.execution is not None and codex_version != (0, 142, 0):
+            raise RuntimeError("Managed native compatibility requires the qualified Codex 0.142.0")
         self.codex_cli_version = codex_version
         policy_hooks_supported = (
             codex_version is None or codex_version >= _MIN_POLICY_HOOK_CODEX_VERSION
@@ -2404,12 +2427,18 @@ class CodexNativeAppServer:
         self.router_hooks_registered = router_bridge_dir is not None and policy_hooks_supported
         routed_spawns = router_bridge_dir is not None
         minimal_config = codex_minimal_config_requested()
+        runtime = self.execution.runtime if self.execution is not None else None
+        if runtime is not None and self.config_profile is not None:
+            raise ValueError("Managed native sessions require the selected Session provider")
+        policy_bridge = runtime.bridge if runtime is not None else self.bridge_dir
         mcp_servers = read_codex_mcp_servers(
             config_source,
             self.config_profile,
             codex_version=codex_version,
             minimal_config=minimal_config,
         )
+        if runtime is not None and mcp_servers:
+            raise ValueError("Managed native MCP tools must use the approved Session relay")
         model_migration_target: str | None = None
         catalog: object = self.model_catalog_rows
         if self.trust_project and self.pinned_model:
@@ -2436,15 +2465,18 @@ class CodexNativeAppServer:
             inject_hooks=self.router_hooks_registered,
             extend_model_catalog=codex_extended_catalog_requested(self.env),
             supported_efforts=CODEX_NATIVE_EFFORTS,
-            minimal_config=minimal_config,
+            minimal_config=True if runtime is not None else minimal_config,
+            include_credentials=runtime is None,
         )
-        compose_profile_instructions = _materialize_codex_profile_for_start(
-            self.codex_home,
-            config_source,
-            self.config_profile,
-            codex_version=codex_version,
-            agent_instructions=self.developer_instructions,
-        )
+        compose_profile_instructions = False
+        if runtime is None:
+            compose_profile_instructions = _materialize_codex_profile_for_start(
+                self.codex_home,
+                config_source,
+                self.config_profile,
+                codex_version=codex_version,
+                agent_instructions=self.developer_instructions,
+            )
         if self.trust_project:
             _trust_codex_project(self.codex_home, self.cwd)
         _add_codex_writable_roots(self.codex_home, self.writable_roots)
@@ -2453,7 +2485,7 @@ class CodexNativeAppServer:
         # by `codex app-server`, so we write directly to the file.
         _inject_mcp_server_config(
             self.codex_home,
-            self.bridge_dir,
+            policy_bridge,
             self.python_executable,
             mcp_servers=mcp_servers,
             routed_spawns=routed_spawns,
@@ -2493,20 +2525,25 @@ class CodexNativeAppServer:
             # needs go in the bridge dir's policy_hook.json; without
             # ap_server_url the hook is still registered + trusted but
             # no-ops.
-            _write_codex_policy_hooks_file(
-                self.codex_home,
-                self.bridge_dir,
-                self.python_executable,
-                router_bridge_dir=router_bridge_dir,
-                router_session_id=codex_router_session_id(self.env),
-                user_hooks_source=config_source / _CODEX_HOOKS_FILE,
-                # The runner only advertises a route-turn endpoint for a
-                # session that launched with Smart Routing on, so its presence
-                # is the switch for the first-message routing hook. Same
-                # rendezvous-as-switch shape as the subagent router above.
-                turn_routing=_turn_router_advertised(self.bridge_dir),
-            )
-            if self.ap_server_url:
+            if runtime is None:
+                _write_codex_policy_hooks_file(
+                    self.codex_home,
+                    self.bridge_dir,
+                    self.python_executable,
+                    router_bridge_dir=router_bridge_dir,
+                    router_session_id=codex_router_session_id(self.env),
+                    user_hooks_source=config_source / _CODEX_HOOKS_FILE,
+                    # The runner only advertises a route-turn endpoint for a
+                    # session that launched with Smart Routing on, so its presence
+                    # is the switch for the first-message routing hook. Same
+                    # rendezvous-as-switch shape as the subagent router above.
+                    turn_routing=_turn_router_advertised(self.bridge_dir),
+                    required_session_id=self.session_id
+                    if self.required_policy_generation
+                    else None,
+                    required_generation=self.required_policy_generation,
+                )
+            if self.ap_server_url and runtime is None:
                 write_policy_hook_config(
                     self.bridge_dir,
                     ap_server_url=self.ap_server_url,
@@ -2574,6 +2611,7 @@ class CodexNativeAppServer:
                 except CodexAppServerSilentStartTimeout as second:
                     raise RuntimeError(str(second)) from second
             try:
+                _proc.refresh_process_tree(self.proc)
                 # Standalone CLI launches may have no shared catalog snapshot.
                 # Correct their copied defaults before a TUI creates its thread.
                 if (
@@ -2620,7 +2658,11 @@ class CodexNativeAppServer:
                 if self.policy_hook_disabled_reason is None:
                     try:
                         await self._trust_policy_hooks(client=startup_client)
-                    except Exception as exc:  # noqa: BLE001 - degrade, never block startup
+                    except Exception as exc:
+                        if self.require_policy_hooks:
+                            raise RuntimeError(
+                                "Required Codex policy hooks could not be trusted"
+                            ) from exc
                         self._disable_policy_hook(f"Codex policy hook could not be trusted: {exc}")
             finally:
                 try:
@@ -2681,20 +2723,52 @@ class CodexNativeAppServer:
         """
         owns_client = client is None
         if client is None:
-            if self.listen_url and self.listen_url.startswith("ws://"):
-                client = CodexAppServerClient(
-                    ws_url=self.listen_url,
-                    client_name="omnigent-policy-trust",
-                )
-            else:
-                client = CodexAppServerClient(
-                    self.socket_path,
-                    client_name="omnigent-policy-trust",
-                )
+            client = client_for_transport(
+                self.listen_url or str(self.socket_path), client_name="omnigent-policy-trust"
+            )
         try:
             if owns_client:
                 await client.connect()
-            await trust_native_policy_hooks(client, cwd=str(self.cwd))
+            required_hooks = None
+            if self.require_policy_hooks:
+                if self.execution is not None and self.execution.runtime is not None:
+                    required_hooks = self.execution.runtime.required_hooks
+                else:
+                    settings = _codex_policy_hooks_settings(
+                        self.bridge_dir,
+                        self.python_executable,
+                        required_session_id=self.session_id
+                        if self.required_policy_generation
+                        else None,
+                        required_generation=self.required_policy_generation,
+                    )
+                    events = _string_object_dict(settings.get("hooks")) or {}
+                    required_hooks = {}
+                    for event, event_key in (
+                        ("PreToolUse", "pre_tool_use"),
+                        ("PostToolUse", "post_tool_use"),
+                        ("UserPromptSubmit", "user_prompt_submit"),
+                    ):
+                        groups = _object_list(events.get(event)) or []
+                        group = _string_object_dict(groups[0]) if groups else None
+                        hooks = _object_list(group.get("hooks")) if group else None
+                        if not hooks:
+                            raise RuntimeError(
+                                "Required Codex policy event has no generated hooks"
+                            )
+                        for index, raw_hook in enumerate(hooks):
+                            hook = _string_object_dict(raw_hook) or {}
+                            command = hook.get("command")
+                            if not isinstance(command, str) or not command:
+                                raise RuntimeError("Required Codex policy hook command is invalid")
+                            key = f"{self.codex_home / _CODEX_HOOKS_FILE}:{event_key}:0:{index}"
+                            required_hooks[key] = command
+            await trust_native_policy_hooks(
+                client,
+                cwd=str(self.cwd),
+                required_hooks=required_hooks,
+                require_managed=self.execution is not None and self.execution.runtime is not None,
+            )
             # Routing hooks live in the same generated file but under a
             # different module, so they need their own trust pass. Best
             # effort: a routing-trust failure must not disable the policy
@@ -2778,6 +2852,8 @@ class CodexNativeAppServer:
             policies."``.
         :returns: None.
         """
+        if self.require_policy_hooks:
+            raise RuntimeError(f"Required Codex policy hooks are unavailable: {reason}")
         self.policy_hook_disabled_reason = reason
         self.policy_notice_pending = True
         self._warn_policy_hook_disabled()
@@ -2808,13 +2884,15 @@ class CodexNativeAppServer:
 
         :returns: None.
         """
-        if self.proc is not None and self.proc.returncode is None:
+        if self.proc is not None:
+            _proc.refresh_process_tree(self.proc)
             _terminate_process_tree(self.proc)
-            try:
-                await asyncio.wait_for(self.proc.wait(), timeout=5.0)
-            except TimeoutError:
-                _kill_process_tree(self.proc)
-                await self.proc.wait()
+            if self.proc.returncode is None:
+                try:
+                    await asyncio.wait_for(self.proc.wait(), timeout=5.0)
+                except TimeoutError:
+                    _kill_process_tree(self.proc)
+                    await self.proc.wait()
         if self.process_registry_tag is not None:
             unregister_codex_native_process(self.process_registry_tag)
         if self.process_owner_lock is not None:
@@ -2831,8 +2909,12 @@ class CodexNativeAppServer:
                     with contextlib.suppress(asyncio.CancelledError, Exception):
                         await self.stderr_task
             finally:
+                if self.proc is not None:
+                    _kill_process_tree(self.proc)
                 diagnostics, self._stderr_diagnostics = self._stderr_diagnostics, None
                 self.proc = None
+                if self.execution is not None:
+                    self.execution.close()
                 self.stderr_task = None
                 self.process_registry_tag = None
                 self.process_owner_lock = None
@@ -2871,16 +2953,9 @@ class CodexNativeAppServer:
                 raise RuntimeError(f"Codex app-server exited early: {detail}")
             client: CodexAppServerClient | None = None
             try:
-                if self.listen_url and self.listen_url.startswith("ws://"):
-                    client = CodexAppServerClient(
-                        ws_url=self.listen_url,
-                        client_name="omnigent-probe",
-                    )
-                else:
-                    client = CodexAppServerClient(
-                        self.socket_path,
-                        client_name="omnigent-probe",
-                    )
+                client = client_for_transport(
+                    self.listen_url or str(self.socket_path), client_name="omnigent-probe"
+                )
                 async with asyncio.timeout_at(deadline):
                     await client.connect()
                 return client
@@ -2986,7 +3061,13 @@ class CodexNativeAppServer:
                 diagnostics.finish()
 
 
-def _codex_policy_hook_command(bridge_dir: Path, python_executable: str | None) -> str:
+def _codex_policy_hook_command(
+    bridge_dir: Path,
+    python_executable: str | None,
+    *,
+    required_session_id: str | None = None,
+    required_generation: str | None = None,
+) -> str:
     """
     Build the shell command codex runs for the policy hook.
 
@@ -3009,6 +3090,18 @@ def _codex_policy_hook_command(bridge_dir: Path, python_executable: str | None) 
         /home/u/.omnigent/codex-native/abc"``.
     """
     python = python_executable or sys.executable
+    if (required_session_id is None) != (required_generation is None):
+        raise ValueError("Required native hook identity must be complete")
+    required_args = (
+        []
+        if required_session_id is None
+        else [
+            "--required-session-id",
+            required_session_id,
+            "--required-generation",
+            required_generation or "",
+        ]
+    )
     command = shlex.join(
         [
             python,
@@ -3018,9 +3111,14 @@ def _codex_policy_hook_command(bridge_dir: Path, python_executable: str | None) 
             "evaluate-policy",
             "--bridge-dir",
             str(bridge_dir),
+            *required_args,
         ]
     )
-    return policy_allow_cache.guarded_hook_command(bridge_dir, command)
+    return (
+        command
+        if required_session_id is not None
+        else policy_allow_cache.guarded_hook_command(bridge_dir, command)
+    )
 
 
 def _turn_router_advertised(bridge_dir: Path) -> bool:
@@ -3042,6 +3140,8 @@ def _codex_policy_hooks_settings(
     python_executable: str | None,
     *,
     turn_routing: bool = False,
+    required_session_id: str | None = None,
+    required_generation: str | None = None,
 ) -> _JsonObject:
     """
     Build the ``hooks.json`` payload registering the policy hook.
@@ -3065,19 +3165,30 @@ def _codex_policy_hooks_settings(
     """
     hook: _JsonObject = {
         "type": "command",
-        "command": _codex_policy_hook_command(bridge_dir, python_executable),
+        "command": _codex_policy_hook_command(
+            bridge_dir,
+            python_executable,
+            required_session_id=required_session_id,
+            required_generation=required_generation,
+        ),
         "timeout": _POLICY_HOOK_TIMEOUT_SECONDS,
     }
     from omnigent.native.tool_observer_hook import hook_settings
 
     observer = hook_settings(bridge_dir, python_executable or sys.executable, _POLICY_HOOK_MODULE)
-    prompt_submit: list[_JsonObject] = [hook]
+
+    def for_event(event: str) -> _JsonObject:
+        if required_session_id is None:
+            return hook
+        return {**hook, "command": f"{hook['command']} --required-hook-event {event}"}
+
+    prompt_submit: list[_JsonObject] = [for_event("UserPromptSubmit")]
     if turn_routing:
         prompt_submit.append(_codex_route_turn_hook(bridge_dir, python_executable))
     return {
         "hooks": {
-            "PreToolUse": [{"hooks": [hook]}],
-            "PostToolUse": [{"hooks": [hook, observer]}],
+            "PreToolUse": [{"hooks": [for_event("PreToolUse")]}],
+            "PostToolUse": [{"hooks": [for_event("PostToolUse"), observer]}],
             "UserPromptSubmit": [{"hooks": prompt_submit}],
         }
     }
@@ -3131,6 +3242,8 @@ def _write_codex_policy_hooks_file(
     router_session_id: str | None = None,
     user_hooks_source: Path | None = None,
     turn_routing: bool = False,
+    required_session_id: str | None = None,
+    required_generation: str | None = None,
 ) -> None:
     """
     Write ``hooks.json`` into the private CODEX_HOME (atomically).
@@ -3156,7 +3269,13 @@ def _write_codex_policy_hooks_file(
     :returns: None.
     """
     payloads: list[Mapping[str, object]] = [
-        _codex_policy_hooks_settings(bridge_dir, python_executable, turn_routing=turn_routing)
+        _codex_policy_hooks_settings(
+            bridge_dir,
+            python_executable,
+            turn_routing=turn_routing,
+            required_session_id=required_session_id,
+            required_generation=required_generation,
+        )
     ]
     if router_bridge_dir is not None:
         payloads.append(
@@ -3436,7 +3555,13 @@ async def trust_all_codex_hooks(request: CodexRequestFn, *, cwd: str) -> list[st
     return []
 
 
-async def trust_native_policy_hooks(client: CodexAppServerClient, *, cwd: str) -> None:
+async def trust_native_policy_hooks(
+    client: CodexAppServerClient,
+    *,
+    cwd: str,
+    required_hooks: Mapping[str, str] | None = None,
+    require_managed: bool = False,
+) -> None:
     """
     Trust the Omnigent policy hook so codex actually runs it.
 
@@ -3449,6 +3574,8 @@ async def trust_native_policy_hooks(client: CodexAppServerClient, *, cwd: str) -
     :param client: A connected Codex app-server client.
     :param cwd: The session cwd the hooks are scoped to, e.g.
         ``"/home/user/repo"``.
+    :param required_hooks: Trusted framework hook keys and exact commands.
+        None retains discovery for standalone callers.
     :returns: None.
     :raises RuntimeError: If no Omnigent hook is discovered (it was
         not registered or not loaded) or if a hook remains untrusted
@@ -3463,14 +3590,43 @@ async def trust_native_policy_hooks(client: CodexAppServerClient, *, cwd: str) -
             "tool-call policy enforcement would silently not run. "
             f"{_hooks_list_diagnostics(listed, cwd)}."
         )
+    if required_hooks is not None:
+        if not required_hooks:
+            raise RuntimeError("Required Codex policy hook set is empty")
+        by_key = {key: h for h in ours if isinstance(key := h.get("key"), str)}
+        for key, command in required_hooks.items():
+            hook = by_key.get(key)
+            if (
+                hook is None
+                or hook.get("command") != command
+                or hook.get("enabled") is not True
+                or (require_managed and hook.get("isManaged") is not True)
+                or not isinstance(hook.get("currentHash"), str)
+                or not hook["currentHash"]
+                or sum(h.get("key") == key for h in ours) != 1
+            ):
+                raise RuntimeError("Required Codex policy hook identity or event is missing")
+        ours = [by_key[key] for key in required_hooks]
     untrusted = [h for h in ours if h.get("trustStatus") not in _TRUSTED_HOOK_STATUSES]
     if not untrusted:
         return
+    identities = {h.get("key"): (h.get("command"), h.get("currentHash")) for h in ours}
     await _persist_hook_trust(client.request, untrusted)
     relisted = await client.request("hooks/list", {"cwds": [cwd]})
+    after = _our_policy_hooks_from_list(relisted, cwd)
+    for key, identity in identities.items():
+        matches = [h for h in after if h.get("key") == key]
+        if (
+            len(matches) != 1
+            or (matches[0].get("command"), matches[0].get("currentHash")) != identity
+            or (required_hooks is not None and matches[0].get("enabled") is not True)
+            or (require_managed and matches[0].get("isManaged") is not True)
+        ):
+            raise RuntimeError("Codex policy hooks changed or disappeared during trust")
     still_untrusted = [
         h
-        for h in _our_policy_hooks_from_list(relisted, cwd)
+        for h in after
+        if required_hooks is None or str(h.get("key")) in required_hooks
         if h.get("trustStatus") not in _TRUSTED_HOOK_STATUSES
     ]
     if still_untrusted:
@@ -3776,6 +3932,9 @@ def build_codex_native_server(
     bypass_sandbox: bool = False,
     trust_project: bool = False,
     trust_all_hooks: bool = False,
+    require_policy_hooks: bool = False,
+    required_policy_generation: str | None = None,
+    execution: CodexSandboxLaunch | None = None,
     reasoning_effort: str | None = None,
     model_catalog_rows: list[_JsonObject] | None = None,
     reconcile_process_registry: bool = True,
@@ -3838,6 +3997,8 @@ def build_codex_native_server(
     :param terminal_launch_args: Original CLI options used to select the Codex
         config-file profile (distinct from the Databricks routing profile)
         and the ``--add-dir`` roots the app-server owns.
+    :param require_policy_hooks: Trusted managed composition requires complete,
+        enabled framework policy hooks instead of degraded startup.
     :returns: Configured app-server process wrapper.
     :raises ImportError: If no Codex CLI is available.
     :raises OSError: If Databricks routing was requested but no
@@ -3909,6 +4070,9 @@ def build_codex_native_server(
         model_catalog_rows=model_catalog_rows,
         trust_project=trust_project,
         trust_all_hooks=trust_all_hooks,
+        require_policy_hooks=require_policy_hooks,
+        required_policy_generation=required_policy_generation,
+        execution=execution,
         reconcile_process_registry=reconcile_process_registry,
         writable_roots=tuple(codex_workspace_roots(terminal_launch_args, cwd)[1]),
         app_server_command=_configured_app_server_command(),
@@ -4686,14 +4850,9 @@ def client_for_transport(
 
     The native Codex app-server is reachable over either a loopback
     WebSocket (``"ws://IP:PORT"`` / ``"wss://..."``) or a Unix socket
-    path (legacy ``"/path/app-server.sock"``). Both the host-spawned
-    runner and the local CLI now listen on ``ws://`` — the only
-    transport Codex CLI ``app-server`` accepts since it dropped
-    ``unix://`` support — and persist whichever was used as the bridge
-    state's ``socket_path``. Every connect site (executor steering /
-    interrupt / run_turn, forwarder, initial turn) routes through this
-    one rule so a ``ws://`` transport is never mistakenly wrapped in
-    ``Path(...)`` and dialed as a (nonexistent) Unix socket.
+    path (``"/path/app-server.sock"`` or ``"unix:///path/app-server.sock"``).
+    Unix control sockets carry the same WebSocket protocol. Persisted URI
+    prefixes must be removed before passing a filesystem path to the client.
 
     :param transport: App-server transport from bridge state, e.g.
         ``"ws://127.0.0.1:9876"`` or
@@ -4704,6 +4863,10 @@ def client_for_transport(
     """
     if transport.startswith(("ws://", "wss://")):
         return CodexAppServerClient(ws_url=transport, client_name=client_name)
+    if transport.startswith("unix://"):
+        transport = transport.removeprefix("unix://")
+        if not transport:
+            raise ValueError("Codex Unix control transport requires a socket path")
     return CodexAppServerClient(Path(transport), client_name=client_name)
 
 

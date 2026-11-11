@@ -1926,6 +1926,243 @@ def test_required_sandbox_replaces_only_early_read_view_and_cannot_be_mutated(
         reg.bind_required_os_env("other", required)
 
 
+async def test_native_channels_bind_before_environment_and_are_consumed_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socket
+    import tempfile
+    import tomllib
+    from dataclasses import replace
+    from uuid import uuid4
+
+    from omnigent.debug_logging import PRIMARY_SESSION_ID_ENV_VAR
+    from omnigent.harnesses.codex_native import execution as native_execution
+    from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
+    from omnigent.harnesses.codex_native.executor_transport import SessionExecutorEndpoint
+    from omnigent.inner.os_env import CallerProcessOSEnvironment
+    from omnigent.inner.sandbox import SandboxPolicy
+    from omnigent.runner._entry import _consume_session_model_channel
+    from omnigent.runner.identity import token_bound_runner_id
+    from omnigent.runner.session_channels import SESSION_MODEL_CHANNEL_ENV, SessionRelayChannel
+
+    session_id, runner_id = str(uuid4()), token_bound_runner_id("native-channel-test-binding")
+    with tempfile.TemporaryDirectory(prefix="omni-bind-", dir="/tmp") as directory:
+        root = Path(directory).resolve()
+        with (
+            socket.socket(socket.AF_UNIX) as model,
+            socket.socket(socket.AF_UNIX) as policy,
+            socket.socket(socket.AF_UNIX) as executor_socket,
+        ):
+            for peer, name in (
+                (model, "model.sock"),
+                (policy, "policy.sock"),
+                (executor_socket, "executor.sock"),
+            ):
+                peer.bind(str(root / name))
+                (root / name).chmod(0o600)
+            identity = (root / "model.sock").stat()
+            channel = SessionRelayChannel(
+                session_id,
+                runner_id,
+                "a" * 32,
+                str(root / "model.sock"),
+                31401,
+                identity.st_dev,
+                identity.st_ino,
+            )
+            monkeypatch.setenv(PRIMARY_SESSION_ID_ENV_VAR, session_id)
+            monkeypatch.setenv(SESSION_MODEL_CHANNEL_ENV, channel.to_json())
+            assert _consume_session_model_channel(runner_id) == channel
+            assert SESSION_MODEL_CHANNEL_ENV not in os.environ
+            assert _consume_session_model_channel(runner_id) is None
+            monkeypatch.setenv(SESSION_MODEL_CHANNEL_ENV, channel.to_json())
+            with pytest.raises(ValueError, match="identity"):
+                _consume_session_model_channel(token_bound_runner_id("other-binding"))
+            assert SESSION_MODEL_CHANNEL_ENV not in os.environ
+
+            registry = SessionResourceRegistry(
+                runner_workspace=tmp_path, session_model_channel=channel
+            )
+            pending = SessionResourceRegistry(
+                runner_workspace=tmp_path, session_model_channel=channel
+            )
+            pending.bind_required_os_env(
+                session_id,
+                OSEnvSpec(
+                    fork=False,
+                    sandbox=OSEnvSandboxSpec(
+                        type="linux_bwrap", allow_network=False, write_paths=[str(tmp_path)]
+                    ),
+                ),
+                require_native_channels=True,
+            )
+            with pytest.raises(ValueError, match="not ready"):
+                pending.resolve_environment(session_id, DEFAULT_ENVIRONMENT_ID)
+            assert not pending.has_primary_env(session_id)
+            with pytest.raises(ValueError, match="not ready"):
+                registry.native_channels_for(session_id)
+            assert not registry.owns_native_policy_channel(session_id, 31402)
+            registry.bind_native_policy_channel(session_id, port=31402, path=root / "policy.sock")
+            registry.bind_native_policy_channel(session_id, port=31402, path=root / "policy.sock")
+            assert registry.native_channels_for(session_id)[1].generation == channel.generation
+            assert registry.owns_native_policy_channel(session_id, 31402)
+            assert not registry.owns_native_policy_channel(session_id, 31403)
+            bridge = tmp_path / "original-bridge"
+            bridge.mkdir()
+            (bridge / "policy_hook.json").write_text('{"server_auth":"must-not-be-projected"}')
+            (bridge / "tool_relay.json").write_text(
+                json.dumps(
+                    {
+                        "url": "http://127.0.0.1:31402",
+                        "token": "local-capability",
+                        "session_id": session_id,
+                        "generation": channel.generation,
+                        "socket_path": str(root / "policy.sock"),
+                        "tools": [],
+                        "extra_sensitive": "do-not-copy",
+                    }
+                )
+            )
+            administrator = tmp_path / "administrator-requirements.toml"
+            administrator.write_text(
+                'allowed_sandbox_modes = ["read-only", "workspace-write", "danger-full-access"]\n'
+                'allowed_approval_policies = ["on-request"]\n'
+                '[features]\npersonality = true\n[hooks]\nmanaged_dir = "/preserved/admin"\n'
+                '[[hooks.PreToolUse]]\n[[hooks.PreToolUse.hooks]]\ntype = "command"\n'
+                'command = "preserve-original-check"\n'
+            )
+            monkeypatch.setattr(native_execution, "SYSTEM_CODEX_REQUIREMENTS", administrator)
+            executor_path = root / "executor.sock"
+            executor_identity = executor_path.stat()
+            endpoint = SessionExecutorEndpoint(
+                session_id,
+                runner_id,
+                channel.generation,
+                executor_path,
+                executor_identity.st_dev,
+                executor_identity.st_ino,
+            )
+            # This case isolates channel/environment composition; normal factory
+            # ownership is exercised by the existing executor-bootstrap case.
+            registry._native_runtime = native_execution.CodexPrivateRuntime.create(
+                channel, registry.native_channels_for(session_id)[1], bridge, executor=endpoint
+            )
+            runtime = registry.native_runtime_for(session_id)
+            projected = json.loads((runtime.bridge / "tool_relay.json").read_text())
+            assert "extra_sensitive" not in projected
+            assert not (runtime.bridge / "policy_hook.json").exists()
+            requirements = tomllib.loads((runtime.root / "requirements.toml").read_text())
+            assert requirements["allowed_approval_policies"] == ["on-request"]
+            assert (
+                requirements["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+                == "preserve-original-check"
+            )
+            assert requirements["features"]["personality"] is True
+            assert requirements["features"]["hooks"] is True
+            assert requirements["features"]["use_legacy_landlock"] is False
+            assert requirements["allowed_sandbox_modes"] == ["read-only", "workspace-write"]
+            assert any(
+                key.startswith("/preserved/admin:pre_tool_use:1:")
+                for key in runtime.required_hooks
+            )
+            with pytest.raises(ValueError, match="identity"):
+                registry.native_channels_for(str(uuid4()))
+            captured: list[SandboxPolicy] = []
+
+            def resolve_sandbox(_spec: OSEnvSpec, _cwd: Path) -> SandboxPolicy:
+                return SandboxPolicy(
+                    "linux_bwrap",
+                    True,
+                    [],
+                    [tmp_path.resolve()],
+                    [],
+                    False,
+                    env_passthrough=["CODEX_HOME", "APPROVED_VALUE"],
+                )
+
+            def create_environment(
+                spec: OSEnvSpec, *, sandbox_policy: SandboxPolicy, additional_read_roots: object
+            ) -> CallerProcessOSEnvironment:
+                del additional_read_roots
+                captured.append(sandbox_policy)
+                assert len(sandbox_policy.session_relay_pairs()) == 2
+                return CallerProcessOSEnvironment(spec, tmp_path, sandbox_policy, "/bin/sh")
+
+            monkeypatch.setattr("omnigent.inner.sandbox.resolve_sandbox", resolve_sandbox)
+            monkeypatch.setattr("omnigent.inner.os_env.create_os_environment", create_environment)
+            required = OSEnvSpec(
+                fork=False,
+                sandbox=OSEnvSandboxSpec(
+                    type="linux_bwrap",
+                    allow_network=False,
+                    write_paths=[str(tmp_path)],
+                    env_passthrough=["CODEX_HOME", "APPROVED_VALUE"],
+                ),
+            )
+            registry.bind_required_os_env(session_id, required)
+            environment = registry.resolve_environment(session_id, DEFAULT_ENVIRONMENT_ID)
+            try:
+                assert isinstance(environment, CallerProcessOSEnvironment)
+                assert environment.sandbox is captured[0]
+                assert environment._helper.sandbox is captured[0]
+                model_channel, policy_channel = registry.native_channels_for(session_id)
+                required_spec = registry.required_os_env(session_id)
+                assert required_spec is not None
+                launch = CodexSandboxLaunch(
+                    session_id, required_spec, environment, model_channel, policy_channel
+                )
+                with pytest.raises(ValueError, match="server's network-isolated"):
+                    CodexSandboxLaunch(
+                        session_id,
+                        replace(required_spec, sandbox=OSEnvSandboxSpec(type="none")),
+                        environment,
+                        model_channel,
+                        policy_channel,
+                    )
+                with pytest.raises(ValueError, match="role or generation"):
+                    CodexSandboxLaunch(
+                        session_id,
+                        required_spec,
+                        environment,
+                        model_channel,
+                        replace(policy_channel, generation="b" * 32),
+                    )
+                with pytest.raises(ValueError, match="CODEX_HOME"):
+                    launch.prepare_spawn(sys.executable, {})
+                launcher, child_env, host_cwd = launch.prepare_spawn(
+                    sys.executable,
+                    {
+                        "CODEX_HOME": str(tmp_path.resolve() / "codex-home"),
+                        "APPROVED_VALUE": "allowed",
+                        "AWS_SECRET_ACCESS_KEY": "do-not-leak",
+                        "OMNIGENT_RUNNER_TUNNEL_BINDING_TOKEN": "runner-control-secret",
+                    },
+                )
+                assert child_env["APPROVED_VALUE"] == "allowed"
+                assert "AWS_SECRET_ACCESS_KEY" not in child_env
+                assert "OMNIGENT_RUNNER_TUNNEL_BINDING_TOKEN" not in child_env
+                assert host_cwd == str(tmp_path)
+                assert Path(launcher).exists()
+                launch.close()
+                assert not Path(launcher).exists()
+                assert model.fileno() >= 0 and policy.fileno() >= 0
+                with pytest.raises(ValueError, match="replace a live"):
+                    registry.bind_native_policy_channel(
+                        session_id, port=31403, path=root / "policy.sock"
+                    )
+            finally:
+                history = runtime.home / "history-sentinel"
+                history.write_text("preserve session history")
+                await registry.cleanup_session(session_id)
+                assert not runtime.bridge.exists()
+                assert not runtime.control.parent.exists()
+                assert not (runtime.root / "requirements.toml").exists()
+                assert history.read_text() == "preserve session history"
+                runtime.close()
+                with pytest.raises(ValueError, match="not ready"):
+                    registry.native_runtime_for(session_id)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["same", "unbound", "different", "occupied"])
 async def test_managed_transfer_preserves_environment_and_requires_target_scope(

@@ -24,25 +24,32 @@
   ],
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 230,
-    "max_upstream_net_added_loc": 7090,
+    "max_direct_upstream_files": 261,
+    "max_upstream_net_added_loc": 12528,
     "min_isolated_custom_code_ratio": 0.85
   },
   "controller_budget_scope": {
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "b84af0a380ced87fb97b171f01d41a7e09ef92f29d7f77bf1761690dfd0fadbc",
+    "current_controller_baseline_sha256": "e08147f8acab0d49844e0803aca124bb226c866bda3f9e954c50eed55507588b",
     "frozen_product_file_ceiling": 226,
-    "current_controller_file_ceiling": 230,
+    "current_controller_file_ceiling": 261,
     "reason": "Retain the three existing asynchronous test observation boundaries and the reviewed Host readiness change. The measured controller budget increases by one file and 249 net lines.",
-    "authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
+    "authority": "Dream1216 approved exact ordinary M candidate 630d1e9fb80bb8fb72e76299687131516d560e52265552e963e5389c49aaf752 at 261 files and 12528 net lines, plus the fixed orchestration source SHA; authority receipt SHA256 7eccc6a1d1b7ca911fefe925a7172252380ee504e1fb8fbd71c77cb428f7c480. Existing other gates remain.",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
       "tests/server/integration/test_kiro_permission_delivery.py",
       "tests/server/integration/test_host_tunnel_route.py",
       "tests/server/integration/test_sessions_archive.py"
-    ]
+    ],
+    "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
+  },
+  "ordinary_m_native_0142_finite_approval": {
+    "candidate_manifest_sha256": "630d1e9fb80bb8fb72e76299687131516d560e52265552e963e5389c49aaf752",
+    "decision": "approved",
+    "approver": "Dream1216",
+    "authority_record_sha256": "7eccc6a1d1b7ca911fefe925a7172252380ee504e1fb8fbd71c77cb428f7c480"
   }
 }

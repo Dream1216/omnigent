@@ -1577,3 +1577,4217 @@ index efaf6393eaf..07032fd69e1 100644
 +                        "queued": True,
 +                        "pending_id": pending_inputs.make_pending_id(session_id, saved.id),
 +                    }
+diff --git a/omnigent/harnesses/claude_native/bridge.py b/omnigent/harnesses/claude_native/bridge.py
+--- a/omnigent/harnesses/claude_native/bridge.py
++++ b/omnigent/harnesses/claude_native/bridge.py
+@@ -1373,6 +1373,11 @@
+         identifies this relay's advertisement on close.
+     """
+ 
++    @property
++    def port(self) -> int:
++        """Existing listener port reused by the isolated private-channel relay."""
++        return _http_server_host_port(self._httpd)[1]
++
+     def __init__(
+         self,
+         *,
+@@ -1398,6 +1403,67 @@
+         self._advertised_url = advertised_url
+         self._relay_info = relay_info
+         self._tool_executor = tool_executor
++        self._private_httpd: socketserver.ThreadingUnixStreamServer | None = None
++        self._private_socket_path: Path | None = None
++        self._private_socket_identity: tuple[int, int] | None = None
++        self._closed = False
++
++    def start_private_socket(self, path: Path, *, generation: str | None = None) -> None:
++        """Expose the existing token/session-bound handler on an owned private socket."""
++        if self._closed:
++            raise RuntimeError("Native relay is closed")
++        if generation is not None and (
++            len(generation) != 32 or any(c not in "0123456789abcdef" for c in generation)
++        ):
++            raise ValueError("Invalid native relay generation")
++        if self._private_httpd is not None:
++            if path != self._private_socket_path or (
++                generation is not None and self._relay_info.get("generation") != generation
++            ):
++                raise RuntimeError("Native relay private transport is already bound")
++            return
++        owner = path.parent.lstat()
++        if (
++            not path.is_absolute()
++            or path.parent.resolve() != path.parent
++            or not stat.S_ISDIR(owner.st_mode)
++            or owner.st_uid != os.getuid()
++            or stat.S_IMODE(owner.st_mode) != 0o700
++            or len(os.fsencode(path)) >= 104
++        ):
++            raise OSError("Native relay socket requires a private owned directory")
++
++        def handle_private_request(
++            request: Any, address: Any, _server: socketserver.BaseServer
++        ) -> socketserver.BaseRequestHandler:
++            """Reuse the original HTTP handler and its owning server configuration."""
++            return self._httpd.RequestHandlerClass(request, address, self._httpd)
++
++        private = socketserver.ThreadingUnixStreamServer(str(path), handle_private_request)
++        identity = path.lstat()
++        self._private_socket_path = path
++        self._private_socket_identity = (identity.st_dev, identity.st_ino)
++        try:
++            path.chmod(0o600)
++            private.daemon_threads = True
++            thread = threading.Thread(
++                target=private.serve_forever, daemon=True, name="native-tool-relay-private"
++            )
++            thread.start()
++        except BaseException:
++            private.server_close()
++            with contextlib.suppress(OSError):
++                current = path.lstat()
++                if (current.st_dev, current.st_ino) == self._private_socket_identity:
++                    path.unlink()
++            raise
++        self._private_httpd = private
++        self._relay_info = {
++            **self._relay_info,
++            "socket_path": str(path),
++            "generation": generation if generation is not None else secrets.token_hex(16),
++        }
++        _write_json_file(self._bridge_dir / _TOOL_RELAY_FILE, self._relay_info)
+ 
+     def update_tools(self, tools: list[_JsonObject], tool_executor: ToolExecutor) -> None:
+         """Refresh tools on the owning event loop without changing cached relay credentials.
+@@ -1430,6 +1496,7 @@
+         :returns: None.
+         """
+         relay_file = self._bridge_dir / _TOOL_RELAY_FILE
++        self._closed = True
+         # A newer relay that overwrote the file advertises a different url
+         # (this relay's socket is still bound, so its port is unique), so the
+         # file is left for that relay to own.
+@@ -1438,6 +1505,14 @@
+                 relay_file.unlink()
+         self._httpd.shutdown()
+         self._httpd.server_close()
++        if self._private_httpd is not None:
++            self._private_httpd.shutdown()
++            self._private_httpd.server_close()
++        if self._private_socket_path is not None:
++            with contextlib.suppress(OSError):
++                current = self._private_socket_path.lstat()
++                if (current.st_dev, current.st_ino) == self._private_socket_identity:
++                    self._private_socket_path.unlink()
+ 
+ 
+ def _ensure_secure_dir(target: Path) -> None:
+@@ -7406,6 +7481,8 @@
+     policy_client: httpx.AsyncClient | None = None,
+     session_id: str | None = None,
+     file_change_observer: Callable[[_JsonObject], Awaitable[None]] | None = None,
++    private_socket_path: Path | None = None,
++    private_socket_generation: str | None = None,
+ ) -> ClaudeNativeToolRelay:
+     """
+     Start the shared relay for native-harness Omnigent tool calls.
+@@ -7479,6 +7556,12 @@
+         daemon=True,
+     )
+     thread.start()
++    if private_socket_path is not None:
++        try:
++            relay.start_private_socket(private_socket_path, generation=private_socket_generation)
++        except BaseException:
++            relay.close()
++            raise
+     return relay
+ 
+ 
+diff --git a/omnigent/harnesses/codex_native/app_server.py b/omnigent/harnesses/codex_native/app_server.py
+--- a/omnigent/harnesses/codex_native/app_server.py
++++ b/omnigent/harnesses/codex_native/app_server.py
+@@ -32,6 +32,7 @@
+ from omnigent.util.json_types import JsonObject as _JsonObject
+ 
+ if TYPE_CHECKING:
++    from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
+     from omnigent.onboarding.provider_config import ProviderEntry
+     from omnigent.spec.types import AgentSpec
+ 
+@@ -2219,9 +2220,8 @@
+         :meth:`start`: ``None`` when the tool-call policy hook is active
+         (registered + trusted), or a human-readable reason string when it
+         is NOT enforced for this session — codex too old, or the trust
+-        handshake failed. Hook problems are non-fatal (fail-open): the
+-        session still starts and this reason is surfaced as a web-UI
+-        notice rather than blocking session creation. Not a constructor
++        handshake failed. Standalone hook problems surface a notice;
++        required policy hooks instead fail startup. Not a constructor
+         input — defaults ``None`` until ``start``.
+     :param pinned_model: Session-pinned model id written into the
+         per-session ``config.toml`` at start, or ``None``. Keeps the
+@@ -2245,6 +2245,8 @@
+         trust keeps that interactive screen from stranding a resumed web
+         session (see :func:`trust_all_codex_hooks`). Interactive CLI
+         sessions leave it disabled so a human reviews their own hooks.
++    :param require_policy_hooks: Fail startup when framework policy hooks cannot
++        be verified. Supplied by the trusted managed execution composition.
+     :param policy_notice_pending: One-shot flag: ``True`` once a degrade
+         reason is recorded, until the runner's terminal-ensure handler
+         surfaces it to Omnigent (which posts a single durable banner). Prevents
+@@ -2285,6 +2287,9 @@
+     codex_cli_version: tuple[int, int, int] | None = None
+     trust_project: bool = False
+     trust_all_hooks: bool = False
++    require_policy_hooks: bool = False
++    required_policy_generation: str | None = None
++    execution: CodexSandboxLaunch | None = None
+     router_hooks_registered: bool = False
+     reconcile_process_registry: bool = True
+     config_profile: str | None = None
+@@ -2315,22 +2320,38 @@
+         proc_env = codex_app_server_diagnostic_env(
+             {**self.env, "CODEX_HOME": str(self.codex_home)}
+         )
++        host_cwd = str(self.cwd)
+         self.process_owner_lock = acquire_codex_native_process_owner_lock()
+         try:
++            if self.execution is not None:
++                if (
++                    self.session_id != self.execution.session_id
++                    or not self.require_policy_hooks
++                    or self.required_policy_generation != self.execution.model_channel.generation
++                ):
++                    raise ValueError("Codex execution and required policy identities differ")
++                if resolved_listen != f"unix://{self.socket_path}":
++                    raise ValueError("Managed Codex requires its private Unix control transport")
++                executable, proc_env, host_cwd = self.execution.prepare_spawn(executable, proc_env)
++                argv = [executable, *argv[1:]]
+             self.proc = await asyncio.create_subprocess_exec(
+                 *argv,
+                 stdin=asyncio.subprocess.DEVNULL,
+                 stdout=asyncio.subprocess.DEVNULL,
+                 stderr=asyncio.subprocess.PIPE,
+                 env=proc_env,
+-                cwd=str(self.cwd),
++                cwd=host_cwd,
+                 executable=executable,
+                 **_proc.spawn_kwargs(),
+             )
++            _proc.remember_process_group(self.proc)
++            _proc.refresh_process_tree(self.proc)
+         except BaseException:
+             if self.process_owner_lock is not None:
+                 self.process_owner_lock.close()
+                 self.process_owner_lock = None
++            if self.execution is not None:
++                self.execution.close()
+             raise
+         if self.process_owner_lock is not None:
+             register_codex_native_process(
+@@ -2382,6 +2403,8 @@
+         # silently disables enforcement — a genuine trust failure is then
+         # caught below.
+         codex_version = await _codex_cli_version(self.codex_path)
++        if self.execution is not None and codex_version != (0, 142, 0):
++            raise RuntimeError("Managed native compatibility requires the qualified Codex 0.142.0")
+         self.codex_cli_version = codex_version
+         policy_hooks_supported = (
+             codex_version is None or codex_version >= _MIN_POLICY_HOOK_CODEX_VERSION
+@@ -2404,12 +2427,18 @@
+         self.router_hooks_registered = router_bridge_dir is not None and policy_hooks_supported
+         routed_spawns = router_bridge_dir is not None
+         minimal_config = codex_minimal_config_requested()
++        runtime = self.execution.runtime if self.execution is not None else None
++        if runtime is not None and self.config_profile is not None:
++            raise ValueError("Managed native sessions require the selected Session provider")
++        policy_bridge = runtime.bridge if runtime is not None else self.bridge_dir
+         mcp_servers = read_codex_mcp_servers(
+             config_source,
+             self.config_profile,
+             codex_version=codex_version,
+             minimal_config=minimal_config,
+         )
++        if runtime is not None and mcp_servers:
++            raise ValueError("Managed native MCP tools must use the approved Session relay")
+         model_migration_target: str | None = None
+         catalog: object = self.model_catalog_rows
+         if self.trust_project and self.pinned_model:
+@@ -2436,15 +2465,18 @@
+             inject_hooks=self.router_hooks_registered,
+             extend_model_catalog=codex_extended_catalog_requested(self.env),
+             supported_efforts=CODEX_NATIVE_EFFORTS,
+-            minimal_config=minimal_config,
+-        )
+-        compose_profile_instructions = _materialize_codex_profile_for_start(
+-            self.codex_home,
+-            config_source,
+-            self.config_profile,
+-            codex_version=codex_version,
+-            agent_instructions=self.developer_instructions,
+-        )
++            minimal_config=True if runtime is not None else minimal_config,
++            include_credentials=runtime is None,
++        )
++        compose_profile_instructions = False
++        if runtime is None:
++            compose_profile_instructions = _materialize_codex_profile_for_start(
++                self.codex_home,
++                config_source,
++                self.config_profile,
++                codex_version=codex_version,
++                agent_instructions=self.developer_instructions,
++            )
+         if self.trust_project:
+             _trust_codex_project(self.codex_home, self.cwd)
+         _add_codex_writable_roots(self.codex_home, self.writable_roots)
+@@ -2453,7 +2485,7 @@
+         # by `codex app-server`, so we write directly to the file.
+         _inject_mcp_server_config(
+             self.codex_home,
+-            self.bridge_dir,
++            policy_bridge,
+             self.python_executable,
+             mcp_servers=mcp_servers,
+             routed_spawns=routed_spawns,
+@@ -2493,20 +2525,25 @@
+             # needs go in the bridge dir's policy_hook.json; without
+             # ap_server_url the hook is still registered + trusted but
+             # no-ops.
+-            _write_codex_policy_hooks_file(
+-                self.codex_home,
+-                self.bridge_dir,
+-                self.python_executable,
+-                router_bridge_dir=router_bridge_dir,
+-                router_session_id=codex_router_session_id(self.env),
+-                user_hooks_source=config_source / _CODEX_HOOKS_FILE,
+-                # The runner only advertises a route-turn endpoint for a
+-                # session that launched with Smart Routing on, so its presence
+-                # is the switch for the first-message routing hook. Same
+-                # rendezvous-as-switch shape as the subagent router above.
+-                turn_routing=_turn_router_advertised(self.bridge_dir),
+-            )
+-            if self.ap_server_url:
++            if runtime is None:
++                _write_codex_policy_hooks_file(
++                    self.codex_home,
++                    self.bridge_dir,
++                    self.python_executable,
++                    router_bridge_dir=router_bridge_dir,
++                    router_session_id=codex_router_session_id(self.env),
++                    user_hooks_source=config_source / _CODEX_HOOKS_FILE,
++                    # The runner only advertises a route-turn endpoint for a
++                    # session that launched with Smart Routing on, so its presence
++                    # is the switch for the first-message routing hook. Same
++                    # rendezvous-as-switch shape as the subagent router above.
++                    turn_routing=_turn_router_advertised(self.bridge_dir),
++                    required_session_id=self.session_id
++                    if self.required_policy_generation
++                    else None,
++                    required_generation=self.required_policy_generation,
++                )
++            if self.ap_server_url and runtime is None:
+                 write_policy_hook_config(
+                     self.bridge_dir,
+                     ap_server_url=self.ap_server_url,
+@@ -2574,6 +2611,7 @@
+                 except CodexAppServerSilentStartTimeout as second:
+                     raise RuntimeError(str(second)) from second
+             try:
++                _proc.refresh_process_tree(self.proc)
+                 # Standalone CLI launches may have no shared catalog snapshot.
+                 # Correct their copied defaults before a TUI creates its thread.
+                 if (
+@@ -2620,7 +2658,11 @@
+                 if self.policy_hook_disabled_reason is None:
+                     try:
+                         await self._trust_policy_hooks(client=startup_client)
+-                    except Exception as exc:  # noqa: BLE001 - degrade, never block startup
++                    except Exception as exc:
++                        if self.require_policy_hooks:
++                            raise RuntimeError(
++                                "Required Codex policy hooks could not be trusted"
++                            ) from exc
+                         self._disable_policy_hook(f"Codex policy hook could not be trusted: {exc}")
+             finally:
+                 try:
+@@ -2681,20 +2723,52 @@
+         """
+         owns_client = client is None
+         if client is None:
+-            if self.listen_url and self.listen_url.startswith("ws://"):
+-                client = CodexAppServerClient(
+-                    ws_url=self.listen_url,
+-                    client_name="omnigent-policy-trust",
+-                )
+-            else:
+-                client = CodexAppServerClient(
+-                    self.socket_path,
+-                    client_name="omnigent-policy-trust",
+-                )
++            client = client_for_transport(
++                self.listen_url or str(self.socket_path), client_name="omnigent-policy-trust"
++            )
+         try:
+             if owns_client:
+                 await client.connect()
+-            await trust_native_policy_hooks(client, cwd=str(self.cwd))
++            required_hooks = None
++            if self.require_policy_hooks:
++                if self.execution is not None and self.execution.runtime is not None:
++                    required_hooks = self.execution.runtime.required_hooks
++                else:
++                    settings = _codex_policy_hooks_settings(
++                        self.bridge_dir,
++                        self.python_executable,
++                        required_session_id=self.session_id
++                        if self.required_policy_generation
++                        else None,
++                        required_generation=self.required_policy_generation,
++                    )
++                    events = _string_object_dict(settings.get("hooks")) or {}
++                    required_hooks = {}
++                    for event, event_key in (
++                        ("PreToolUse", "pre_tool_use"),
++                        ("PostToolUse", "post_tool_use"),
++                        ("UserPromptSubmit", "user_prompt_submit"),
++                    ):
++                        groups = _object_list(events.get(event)) or []
++                        group = _string_object_dict(groups[0]) if groups else None
++                        hooks = _object_list(group.get("hooks")) if group else None
++                        if not hooks:
++                            raise RuntimeError(
++                                "Required Codex policy event has no generated hooks"
++                            )
++                        for index, raw_hook in enumerate(hooks):
++                            hook = _string_object_dict(raw_hook) or {}
++                            command = hook.get("command")
++                            if not isinstance(command, str) or not command:
++                                raise RuntimeError("Required Codex policy hook command is invalid")
++                            key = f"{self.codex_home / _CODEX_HOOKS_FILE}:{event_key}:0:{index}"
++                            required_hooks[key] = command
++            await trust_native_policy_hooks(
++                client,
++                cwd=str(self.cwd),
++                required_hooks=required_hooks,
++                require_managed=self.execution is not None and self.execution.runtime is not None,
++            )
+             # Routing hooks live in the same generated file but under a
+             # different module, so they need their own trust pass. Best
+             # effort: a routing-trust failure must not disable the policy
+@@ -2778,6 +2852,8 @@
+             policies."``.
+         :returns: None.
+         """
++        if self.require_policy_hooks:
++            raise RuntimeError(f"Required Codex policy hooks are unavailable: {reason}")
+         self.policy_hook_disabled_reason = reason
+         self.policy_notice_pending = True
+         self._warn_policy_hook_disabled()
+@@ -2808,13 +2884,15 @@
+ 
+         :returns: None.
+         """
+-        if self.proc is not None and self.proc.returncode is None:
++        if self.proc is not None:
++            _proc.refresh_process_tree(self.proc)
+             _terminate_process_tree(self.proc)
+-            try:
+-                await asyncio.wait_for(self.proc.wait(), timeout=5.0)
+-            except TimeoutError:
+-                _kill_process_tree(self.proc)
+-                await self.proc.wait()
++            if self.proc.returncode is None:
++                try:
++                    await asyncio.wait_for(self.proc.wait(), timeout=5.0)
++                except TimeoutError:
++                    _kill_process_tree(self.proc)
++                    await self.proc.wait()
+         if self.process_registry_tag is not None:
+             unregister_codex_native_process(self.process_registry_tag)
+         if self.process_owner_lock is not None:
+@@ -2831,8 +2909,12 @@
+                     with contextlib.suppress(asyncio.CancelledError, Exception):
+                         await self.stderr_task
+             finally:
++                if self.proc is not None:
++                    _kill_process_tree(self.proc)
+                 diagnostics, self._stderr_diagnostics = self._stderr_diagnostics, None
+                 self.proc = None
++                if self.execution is not None:
++                    self.execution.close()
+                 self.stderr_task = None
+                 self.process_registry_tag = None
+                 self.process_owner_lock = None
+@@ -2871,16 +2953,9 @@
+                 raise RuntimeError(f"Codex app-server exited early: {detail}")
+             client: CodexAppServerClient | None = None
+             try:
+-                if self.listen_url and self.listen_url.startswith("ws://"):
+-                    client = CodexAppServerClient(
+-                        ws_url=self.listen_url,
+-                        client_name="omnigent-probe",
+-                    )
+-                else:
+-                    client = CodexAppServerClient(
+-                        self.socket_path,
+-                        client_name="omnigent-probe",
+-                    )
++                client = client_for_transport(
++                    self.listen_url or str(self.socket_path), client_name="omnigent-probe"
++                )
+                 async with asyncio.timeout_at(deadline):
+                     await client.connect()
+                 return client
+@@ -2986,7 +3061,13 @@
+                 diagnostics.finish()
+ 
+ 
+-def _codex_policy_hook_command(bridge_dir: Path, python_executable: str | None) -> str:
++def _codex_policy_hook_command(
++    bridge_dir: Path,
++    python_executable: str | None,
++    *,
++    required_session_id: str | None = None,
++    required_generation: str | None = None,
++) -> str:
+     """
+     Build the shell command codex runs for the policy hook.
+ 
+@@ -3009,6 +3090,18 @@
+         /home/u/.omnigent/codex-native/abc"``.
+     """
+     python = python_executable or sys.executable
++    if (required_session_id is None) != (required_generation is None):
++        raise ValueError("Required native hook identity must be complete")
++    required_args = (
++        []
++        if required_session_id is None
++        else [
++            "--required-session-id",
++            required_session_id,
++            "--required-generation",
++            required_generation or "",
++        ]
++    )
+     command = shlex.join(
+         [
+             python,
+@@ -3018,9 +3111,14 @@
+             "evaluate-policy",
+             "--bridge-dir",
+             str(bridge_dir),
++            *required_args,
+         ]
+     )
+-    return policy_allow_cache.guarded_hook_command(bridge_dir, command)
++    return (
++        command
++        if required_session_id is not None
++        else policy_allow_cache.guarded_hook_command(bridge_dir, command)
++    )
+ 
+ 
+ def _turn_router_advertised(bridge_dir: Path) -> bool:
+@@ -3042,6 +3140,8 @@
+     python_executable: str | None,
+     *,
+     turn_routing: bool = False,
++    required_session_id: str | None = None,
++    required_generation: str | None = None,
+ ) -> _JsonObject:
+     """
+     Build the ``hooks.json`` payload registering the policy hook.
+@@ -3065,19 +3165,30 @@
+     """
+     hook: _JsonObject = {
+         "type": "command",
+-        "command": _codex_policy_hook_command(bridge_dir, python_executable),
++        "command": _codex_policy_hook_command(
++            bridge_dir,
++            python_executable,
++            required_session_id=required_session_id,
++            required_generation=required_generation,
++        ),
+         "timeout": _POLICY_HOOK_TIMEOUT_SECONDS,
+     }
+     from omnigent.native.tool_observer_hook import hook_settings
+ 
+     observer = hook_settings(bridge_dir, python_executable or sys.executable, _POLICY_HOOK_MODULE)
+-    prompt_submit: list[_JsonObject] = [hook]
++
++    def for_event(event: str) -> _JsonObject:
++        if required_session_id is None:
++            return hook
++        return {**hook, "command": f"{hook['command']} --required-hook-event {event}"}
++
++    prompt_submit: list[_JsonObject] = [for_event("UserPromptSubmit")]
+     if turn_routing:
+         prompt_submit.append(_codex_route_turn_hook(bridge_dir, python_executable))
+     return {
+         "hooks": {
+-            "PreToolUse": [{"hooks": [hook]}],
+-            "PostToolUse": [{"hooks": [hook, observer]}],
++            "PreToolUse": [{"hooks": [for_event("PreToolUse")]}],
++            "PostToolUse": [{"hooks": [for_event("PostToolUse"), observer]}],
+             "UserPromptSubmit": [{"hooks": prompt_submit}],
+         }
+     }
+@@ -3131,6 +3242,8 @@
+     router_session_id: str | None = None,
+     user_hooks_source: Path | None = None,
+     turn_routing: bool = False,
++    required_session_id: str | None = None,
++    required_generation: str | None = None,
+ ) -> None:
+     """
+     Write ``hooks.json`` into the private CODEX_HOME (atomically).
+@@ -3156,7 +3269,13 @@
+     :returns: None.
+     """
+     payloads: list[Mapping[str, object]] = [
+-        _codex_policy_hooks_settings(bridge_dir, python_executable, turn_routing=turn_routing)
++        _codex_policy_hooks_settings(
++            bridge_dir,
++            python_executable,
++            turn_routing=turn_routing,
++            required_session_id=required_session_id,
++            required_generation=required_generation,
++        )
+     ]
+     if router_bridge_dir is not None:
+         payloads.append(
+@@ -3436,7 +3555,13 @@
+     return []
+ 
+ 
+-async def trust_native_policy_hooks(client: CodexAppServerClient, *, cwd: str) -> None:
++async def trust_native_policy_hooks(
++    client: CodexAppServerClient,
++    *,
++    cwd: str,
++    required_hooks: Mapping[str, str] | None = None,
++    require_managed: bool = False,
++) -> None:
+     """
+     Trust the Omnigent policy hook so codex actually runs it.
+ 
+@@ -3449,6 +3574,8 @@
+     :param client: A connected Codex app-server client.
+     :param cwd: The session cwd the hooks are scoped to, e.g.
+         ``"/home/user/repo"``.
++    :param required_hooks: Trusted framework hook keys and exact commands.
++        None retains discovery for standalone callers.
+     :returns: None.
+     :raises RuntimeError: If no Omnigent hook is discovered (it was
+         not registered or not loaded) or if a hook remains untrusted
+@@ -3463,14 +3590,43 @@
+             "tool-call policy enforcement would silently not run. "
+             f"{_hooks_list_diagnostics(listed, cwd)}."
+         )
++    if required_hooks is not None:
++        if not required_hooks:
++            raise RuntimeError("Required Codex policy hook set is empty")
++        by_key = {key: h for h in ours if isinstance(key := h.get("key"), str)}
++        for key, command in required_hooks.items():
++            hook = by_key.get(key)
++            if (
++                hook is None
++                or hook.get("command") != command
++                or hook.get("enabled") is not True
++                or (require_managed and hook.get("isManaged") is not True)
++                or not isinstance(hook.get("currentHash"), str)
++                or not hook["currentHash"]
++                or sum(h.get("key") == key for h in ours) != 1
++            ):
++                raise RuntimeError("Required Codex policy hook identity or event is missing")
++        ours = [by_key[key] for key in required_hooks]
+     untrusted = [h for h in ours if h.get("trustStatus") not in _TRUSTED_HOOK_STATUSES]
+     if not untrusted:
+         return
++    identities = {h.get("key"): (h.get("command"), h.get("currentHash")) for h in ours}
+     await _persist_hook_trust(client.request, untrusted)
+     relisted = await client.request("hooks/list", {"cwds": [cwd]})
++    after = _our_policy_hooks_from_list(relisted, cwd)
++    for key, identity in identities.items():
++        matches = [h for h in after if h.get("key") == key]
++        if (
++            len(matches) != 1
++            or (matches[0].get("command"), matches[0].get("currentHash")) != identity
++            or (required_hooks is not None and matches[0].get("enabled") is not True)
++            or (require_managed and matches[0].get("isManaged") is not True)
++        ):
++            raise RuntimeError("Codex policy hooks changed or disappeared during trust")
+     still_untrusted = [
+         h
+-        for h in _our_policy_hooks_from_list(relisted, cwd)
++        for h in after
++        if required_hooks is None or str(h.get("key")) in required_hooks
+         if h.get("trustStatus") not in _TRUSTED_HOOK_STATUSES
+     ]
+     if still_untrusted:
+@@ -3776,6 +3932,9 @@
+     bypass_sandbox: bool = False,
+     trust_project: bool = False,
+     trust_all_hooks: bool = False,
++    require_policy_hooks: bool = False,
++    required_policy_generation: str | None = None,
++    execution: CodexSandboxLaunch | None = None,
+     reasoning_effort: str | None = None,
+     model_catalog_rows: list[_JsonObject] | None = None,
+     reconcile_process_registry: bool = True,
+@@ -3838,6 +3997,8 @@
+     :param terminal_launch_args: Original CLI options used to select the Codex
+         config-file profile (distinct from the Databricks routing profile)
+         and the ``--add-dir`` roots the app-server owns.
++    :param require_policy_hooks: Trusted managed composition requires complete,
++        enabled framework policy hooks instead of degraded startup.
+     :returns: Configured app-server process wrapper.
+     :raises ImportError: If no Codex CLI is available.
+     :raises OSError: If Databricks routing was requested but no
+@@ -3909,6 +4070,9 @@
+         model_catalog_rows=model_catalog_rows,
+         trust_project=trust_project,
+         trust_all_hooks=trust_all_hooks,
++        require_policy_hooks=require_policy_hooks,
++        required_policy_generation=required_policy_generation,
++        execution=execution,
+         reconcile_process_registry=reconcile_process_registry,
+         writable_roots=tuple(codex_workspace_roots(terminal_launch_args, cwd)[1]),
+         app_server_command=_configured_app_server_command(),
+@@ -4686,14 +4850,9 @@
+ 
+     The native Codex app-server is reachable over either a loopback
+     WebSocket (``"ws://IP:PORT"`` / ``"wss://..."``) or a Unix socket
+-    path (legacy ``"/path/app-server.sock"``). Both the host-spawned
+-    runner and the local CLI now listen on ``ws://`` — the only
+-    transport Codex CLI ``app-server`` accepts since it dropped
+-    ``unix://`` support — and persist whichever was used as the bridge
+-    state's ``socket_path``. Every connect site (executor steering /
+-    interrupt / run_turn, forwarder, initial turn) routes through this
+-    one rule so a ``ws://`` transport is never mistakenly wrapped in
+-    ``Path(...)`` and dialed as a (nonexistent) Unix socket.
++    path (``"/path/app-server.sock"`` or ``"unix:///path/app-server.sock"``).
++    Unix control sockets carry the same WebSocket protocol. Persisted URI
++    prefixes must be removed before passing a filesystem path to the client.
+ 
+     :param transport: App-server transport from bridge state, e.g.
+         ``"ws://127.0.0.1:9876"`` or
+@@ -4704,6 +4863,10 @@
+     """
+     if transport.startswith(("ws://", "wss://")):
+         return CodexAppServerClient(ws_url=transport, client_name=client_name)
++    if transport.startswith("unix://"):
++        transport = transport.removeprefix("unix://")
++        if not transport:
++            raise ValueError("Codex Unix control transport requires a socket path")
+     return CodexAppServerClient(Path(transport), client_name=client_name)
+ 
+ 
+diff --git a/omnigent/harnesses/codex_native/bridge.py b/omnigent/harnesses/codex_native/bridge.py
+--- a/omnigent/harnesses/codex_native/bridge.py
++++ b/omnigent/harnesses/codex_native/bridge.py
+@@ -327,7 +327,25 @@
+ 
+ def _codex_rollouts_inactive_since(bridge_dir: Path, activity_cutoff: float) -> bool:
+     """Return whether no rollout under *bridge_dir* was written after the cutoff."""
+-    sessions_dir = bridge_dir / "codex-home" / "sessions"
++    sessions = [bridge_dir / "codex-home" / "sessions"]
++    try:
++        for child in bridge_dir.iterdir():
++            suffix = child.name.removeprefix("required-history-")
++            if (
++                child.name.startswith("required-history-")
++                and len(suffix) == 32
++                and all(character in "0123456789abcdef" for character in suffix)
++            ):
++                if child.is_symlink() or not child.is_dir():
++                    return False
++                sessions.append(child / "sessions")
++    except OSError:
++        return False
++    return all(_codex_sessions_inactive_since(path, activity_cutoff) for path in sessions)
++
++
++def _codex_sessions_inactive_since(sessions_dir: Path, activity_cutoff: float) -> bool:
++    """Preserve history if any rollout is recent or its activity cannot be read."""
+     try:
+         sessions_mode = sessions_dir.stat().st_mode
+     except FileNotFoundError:
+diff --git a/omnigent/harnesses/codex_native/execution.py b/omnigent/harnesses/codex_native/execution.py
+new file mode 100644
+--- /dev/null
++++ b/omnigent/harnesses/codex_native/execution.py
+@@ -0,0 +1,331 @@
++"""Narrow app-server launcher using the already approved Session environment."""
++
++from __future__ import annotations
++
++import contextlib
++import json
++import os
++import shutil
++import tempfile
++import tomllib
++from copy import deepcopy
++from dataclasses import dataclass, field, replace
++from pathlib import Path
++from typing import Any
++from uuid import UUID
++
++from omnigent.harnesses.codex_native.executor_transport import SessionExecutorEndpoint
++from omnigent.inner.datamodel import OSEnvSpec
++from omnigent.inner.os_env import CallerProcessOSEnvironment, build_helper_env
++from omnigent.inner.sandbox import (
++    SandboxPolicy,
++    create_exec_launcher,
++    with_additional_read_roots,
++    with_additional_write_roots,
++)
++from omnigent.inner.terminal import terminal_pane_environment
++from omnigent.runner.session_channels import (
++    SESSION_MODEL_CREDENTIAL_ENV,
++    SessionRelayChannel,
++    verify_session_socket,
++)
++
++SYSTEM_CODEX_REQUIREMENTS = Path("/etc/codex/requirements.toml")
++
++
++@dataclass
++class CodexPrivateRuntime:
++    """Generated Session files, separated from Runner/server credentials."""
++
++    session_id: str
++    generation: str
++    original_bridge: Path
++    root: Path
++    required_hooks: dict[str, str]
++    executor: SessionExecutorEndpoint
++    codex_binary: Path | None = None
++    mcp_overrides: tuple[str, ...] | None = None
++    _root_identity: tuple[int, int] = field(default=(0, 0), init=False)
++
++    @property
++    def bridge(self) -> Path:
++        return self.root / "bridge"
++
++    @property
++    def home(self) -> Path:
++        return self.root / "home"
++
++    @property
++    def control(self) -> Path:
++        return self.root / "control" / "app.sock"
++
++    @property
++    def history(self) -> Path:
++        return self.original_bridge.resolve() / ("required-history-" + UUID(self.session_id).hex)
++
++    def _bind_history(self) -> None:
++        """Keep only rollout state stable while credentials/config remain per generation."""
++        for directory in (self.history, self.history / "sessions"):
++            directory.mkdir(mode=0o700, exist_ok=True)
++            identity = directory.lstat()
++            if (
++                directory.is_symlink()
++                or not directory.is_dir()
++                or directory.resolve() != directory
++                or identity.st_uid != os.getuid()
++                or identity.st_mode & 0o077
++            ):
++                raise ValueError("Required native history directory is not private")
++        (self.home / "sessions").symlink_to(self.history / "sessions", target_is_directory=True)
++
++    @classmethod
++    def create(
++        cls,
++        model: SessionRelayChannel,
++        policy: SessionRelayChannel,
++        original_bridge: Path,
++        *,
++        executor: SessionExecutorEndpoint,
++    ) -> CodexPrivateRuntime:
++        import sys
++
++        import tomlkit
++
++        from omnigent.harnesses.codex_native.app_server import (
++            _codex_policy_hooks_settings,
++            _object_list,
++            _string_object_dict,
++        )
++
++        model.verify(session_id=model.session_id, runner_id=model.runner_id)
++        policy.verify(session_id=model.session_id, runner_id=model.runner_id)
++        if policy.role != "policy" or policy.generation != model.generation:
++            raise ValueError("Native runtime channel binding differs")
++        executor.verify(model)
++        root = Path(tempfile.mkdtemp(prefix="om-codex-", dir="/tmp")).resolve()
++        runtime = cls(model.session_id, model.generation, original_bridge, root, {}, executor)
++        identity = root.lstat()
++        runtime._root_identity = (identity.st_dev, identity.st_ino)
++        try:
++            for directory in (
++                runtime.bridge,
++                runtime.home,
++                runtime.control.parent,
++                runtime.root / "mcp",
++            ):
++                directory.mkdir(mode=0o700)
++            system = SYSTEM_CODEX_REQUIREMENTS
++            requirements: dict[str, Any] = (
++                tomllib.loads(system.read_text()) if system.exists() else {}
++            )
++            if "features" in requirements and "feature_requirements" in requirements:
++                raise ValueError("Ambiguous administrator feature requirements")
++            features = requirements.setdefault(
++                "features", requirements.pop("feature_requirements", {})
++            )
++            if not isinstance(features, dict):
++                raise ValueError("Invalid administrator feature requirements")
++            for name, value in (("hooks", True), ("use_legacy_landlock", False)):
++                if name in features and features[name] is not value:
++                    raise ValueError("Administrator requirements reject required native features")
++                features[name] = value
++            allowed = requirements.get("allowed_sandbox_modes", ["read-only", "workspace-write"])
++            narrowed = [mode for mode in allowed if mode in ("read-only", "workspace-write")]
++            if "read-only" not in narrowed:
++                raise ValueError("Administrator sandbox requirements are incompatible")
++            requirements["allowed_sandbox_modes"] = narrowed
++            requirements["allow_managed_hooks_only"] = True
++            managed = requirements.setdefault("hooks", {})
++            source = managed.setdefault("managed_dir", str(system))
++            if not isinstance(source, str) or not Path(source).is_absolute():
++                raise ValueError("Managed hook source must be an absolute administrator path")
++            settings = _codex_policy_hooks_settings(
++                runtime.bridge,
++                sys.executable,
++                required_session_id=model.session_id,
++                required_generation=model.generation,
++            )
++            generated = _string_object_dict(settings.get("hooks")) or {}
++            for event, event_key in (
++                ("PreToolUse", "pre_tool_use"),
++                ("PostToolUse", "post_tool_use"),
++                ("UserPromptSubmit", "user_prompt_submit"),
++            ):
++                groups = managed.setdefault(event, [])
++                group_index = len(groups)
++                new_groups = _object_list(generated.get(event)) or []
++                new_group = _string_object_dict(new_groups[0]) if new_groups else None
++                if new_group is None:
++                    raise ValueError("Required native hook generation failed")
++                for index, raw_hook in enumerate(_object_list(new_group.get("hooks")) or []):
++                    hook = _string_object_dict(raw_hook) or {}
++                    command = hook.get("command")
++                    if not isinstance(command, str):
++                        raise ValueError("Required native hook command is invalid")
++                    runtime.required_hooks[f"{source}:{event_key}:{group_index}:{index}"] = command
++                groups.append(new_group)
++            target = root / "requirements.toml"
++            target.write_text(tomlkit.dumps(requirements))
++            target.chmod(0o600)
++            config = executor.environment_config(model)
++            for path in (root / "environments.toml", runtime.home / "environments.toml"):
++                path.write_text(config)
++                path.chmod(0o600)
++            runtime.refresh_projection(policy)
++            runtime._bind_history()
++            from omnigent.harnesses.codex_native.bridge import write_mcp_bridge_config
++
++            write_mcp_bridge_config(runtime.bridge)
++            return runtime
++        except BaseException:
++            shutil.rmtree(root)
++            raise
++
++    def refresh_projection(
++        self, policy: SessionRelayChannel, *, publish_state: bool = False
++    ) -> None:
++        from omnigent.harnesses.codex_native.bridge import read_bridge_state, write_bridge_state
++
++        advertisement = json.loads((self.original_bridge / "tool_relay.json").read_text())
++        if (
++            not isinstance(advertisement, dict)
++            or advertisement.get("session_id") != self.session_id
++            or advertisement.get("generation") != self.generation
++            or advertisement.get("socket_path") != policy.socket_path
++        ):
++            raise ValueError("Native relay projection binding differs")
++        selected = {
++            key: advertisement[key]
++            for key in ("url", "token", "session_id", "generation", "socket_path", "tools")
++        }
++        target = self.bridge / "tool_relay.json"
++        temporary = self.bridge / ".relay-next.json"
++        temporary.write_text(json.dumps(selected))
++        temporary.chmod(0o600)
++        temporary.replace(target)
++        state = read_bridge_state(self.original_bridge) if publish_state else None
++        if state is not None:
++            if state.session_id != self.session_id:
++                raise ValueError("Native bridge projection belongs to another Session")
++            write_bridge_state(
++                self.bridge,
++                replace(state, codex_home=str(self.home), socket_path=f"unix://{self.control}"),
++            )
++
++    def apply(self, policy: SandboxPolicy) -> SandboxPolicy:
++        policy = with_additional_read_roots(policy, [self.bridge, self.root / "requirements.toml"])
++        policy = with_additional_write_roots(
++            policy, [self.home, self.control.parent, self.history]
++        )
++        policy.codex_requirements_path = str(self.root / "requirements.toml")
++        verify_session_socket(
++            self.executor.socket_path, device=self.executor.device, inode=self.executor.inode
++        )
++        policy = with_additional_read_roots(policy, [self.executor.socket_path.parent])
++        policy.codex_environments_path = str(self.root / "environments.toml")
++        policy.env_passthrough = [
++            *(policy.env_passthrough or []),
++            "CODEX_HOME",
++            SESSION_MODEL_CREDENTIAL_ENV,
++        ]
++        return policy
++
++    def close(self) -> None:
++        """Retire owned transport projections, preserving Codex history for recovery."""
++        try:
++            identity = self.root.lstat()
++        except FileNotFoundError:
++            return
++        if (identity.st_dev, identity.st_ino) != self._root_identity:
++            raise ValueError("Native runtime projection ownership changed")
++        for directory in (self.bridge, self.control.parent, self.root / "mcp"):
++            with contextlib.suppress(FileNotFoundError):
++                shutil.rmtree(directory)
++        (self.root / "requirements.toml").unlink(missing_ok=True)
++        (self.root / "environments.toml").unlink(missing_ok=True)
++
++
++@dataclass
++class CodexSandboxLaunch:
++    """Own launchers, without owning or changing the shared OSEnv or relays."""
++
++    session_id: str
++    required_spec: OSEnvSpec
++    environment: CallerProcessOSEnvironment
++    model_channel: SessionRelayChannel
++    policy_channel: SessionRelayChannel
++    runtime: CodexPrivateRuntime | None = None
++    _launchers: list[tuple[Path, int, int]] = field(default_factory=list, init=False)
++
++    def __post_init__(self) -> None:
++        self.required_spec = deepcopy(self.required_spec)
++        self._verify()
++
++    def _verify(self) -> None:
++        policy = self.environment.sandbox
++        required = self.required_spec.sandbox
++        if (
++            required is None
++            or required.type != "linux_bwrap"
++            or required.allow_network is not False
++        ):
++            raise ValueError("Codex requires the server's network-isolated linux_bwrap spec")
++        if self.environment.spec != self.required_spec:
++            raise ValueError("Codex environment differs from the required Session sandbox")
++        for channel, role in ((self.model_channel, "model"), (self.policy_channel, "policy")):
++            channel.verify(session_id=self.session_id, runner_id=self.model_channel.runner_id)
++            if channel.role != role or channel.generation != self.model_channel.generation:
++                raise ValueError("Codex channel role or generation differs")
++        expected = [
++            (self.model_channel.relay_port, self.model_channel.socket_path),
++            (self.policy_channel.relay_port, self.policy_channel.socket_path),
++        ]
++        if policy.session_relay_pairs() != expected:
++            raise ValueError("Codex environment does not contain its Session channels")
++
++    def prepare_spawn(
++        self, executable: str, parent_env: dict[str, str]
++    ) -> tuple[str, dict[str, str], str]:
++        """Prepare one existing launcher with the original grants and COW ownership."""
++        self._verify()
++        policy = replace(self.environment.sandbox)
++        env = terminal_pane_environment(inherit_env=False, env=parent_env, env_unset=())
++        env = build_helper_env(env, policy)
++        home = env.get("CODEX_HOME")
++        if not home or home != parent_env.get("CODEX_HOME"):
++            raise ValueError("Required Codex environment does not grant CODEX_HOME")
++        path = Path(home)
++        if (
++            not path.is_absolute()
++            or path.resolve() != path
++            or not any(path.is_relative_to(root.resolve()) for root in policy.write_roots)
++        ):
++            raise ValueError("Required Codex environment does not grant its private home")
++        binary = shutil.which(executable, path=env.get("PATH"))
++        if binary is None:
++            raise FileNotFoundError("Required Codex executable is unavailable")
++        policy.spawn_env_allowlist = sorted(env)
++        self.environment.prepare_sandbox(policy)
++        launcher = Path(
++            create_exec_launcher(
++                str(Path(binary).resolve()), policy, cwd=str(self.environment.cwd)
++            )
++        )
++        identity = launcher.lstat()
++        self._launchers.append((launcher, identity.st_dev, identity.st_ino))
++        return (
++            str(launcher),
++            env,
++            "/" if policy.copy_on_write_namespace else str(self.environment.cwd),
++        )
++
++    def close(self) -> None:
++        """Unlink only launcher files still owned by this execution composition."""
++        for path, device, inode in self._launchers:
++            try:
++                current = path.lstat()
++                if (current.st_dev, current.st_ino) == (device, inode):
++                    path.unlink()
++            except FileNotFoundError:
++                pass
++        self._launchers.clear()
+diff --git a/omnigent/harnesses/codex_native/executor_artifact.py b/omnigent/harnesses/codex_native/executor_artifact.py
+new file mode 100644
+--- /dev/null
++++ b/omnigent/harnesses/codex_native/executor_artifact.py
+@@ -0,0 +1,192 @@
++"""Build-time Codex artifact receipt, consumed only inside a qualified Host image."""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++import os
++import platform
++import re
++import shutil
++import subprocess
++from dataclasses import dataclass
++from pathlib import Path
++from typing import TYPE_CHECKING
++
++if TYPE_CHECKING:
++    import httpx
++
++    from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
++    from omnigent.runner.resource_registry import SessionResourceRegistry
++
++ARTIFACT_PATH = Path("/usr/local/share/omnigent-native-codex.json")
++HOST_LOCK_PATH = Path("/opt/omnigent-host-cli/pnpm-lock.yaml")
++CODEX_VERSION = "0.142.0"
++
++
++@dataclass(frozen=True)
++class CodexRuntimeArtifact:
++    binary: Path
++    sha256: str
++    source_revision: str
++
++
++def installed_revision() -> str:
++    from omnigent import _build_info
++
++    value = _build_info.COMMIT_SHA
++    if not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{40}", value) is None:
++        raise ValueError("Host has no installed source revision binding")
++    return value
++
++
++def _machine() -> str:
++    value = platform.machine().lower()
++    if value in {"x86_64", "amd64"}:
++        return "x64"
++    if value in {"aarch64", "arm64"}:
++        return "arm64"
++    raise ValueError("Unsupported qualified Codex Host architecture")
++
++
++def _elf(path: Path) -> None:
++    with path.open("rb") as source:
++        header = source.read(20)
++    machine = 62 if _machine() == "x64" else 183
++    if (
++        len(header) != 20
++        or header[:6] != b"\x7fELF\x02\x01"
++        or int.from_bytes(header[18:20], "little") != machine
++    ):
++        raise ValueError("Codex artifact is not the native Linux executable for this Host")
++
++
++def native_binary(command: Path) -> Path:
++    """Select the existing pinned native executable, avoiding another Node wrapper."""
++    command = command.resolve(strict=True)
++    with command.open("rb") as source:
++        if source.read(4) == b"\x7fELF":
++            _elf(command)
++            return command
++    package = command.parent.parent
++    metadata = json.loads((package / "package.json").read_text())
++    if metadata.get("name") != "@openai/codex" or metadata.get("version") != CODEX_VERSION:
++        raise ValueError("Installed Codex package differs from the fixed CLI")
++    binary_package = package.parent / ("codex-linux-" + _machine())
++    roots = [package]
++    if binary_package.is_dir():
++        info = json.loads((binary_package / "package.json").read_text())
++        if info.get("version") != CODEX_VERSION + "-linux-" + _machine():
++            raise ValueError("Native Codex package differs from the fixed CLI")
++        roots.insert(0, binary_package)
++    matches = [path.resolve() for root in roots for path in root.glob("vendor/*/bin/codex")]
++    if len(set(matches)) != 1:
++        raise ValueError("Pinned native Codex executable is missing or ambiguous")
++    binary = matches[0]
++    _elf(binary)
++    return binary
++
++
++def record_installed_artifact(command: Path, destination: Path = ARTIFACT_PATH) -> None:
++    """Run during the normal image build; this receipt is not a release PASS."""
++    binary = native_binary(command)
++    revision = installed_revision()
++    response = subprocess.run(
++        [str(binary), "--version"],
++        capture_output=True,
++        check=True,
++        timeout=10,
++        env={"PATH": os.defpath},
++        text=True,
++    )
++    if response.stdout.strip() != "codex-cli " + CODEX_VERSION:
++        raise ValueError("Installed native Codex version does not match the pin")
++    with binary.open("rb") as source:
++        digest = hashlib.file_digest(source, "sha256").hexdigest()
++    with HOST_LOCK_PATH.open("rb") as source:
++        lock_digest = hashlib.file_digest(source, "sha256").hexdigest()
++    payload = {
++        "schema": 1,
++        "source_revision": revision,
++        "version": CODEX_VERSION,
++        "architecture": _machine(),
++        "binary": str(binary),
++        "sha256": digest,
++        "lock_path": str(HOST_LOCK_PATH),
++        "lock_sha256": lock_digest,
++    }
++    destination.parent.mkdir(parents=True, exist_ok=True)
++    with destination.open("x") as target:
++        json.dump(payload, target, sort_keys=True)
++        target.write("\n")
++    destination.chmod(0o444)
++
++
++def load_installed_artifact() -> CodexRuntimeArtifact:
++    """Require the receipt carried by the same signed OCI and installed wheel."""
++    path = ARTIFACT_PATH
++    info = path.lstat()
++    if path.is_symlink() or info.st_mode & 0o222:
++        raise ValueError("Installed native artifact receipt is mutable")
++    data = json.loads(path.read_text())
++    if (
++        not isinstance(data, dict)
++        or data.get("schema") != 1
++        or data.get("source_revision") != installed_revision()
++        or data.get("version") != CODEX_VERSION
++        or data.get("architecture") != _machine()
++    ):
++        raise ValueError("Installed native artifact receipt does not bind this Host")
++    binary = Path(data["binary"])
++    if not binary.is_absolute() or binary.resolve(strict=True) != binary:
++        raise ValueError("Installed native Codex path is not canonical")
++    _elf(binary)
++    lock = Path(data["lock_path"])
++    if lock != HOST_LOCK_PATH:
++        raise ValueError("Installed CLI lock binding differs from the Host input")
++    with lock.open("rb") as source:
++        if hashlib.file_digest(source, "sha256").hexdigest() != data.get("lock_sha256"):
++            raise ValueError("Installed CLI lock bytes differ from the image receipt")
++    with binary.open("rb") as source:
++        digest = hashlib.file_digest(source, "sha256").hexdigest()
++    if re.fullmatch(r"[a-f0-9]{64}", str(data.get("sha256"))) is None or digest != data["sha256"]:
++        raise ValueError("Installed native Codex bytes differ from the image receipt")
++    return CodexRuntimeArtifact(binary, digest, data["source_revision"])
++
++
++async def prepare_installed_executor(
++    registry: SessionResourceRegistry,
++    session_id: str,
++    bridge: Path,
++    server_client: httpx.AsyncClient,
++) -> CodexPrivateRuntime:
++    import asyncio
++
++    try:
++        artifact = await asyncio.to_thread(load_installed_artifact)
++    except (ImportError, OSError, ValueError) as error:
++        from omnigent.runner.policy import AgentStartPolicyError
++
++        raise AgentStartPolicyError("server", "has no bound native Codex artifact") from error
++    return await registry.prepare_native_executor(
++        session_id,
++        bridge,
++        server_client,
++        binary=artifact.binary,
++        expected_sha256=artifact.sha256,
++    )
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--command", type=Path)
++    args = parser.parse_args()
++    command = args.command or Path(shutil.which("codex") or "")
++    if not str(command) or not command.is_file():
++        raise ValueError("Installed pinned Codex command is unavailable")
++    record_installed_artifact(command)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/omnigent/harnesses/codex_native/executor_backend.py b/omnigent/harnesses/codex_native/executor_backend.py
+new file mode 100644
+--- /dev/null
++++ b/omnigent/harnesses/codex_native/executor_backend.py
+@@ -0,0 +1,909 @@
++"""Session-bound required execution backend for the fixed native protocol."""
++
++from __future__ import annotations
++
++import asyncio
++import base64
++import contextlib
++import fnmatch
++import hashlib
++import json
++import os
++import shlex
++import shutil
++import sys
++import tempfile
++from dataclasses import dataclass, replace
++from pathlib import Path
++from typing import TYPE_CHECKING, Any, cast
++from uuid import uuid4
++
++import httpx
++
++from omnigent.harnesses.codex_native.app_server import CodexAppServerClient
++from omnigent.harnesses.codex_native.executor_policy import (
++    FS_RESPONSE_LIMIT_BYTES,
++    SessionExecutionPolicy,
++    native_path,
++)
++from omnigent.harnesses.codex_native.executor_transport import SessionExecutorEndpoint
++from omnigent.inner import _proc
++from omnigent.inner.sandbox import with_additional_write_roots
++from omnigent.native.native_policy_hook import hook_payload_to_evaluation_request
++from omnigent.runner.session_channels import SessionRelayChannel, session_ids_match
++
++if TYPE_CHECKING:
++    from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
++
++
++@dataclass
++class _ReadHandle:
++    key: str
++    after_seq: int = 0
++
++
++@dataclass
++class _PendingStart:
++    task: asyncio.Task[Any] | None = None
++    cancelled: bool = False
++
++
++def _result(response: dict[str, object]) -> dict[str, Any]:
++    value = response.get("result")
++    if not isinstance(value, dict):
++        raise ValueError("Malformed fixed executor result")
++    return value
++
++
++async def _probe(binary: Path, argument: str, env: dict[str, str]) -> bytes:
++    process = await asyncio.create_subprocess_exec(
++        str(binary),
++        argument,
++        stdout=asyncio.subprocess.PIPE,
++        stderr=asyncio.subprocess.STDOUT,
++        env=env,
++        **_proc.spawn_kwargs(),
++    )
++    _proc.remember_process_group(process)
++    try:
++        assert process.stdout is not None
++        output = await asyncio.wait_for(process.stdout.read(65537), 5)
++        await asyncio.wait_for(process.wait(), 5)
++        if process.returncode or len(output) > 65536:
++            raise OSError("Qualified executor capability probe failed")
++        return output
++    finally:
++        _proc.refresh_process_tree(process)
++        _proc.terminate_tree(process)
++        _proc.kill_tree(process)
++
++
++class _ExecStdio:
++    def __init__(self, process: asyncio.subprocess.Process) -> None:
++        self.process = process
++
++    async def send(self, message: str) -> None:
++        assert self.process.stdin is not None
++        self.process.stdin.write(message.encode() + b"\n")
++        await self.process.stdin.drain()
++
++    def __aiter__(self) -> _ExecStdio:
++        return self
++
++    async def __anext__(self) -> str:
++        assert self.process.stdout is not None
++        line = await self.process.stdout.readline()
++        if not line:
++            raise StopAsyncIteration
++        return line.decode()
++
++    async def close(self) -> None:
++        if self.process.stdin is not None:
++            self.process.stdin.close()
++
++
++class _FixedExecClient(CodexAppServerClient):
++    """Reuse response/event dispatch for the fixed exec-server JSON-lines transport."""
++
++    def __init__(self, process: asyncio.subprocess.Process) -> None:
++        super().__init__(socket_path=Path("/unused-exec-stdio"))
++        self.process = process
++
++    async def connect(self) -> None:
++        self._ws = cast(Any, _ExecStdio(self.process))
++        self._reader_task = asyncio.create_task(self._reader_loop())
++        await self.request("initialize", {"clientName": "omnigent-session-executor"})
++        await self.notify("initialized")
++
++    async def close(self) -> None:
++        try:
++            await super().close()
++        finally:
++            _proc.refresh_process_tree(self.process)
++            _proc.terminate_tree(self.process)
++            with contextlib.suppress(TimeoutError):
++                await asyncio.wait_for(self.process.wait(), 2)
++            _proc.kill_tree(self.process)
++
++
++class SessionExecutorBackend:
++    """Own one trusted outside executor and only this Session's process handles."""
++
++    def __init__(
++        self,
++        authority: SessionExecutionPolicy,
++        model: SessionRelayChannel,
++        policy: SessionRelayChannel,
++        server_client: httpx.AsyncClient,
++        executor: CodexAppServerClient,
++        root: Path,
++    ) -> None:
++        self.authority, self.model, self.policy = authority, model, policy
++        self.server_client, self.executor, self.root = server_client, executor, root
++        self.plan_root = root / "plans"
++        self.spool_root = root / "spools"
++        self.plan_root.mkdir(mode=0o700)
++        self.spool_root.mkdir(mode=0o700)
++        self.launch_environment = dict(authority.environment)
++        interpreter = Path(sys.executable)
++        self.worker = interpreter.parent.resolve() / interpreter.name
++        self.native_binary: Path | None = None
++        self._mcp: tuple[tuple[str, ...], SessionExecutionPolicy, Path] | None = None
++        self._mcp_controls: dict[str, tuple[Path, int, int]] = {}
++        self.processes: dict[str, str] = {}
++        self.pending_starts: dict[str, _PendingStart] = {}
++        self.plans: dict[str, Path] = {}
++        self.handles: dict[str, _ReadHandle] = {}
++        self.server: asyncio.AbstractServer | None = None
++        self._connection: asyncio.StreamWriter | None = None
++        self._active_request: asyncio.Task[dict[str, Any]] | None = None
++        self._closed = False
++        info = root.lstat()
++        self._root_identity = info.st_dev, info.st_ino
++
++    @classmethod
++    async def start(
++        cls,
++        authority: SessionExecutionPolicy,
++        model: SessionRelayChannel,
++        policy: SessionRelayChannel,
++        server_client: httpx.AsyncClient,
++        *,
++        binary: Path,
++        expected_sha256: str,
++    ) -> SessionExecutorBackend:
++        if not sys.platform.startswith("linux"):
++            raise OSError("Required Session executor needs Linux")
++        model.verify(session_id=authority.session_id, runner_id=authority.runner_id)
++        policy.verify(session_id=authority.session_id, runner_id=authority.runner_id)
++        if authority.generation != model.generation or authority.generation != policy.generation:
++            raise ValueError("Executor authority generation is stale")
++        if not binary.is_absolute() or binary.resolve() != binary:
++            raise ValueError("Executor binary must be an authoritative canonical path")
++        with binary.open("rb") as original:
++            if hashlib.file_digest(original, "sha256").hexdigest() != expected_sha256:
++                raise ValueError("Executor binary differs from its qualified artifact")
++        environment = dict(authority.environment)
++        if (await _probe(binary, "--version", environment)).strip() != b"codex-cli 0.142.0":
++            raise ValueError("Session executor protocol is pinned to Codex 0.142.0")
++        bwrap = shutil.which("bwrap", path=dict(authority.environment).get("PATH", os.defpath))
++        if bwrap is None:
++            raise OSError("Qualified Host has no bubblewrap binary")
++        assert bwrap is not None
++        bwrap_path = Path(bwrap).resolve(strict=True)
++        if any(
++            bwrap_path.is_relative_to(root.resolve()) for root in authority.required.write_roots
++        ):
++            raise ValueError("Bubblewrap binary is inside a tool write grant")
++        if b"--perms" not in await _probe(bwrap_path, "--help", environment):
++            raise OSError("System bubblewrap cannot preserve the pinned CLI's mount semantics")
++        root = Path(tempfile.mkdtemp(prefix="om-executor-", dir="/tmp")).resolve()
++        # No target business starts here. Only the qualified, fixed CLI may own tool namespaces.
++        process = None
++        launch_env = dict(authority.environment)
++        try:
++            wrapper = root / "launch" / "bwrap"
++            wrapper.parent.mkdir(mode=0o700)
++            wrapper.write_text(
++                f"#!{sys.executable}\n"
++                "from omnigent.harnesses.codex_native.executor_bwrap import main\n"
++                f"main({str(bwrap_path)!r})\n"
++            )
++            wrapper.chmod(0o700)
++            launch_env["PATH"] = (
++                str(wrapper.parent) + os.pathsep + launch_env.get("PATH", os.defpath)
++            )
++            if b"--perms" not in await _probe(wrapper, "--help", launch_env):
++                raise OSError("Required bubblewrap adapter is unavailable")
++            process = await asyncio.create_subprocess_exec(
++                str(binary),
++                "exec-server",
++                "--listen",
++                "stdio",
++                stdin=asyncio.subprocess.PIPE,
++                stdout=asyncio.subprocess.PIPE,
++                stderr=asyncio.subprocess.DEVNULL,
++                env=launch_env,
++                limit=8 * 1024 * 1024,
++                **_proc.spawn_kwargs(),
++            )
++        except BaseException:
++            shutil.rmtree(root)
++            raise
++        assert process is not None
++        _proc.remember_process_group(process)
++        executor = _FixedExecClient(process)
++        backend = None
++        try:
++            backend = cls(authority, model, policy, server_client, executor, root)
++            backend.native_binary = binary
++            backend.launch_environment = launch_env
++            await asyncio.wait_for(executor.connect(), 15)
++            backend.server = await asyncio.start_unix_server(
++                backend._serve, path=str(root / "exec.sock"), limit=8 * 1024 * 1024
++            )
++            (root / "exec.sock").chmod(0o600)
++            return backend
++        except BaseException:
++            if backend is not None:
++                await backend.close()
++            else:
++                await executor.close()
++                shutil.rmtree(root)
++            raise
++
++    def endpoint(self) -> SessionExecutorEndpoint:
++        path = self.root / "exec.sock"
++        info = path.lstat()
++        return SessionExecutorEndpoint(
++            self.authority.session_id,
++            self.authority.runner_id,
++            self.authority.generation,
++            path,
++            info.st_dev,
++            info.st_ino,
++        )
++
++    def _verify(self) -> None:
++        if self._closed:
++            raise ConnectionError("Executor is closed")
++        self.model.verify(session_id=self.authority.session_id, runner_id=self.authority.runner_id)
++        self.policy.verify(
++            session_id=self.authority.session_id, runner_id=self.authority.runner_id
++        )
++        if (
++            self.model.generation != self.authority.generation
++            or self.policy.generation != self.authority.generation
++        ):
++            raise ValueError("Executor Session generation changed")
++
++    def bind_mcp(self, runtime: CodexPrivateRuntime) -> None:
++        """Bind only the framework's exact bridge child, never a caller-selected role."""
++        from omnigent.harnesses.codex_native.bridge import codex_mcp_config_overrides
++
++        self._verify()
++        if (
++            self._mcp is not None
++            or not session_ids_match(runtime.session_id, self.authority.session_id)
++            or runtime.generation != self.authority.generation
++            or runtime.executor != self.endpoint()
++        ):
++            raise ValueError("MCP runtime differs from its Session executor")
++        control = runtime.root / "mcp"
++        for directory in (runtime.root, runtime.bridge, control):
++            info = directory.lstat()
++            if (
++                directory.is_symlink()
++                or not directory.is_dir()
++                or directory.resolve() != directory
++                or info.st_uid != os.getuid()
++                or info.st_mode & 0o077
++            ):
++                raise ValueError("MCP runtime directory is not private")
++        config = json.loads((runtime.bridge / "bridge.json").read_text())
++        if set(config) != {"token"} or not isinstance(config["token"], str) or not config["token"]:
++            raise ValueError("MCP bridge must expose only original relay tools")
++        required = with_additional_write_roots(self.authority.required, [runtime.bridge, control])
++        required = self.policy.apply(required, session_id=self.authority.session_id)
++        scoped = replace(self.authority, policy_json=json.dumps(required.to_jsonable()))
++        argv = (
++            str(self.worker),
++            "-I",
++            "-m",
++            "omnigent.harnesses.claude_native.bridge",
++            "serve-mcp",
++            "--bridge-dir",
++            str(runtime.bridge),
++        )
++        self._mcp = argv, scoped, control
++        runtime.mcp_overrides = (
++            *codex_mcp_config_overrides(runtime.bridge, python_executable=str(self.worker)),
++            "mcp_servers.omnigent.environment_id=" + json.dumps(self.endpoint().environment_id),
++            "mcp_servers.omnigent.cwd=" + json.dumps(str(self.authority.cwd)),
++        )
++
++    def _mcp_authority(self, params: dict[str, Any]) -> SessionExecutionPolicy | None:
++        if self._mcp is None or params.get("argv") != list(self._mcp[0]):
++            return None
++        expected_env = {
++            "inherit": "core",
++            "ignoreDefaultExcludes": True,
++            "exclude": [],
++            "set": {},
++            "includeOnly": [],
++        }
++        if (
++            params.get("cwd") != self.authority.cwd.as_uri()
++            or params.get("env", {}) != {}
++            or params.get("envPolicy") != expected_env
++            or params.get("sandbox") is not None
++            or params.get("tty") is not False
++            or params.get("pipeStdin") is not True
++            or params.get("arg0") is not None
++            or params.get("enforceManagedNetwork") is not False
++            or set(params)
++            - {
++                "processId",
++                "argv",
++                "cwd",
++                "env",
++                "envPolicy",
++                "sandbox",
++                "tty",
++                "pipeStdin",
++                "arg0",
++                "enforceManagedNetwork",
++            }
++        ):
++            raise ValueError("Configured MCP launch differs from its fixed Session role")
++        return self._mcp[1]
++
++    async def _authorize(self, method: str, params: dict[str, Any]) -> None:
++        tool = (
++            "Bash"
++            if method == "process/start"
++            else (
++                "Write"
++                if method in {"fs/writeFile", "fs/remove", "fs/copy", "fs/createDirectory"}
++                else "Read"
++            )
++        )
++        arguments = dict(params)
++        arguments.pop("sandbox", None)
++        arguments.pop("env", None)
++        arguments.pop("envPolicy", None)
++        if method == "process/start":
++            arguments = {"command": shlex.join(params["argv"])}
++        request = hook_payload_to_evaluation_request(
++            "PreToolUse", {"tool_name": tool, "tool_input": arguments}
++        )
++        assert request is not None
++        request["event"]["context"]["harness"] = "codex-native"
++        response = await self.server_client.post(
++            f"/v1/sessions/{self.authority.session_id}/policies/evaluate",
++            json={**request, "_omnigent_elicitation_id": uuid4().hex},
++            timeout=86400.0,
++        )
++        response.raise_for_status()
++        result = response.json()
++        if not isinstance(result, dict) or result.get("result") != "POLICY_ACTION_ALLOW":
++            raise PermissionError("Original Session policy did not allow this operation")
++
++    def _context(
++        self, params: dict[str, Any], authority: SessionExecutionPolicy | None = None
++    ) -> dict[str, Any]:
++        return (authority or self.authority).prepare(
++            params.get("sandbox"),
++            worker=self.worker,
++            plan_root=self.plan_root,
++            binary=self.native_binary,
++        )
++
++    def _tool_environment(self, params: dict[str, Any]) -> dict[str, str]:
++        allowed = dict(self.authority.environment)
++        policy = params.get("envPolicy")
++        env = dict(allowed)
++        if policy is not None:
++            if not isinstance(policy, dict):
++                raise ValueError("Malformed process environment policy")
++            inherit = policy.get("inherit")
++            if inherit == "none":
++                env = {}
++            elif inherit == "core":
++                core = {
++                    "HOME",
++                    "LOGNAME",
++                    "PATH",
++                    "SHELL",
++                    "USER",
++                    "USERNAME",
++                    "SYSTEMROOT",
++                    "COMSPEC",
++                }
++                env = {name: value for name, value in env.items() if name.upper() in core}
++            elif inherit != "all":
++                raise ValueError("Unsupported process environment inheritance")
++            exclude = policy.get("exclude", [])
++            if not policy.get("ignoreDefaultExcludes", False):
++                exclude = [*exclude, "*KEY*", "*SECRET*", "*TOKEN*"]
++            env = {
++                name: value
++                for name, value in env.items()
++                if not any(
++                    fnmatch.fnmatchcase(name.upper(), pattern.upper()) for pattern in exclude
++                )
++            }
++            requested = policy.get("set", {})
++            if not isinstance(requested, dict) or any(name not in allowed for name in requested):
++                raise ValueError("Client environment exceeds original grants")
++            env.update(requested)
++            include = policy.get("includeOnly", [])
++            if include:
++                env = {
++                    name: value
++                    for name, value in env.items()
++                    if any(
++                        fnmatch.fnmatchcase(name.upper(), pattern.upper()) for pattern in include
++                    )
++                }
++        requested = params.get("env", {})
++        if (
++            not isinstance(requested, dict)
++            or any(name not in allowed for name in requested)
++            or any(not isinstance(value, str) for value in requested.values())
++        ):
++            raise ValueError("Client environment exceeds original grants")
++        env.update(requested)
++        return env
++
++    async def _launch(
++        self,
++        method: str,
++        params: dict[str, Any],
++        *,
++        key: str,
++        context: dict[str, Any],
++        authority: SessionExecutionPolicy | None = None,
++    ) -> dict[str, Any]:
++        scoped = authority or self.authority
++        internal = uuid4().hex
++        plan: dict[str, Any] = {
++            "operation": method,
++            "cwd": str(self.authority.cwd),
++            "required": scoped.required.to_jsonable(),
++            "params": params,
++            "context": context,
++        }
++        if method == "process/start":
++            cwd = native_path(params["cwd"]).resolve()
++            scoped.check_path(context, cwd, write=False)
++            argv = params.get("argv")
++            if not isinstance(argv, list) or not argv or any(not isinstance(x, str) for x in argv):
++                raise ValueError("Process argv is invalid")
++            if params.get("arg0") is not None:
++                raise ValueError("Custom argv0 is not qualified for required execution")
++            # Client values never affect the trusted Python bootstrap's import or activation.
++            plan.update(argv=argv, cwd=str(cwd), env=self._tool_environment(params))
++            if authority is not None:
++                assert self._mcp is not None and authority is self._mcp[1]
++                control = self._mcp[2] / internal
++                control.mkdir(mode=0o700)
++                info = control.lstat()
++                self._mcp_controls[key] = control, info.st_dev, info.st_ino
++                plan["env"]["OMNIGENT_HARNESS_TMP_PARENT"] = str(control)
++                plan["supervised"] = True
++        path = self.plan_root / (internal + ".json")
++        self.plans[key] = path
++        request: dict[str, Any] = {
++            "processId": internal,
++            "argv": [
++                str(self.worker),
++                "-I",
++                "-m",
++                "omnigent.harnesses.codex_native.executor_worker",
++                str(path),
++            ],
++            "cwd": self.authority.cwd.as_uri(),
++            "env": dict(self.launch_environment),
++            "envPolicy": {
++                "inherit": "none",
++                "ignoreDefaultExcludes": False,
++                "exclude": [],
++                "set": {},
++                "includeOnly": [],
++            },
++            "tty": bool(params.get("tty")) if method == "process/start" else False,
++            "pipeStdin": bool(params.get("pipeStdin"))
++            if method == "process/start"
++            else method == "fs/open",
++            "arg0": None,
++            "sandbox": context,
++            "enforceManagedNetwork": False,
++        }
++        try:
++            with path.open("x") as output:
++                os.chmod(path, 0o600)
++                json.dump(plan, output)
++            self.processes[key] = internal
++            return await self.executor.request("process/start", request)
++        except BaseException:
++            await self._terminate(key)
++            raise
++
++    async def _terminate(self, key: str) -> None:
++        internal = self.processes.get(key)
++        if internal is not None:
++            await self.executor.request("process/terminate", {"processId": internal})
++        self.processes.pop(key, None)
++        path = self.plans.pop(key, None)
++        if path is not None:
++            path.unlink(missing_ok=True)
++        control = self._mcp_controls.pop(key, None)
++        if control is not None:
++            directory, device, inode = control
++            with contextlib.suppress(FileNotFoundError):
++                info = directory.lstat()
++                if directory.is_symlink() or (info.st_dev, info.st_ino) != (device, inode):
++                    raise ValueError("MCP control directory ownership changed")
++                shutil.rmtree(directory)
++
++    async def dispatch(
++        self,
++        method: str,
++        params: dict[str, Any],
++        *,
++        pending: _PendingStart | None = None,
++    ) -> dict[str, Any]:
++        self._verify()
++        if method == "process/start":
++            key = params.get("processId")
++            if (
++                not isinstance(key, str)
++                or not key
++                or key in self.processes
++                or (key in self.pending_starts and self.pending_starts[key] is not pending)
++            ):
++                raise ValueError("Process handle is missing or already owned")
++            pending = pending or _PendingStart()
++            self.pending_starts[key] = pending
++            pending.task = asyncio.current_task()
++            try:
++                if pending.cancelled:
++                    raise asyncio.CancelledError
++                authority = self._mcp_authority(params)
++                context = self._context(params, authority)
++                # Configured bridge startup is infrastructure; its tool calls retain
++                # the original MCP hook and Session relay policy decisions.
++                if authority is None:
++                    await self._authorize(method, params)
++                if pending.cancelled:
++                    raise asyncio.CancelledError
++                await self._launch(method, params, key=key, context=context, authority=authority)
++                return {"processId": key}
++            finally:
++                if self.pending_starts.get(key) is pending:
++                    del self.pending_starts[key]
++        if method in {"process/read", "process/write", "process/signal", "process/terminate"}:
++            key = params.get("processId")
++            if (
++                method == "process/terminate"
++                and isinstance(key, str)
++                and key in self.pending_starts
++            ):
++                starting = self.pending_starts[key]
++                starting.cancelled = True
++                if starting.task is not None:
++                    starting.task.cancel()
++                    with contextlib.suppress(asyncio.CancelledError):
++                        await starting.task
++                return {"running": False}
++            if not isinstance(key, str) or key not in self.processes:
++                raise PermissionError("Process handle is not owned by this Session connection")
++            if method == "process/terminate":
++                await self._terminate(key)
++                return {"running": False}
++            response = await self.executor.request(
++                method, {**params, "processId": self.processes[key]}
++            )
++            return _result(response)
++        if method.startswith("fs/"):
++            return await self._filesystem(method, params)
++        if method == "environment/info":
++            response = await self.executor.request(method, {})
++            return _result(response)
++        raise ValueError("Unqualified executor method")
++
++    async def _filesystem(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
++        if method in {"fs/readBlock", "fs/close"}:
++            handle = params.get("handleId")
++            if not isinstance(handle, str):
++                raise ValueError("File handle is missing")
++            owned = self.handles.get(handle)
++            if owned is None:
++                raise PermissionError("File handle is not owned by this connection")
++            if method == "fs/close":
++                await self._file_write(owned, {"close": True})
++                reply = await self._file_reply(owned)
++                if reply.get("closed") is not True:
++                    raise OSError("File worker did not close its owned descriptor")
++                await self._terminate(owned.key)
++                del self.handles[handle]
++                return {}
++            offset, length = params.get("offset"), params.get("len")
++            if (
++                not isinstance(offset, int)
++                or offset < 0
++                or not isinstance(length, int)
++                or not 0 <= length <= 1048576
++            ):
++                raise ValueError("Invalid bounded file read")
++            await self._file_write(owned, {"offset": offset, "len": length})
++            return await self._file_reply(owned)
++        context = self._context(params)
++        write = method in {"fs/writeFile", "fs/createDirectory", "fs/remove"}
++        path = native_path(params.get("sourcePath") if method == "fs/copy" else params.get("path"))
++        self.authority.check_path(context, path, write=write)
++        if method == "fs/copy":
++            self.authority.check_path(
++                context, native_path(params.get("destinationPath")), write=True
++            )
++        await self._authorize(method, params)
++        key = "fs-" + uuid4().hex
++        if method == "fs/open":
++            handle = params.get("handleId")
++            if not isinstance(handle, str) or handle in self.handles:
++                raise ValueError("File handle is missing or already owned")
++            owned = _ReadHandle(key)
++            try:
++                await self._launch(method, params, key=key, context=context)
++                reply = await self._file_reply(owned)
++                if reply.get("opened") is not True:
++                    raise OSError("File worker did not open its owned descriptor")
++                self.handles[handle] = owned
++                return {"handleId": handle}
++            except BaseException:
++                await self._terminate(key)
++                raise
++        spool = self.spool_root / (key + ".bytes")
++        operation = "fs/open" if method == "fs/open" else method
++        try:
++            await self._launch(operation, params, key=key, context=context)
++            after = 0
++            output_bytes = 0
++            with spool.open("xb") as output:
++                os.chmod(spool, 0o600)
++                while True:
++                    response = await self.executor.request(
++                        "process/read",
++                        {
++                            "processId": self.processes[key],
++                            "afterSeq": after,
++                            "maxBytes": 65536,
++                            "waitMs": 1000,
++                        },
++                    )
++                    result = _result(response)
++                    for chunk in result["chunks"]:
++                        if chunk["stream"] == "stdout":
++                            data = base64.b64decode(chunk["chunk"], validate=True)
++                            if len(data) > FS_RESPONSE_LIMIT_BYTES - output_bytes:
++                                raise ValueError("Use the bounded filesystem stream for this file")
++                            output.write(data)
++                            output_bytes += len(data)
++                    after = result["nextSeq"]
++                    if result["exited"]:
++                        if result["exitCode"] != 0 or result.get("failure"):
++                            raise OSError("Sandboxed filesystem worker failed")
++                        break
++            return json.loads(spool.read_bytes())
++        finally:
++            try:
++                await self._terminate(key)
++            finally:
++                spool.unlink(missing_ok=True)
++
++    async def _file_write(self, owned: _ReadHandle, request: dict[str, Any]) -> None:
++        response = await self.executor.request(
++            "process/write",
++            {
++                "processId": self.processes[owned.key],
++                "chunk": base64.b64encode(json.dumps(request).encode() + b"\n").decode(),
++                "writeId": uuid4().hex,
++            },
++        )
++        if _result(response).get("status") != "accepted":
++            raise OSError("File worker is not accepting owned requests")
++
++    async def _file_reply(self, owned: _ReadHandle) -> dict[str, Any]:
++        output = bytearray()
++        while True:
++            response = await self.executor.request(
++                "process/read",
++                {
++                    "processId": self.processes[owned.key],
++                    "afterSeq": owned.after_seq,
++                    "maxBytes": 65536,
++                    "waitMs": 1000,
++                },
++            )
++            result = _result(response)
++            for chunk in result["chunks"]:
++                if chunk["stream"] == "stdout":
++                    output.extend(base64.b64decode(chunk["chunk"], validate=True))
++            owned.after_seq = result["nextSeq"]
++            if len(output) > 2 * 1048576:
++                raise OSError("File worker response exceeded its bounded frame")
++            if output.endswith(b"\n"):
++                value = json.loads(output)
++                if not isinstance(value, dict):
++                    raise ValueError("Invalid file worker response")
++                return value
++            if result["exited"]:
++                raise OSError("File worker exited before its reply")
++
++    async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
++        if self._connection is not None or self._closed:
++            writer.close()
++            return
++        self._connection = writer
++        initialized = False
++        incoming: asyncio.Queue[tuple[dict[str, Any], _PendingStart | None]] = asyncio.Queue(
++            maxsize=32
++        )
++        eof = asyncio.Event()
++
++        async def receive() -> None:
++            try:
++                while line := await reader.readline():
++                    request = json.loads(line)
++                    method, params = request.get("method"), request.get("params", {})
++                    key = params.get("processId")
++                    if (
++                        initialized
++                        and method == "process/terminate"
++                        and isinstance(key, str)
++                        and key in self.pending_starts
++                        and request.get("id") is not None
++                    ):
++                        result = await self.dispatch(method, params)
++                        await emit({"id": request["id"], "result": result})
++                        continue
++                    pending = None
++                    if (
++                        method == "process/start"
++                        and isinstance(key, str)
++                        and key not in self.pending_starts
++                        and key not in self.processes
++                    ):
++                        pending = _PendingStart()
++                        self.pending_starts[key] = pending
++                    incoming.put_nowait((request, pending))
++            finally:
++                eof.set()
++
++        async def emit(message: dict[str, Any]) -> None:
++            writer.write(json.dumps(message).encode() + b"\n")
++            await writer.drain()
++
++        async def notifications() -> None:
++            async for event in self.executor.iter_events():
++                params = event.get("params", {})
++                if not isinstance(params, dict):
++                    continue
++                internal = params.get("processId")
++                key = next(
++                    (key for key, value in self.processes.items() if value == internal), None
++                )
++                if key is not None and not key.startswith("fs-"):
++                    await emit({**event, "params": {**params, "processId": key}})
++
++        events = asyncio.create_task(notifications())
++        receiver = asyncio.create_task(receive())
++        try:
++            while not eof.is_set():
++                next_line = asyncio.create_task(incoming.get())
++                disconnected = asyncio.create_task(eof.wait())
++                done, _ = await asyncio.wait(
++                    (next_line, disconnected), return_when=asyncio.FIRST_COMPLETED
++                )
++                disconnected.cancel()
++                if next_line not in done:
++                    next_line.cancel()
++                    break
++                request, pending = next_line.result()
++                method, params = request["method"], request.get("params", {})
++                request_id = request.get("id")
++                if method == "initialized" and request_id is None:
++                    continue
++                if request_id is None:
++                    raise ValueError("Unqualified executor notification")
++                try:
++                    if method == "initialize" and not initialized:
++                        if params.get("resumeSessionId") not in (None, self.authority.generation):
++                            raise ValueError("Executor resume identity differs")
++                        result = {"sessionId": self.authority.generation}
++                        initialized = True
++                    elif not initialized:
++                        raise ValueError("Executor must initialize first")
++                    else:
++                        if eof.is_set():
++                            break
++                        task = asyncio.create_task(self.dispatch(method, params, pending=pending))
++                        self._active_request = task
++                        disconnected = asyncio.create_task(eof.wait())
++                        # Requests are sequential in the pinned server; detect EOF while ASK parks.
++                        done, _ = await asyncio.wait(
++                            (task, disconnected), return_when=asyncio.FIRST_COMPLETED
++                        )
++                        if disconnected in done:
++                            task.cancel()
++                            with contextlib.suppress(asyncio.CancelledError):
++                                await task
++                            self._active_request = None
++                            raise ConnectionError("Executor disconnected")
++                        disconnected.cancel()
++                        with contextlib.suppress(asyncio.CancelledError):
++                            await disconnected
++                        try:
++                            result = task.result()
++                        finally:
++                            self._active_request = None
++                    await emit({"id": request_id, "result": result})
++                except asyncio.CancelledError:
++                    if eof.is_set() or self._closed:
++                        raise
++                    await emit(
++                        {
++                            "id": request_id,
++                            "error": {
++                                "code": -32800,
++                                "message": "Owned process start was cancelled",
++                            },
++                        }
++                    )
++                except (ValueError, PermissionError, OSError, httpx.HTTPError) as error:
++                    await emit(
++                        {"id": request_id, "error": {"code": -32602, "message": str(error)}}
++                    )
++        except (ConnectionError, OSError):
++            pass
++        finally:
++            receiver.cancel()
++            with contextlib.suppress(asyncio.CancelledError, asyncio.QueueFull):
++                await receiver
++            events.cancel()
++            with contextlib.suppress(asyncio.CancelledError):
++                await events
++            writer.close()
++            try:
++                with contextlib.suppress(ConnectionError, OSError):
++                    await writer.wait_closed()
++            finally:
++                self._connection = None
++                await self.close()
++
++    async def close(self) -> None:
++        if self._closed:
++            return
++        self._closed = True
++        for pending in self.pending_starts.values():
++            pending.cancelled = True
++        if self._active_request is not None:
++            self._active_request.cancel()
++            with contextlib.suppress(asyncio.CancelledError, Exception):
++                await self._active_request
++        if self._connection is not None:
++            self._connection.close()
++        if self.server is not None:
++            self.server.close()
++            await self.server.wait_closed()
++        try:
++            for key in list(self.processes):
++                with contextlib.suppress(ConnectionError, OSError):
++                    await self._terminate(key)
++        finally:
++            await self.executor.close()
++            info = self.root.lstat()
++            if (info.st_dev, info.st_ino) != self._root_identity:
++                raise ValueError("Executor temporary root ownership changed")
++            shutil.rmtree(self.root)
+diff --git a/omnigent/harnesses/codex_native/executor_bwrap.py b/omnigent/harnesses/codex_native/executor_bwrap.py
+new file mode 100644
+--- /dev/null
++++ b/omnigent/harnesses/codex_native/executor_bwrap.py
+@@ -0,0 +1,34 @@
++"""Preserve Omni namespace flags in the fixed CLI's single bubblewrap launch."""
++
++from __future__ import annotations
++
++import os
++import sys
++from pathlib import Path
++
++
++def required_bwrap_argv(binary: Path, arguments: list[str]) -> list[str]:
++    """Keep the native mount construction and add original UTS/IPC separation."""
++    if arguments in (["--help"], ["--version"]):
++        return [str(binary), *arguments]
++    required = {
++        "--unshare-user",
++        "--unshare-pid",
++        "--unshare-net",
++        "--new-session",
++        "--die-with-parent",
++    }
++    if "--" not in arguments:
++        raise ValueError("Missing native bubblewrap command boundary")
++    boundary = arguments.index("--")
++    options = arguments[:boundary]
++    if "--share-net" in options or "--share-user" in options:
++        raise ValueError("Native executor attempted to share a required namespace")
++    missing = sorted(required.difference(options))
++    return [str(binary), "--unshare-uts", "--unshare-ipc", *missing, *arguments]
++
++
++def main(binary: str) -> None:
++    path = Path(binary)
++    argv = required_bwrap_argv(path, sys.argv[1:])
++    os.execv(path, argv)
+diff --git a/omnigent/harnesses/codex_native/executor_policy.py b/omnigent/harnesses/codex_native/executor_policy.py
+new file mode 100644
+--- /dev/null
++++ b/omnigent/harnesses/codex_native/executor_policy.py
+@@ -0,0 +1,313 @@
++"""Server-owned policy preparation for the fixed 0.142 execution protocol."""
++
++from __future__ import annotations
++
++import json
++from collections.abc import Mapping
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Any
++from urllib.parse import unquote, urlsplit
++
++from omnigent.inner.bwrap_sandbox import BwrapSandboxBackend, _ensure_executable_visible
++from omnigent.inner.os_env import (
++    _assert_read_allowed,
++    _assert_within_reach,
++    _assert_write_allowed,
++    build_helper_env,
++)
++from omnigent.inner.sandbox import SandboxPolicy
++from omnigent.runner.session_channels import SessionRelayChannel
++
++_ACCESS = {"deny": 0, "read": 1, "write": 2}
++_METADATA = (".git", ".agents", ".codex")
++FS_RESPONSE_LIMIT_BYTES = 8 * 1024 * 1024
++_LINUX_MINIMAL_READ_ROOTS = (
++    "/bin",
++    "/sbin",
++    "/usr",
++    "/etc",
++    "/lib",
++    "/lib64",
++    "/nix/store",
++    "/run/current-system/sw",
++)
++
++
++def native_path(value: object) -> Path:
++    """Accept only local absolute file URIs from the pinned protocol."""
++    if not isinstance(value, str):
++        raise ValueError("Expected a file URI")
++    uri = urlsplit(value)
++    if uri.scheme != "file" or uri.netloc or uri.query or uri.fragment:
++        raise ValueError("Executor path must be a local file URI")
++    path = Path(unquote(uri.path))
++    if not path.is_absolute() or "\0" in str(path):
++        raise ValueError("Executor path must be absolute")
++    return path
++
++
++def _access(entries: dict[Path, int], path: Path) -> int:
++    matches = [
++        (len(root.parts), access)
++        for root, access in entries.items()
++        if path == root or root in path.parents
++    ]
++    return max(matches, default=(0, 0))[1]
++
++
++@dataclass(frozen=True)
++class SessionExecutionPolicy:
++    """Immutable authority copied from requiredSpec, never from executor RPC."""
++
++    session_id: str
++    runner_id: str
++    generation: str
++    cwd: Path
++    policy_json: str
++    environment: tuple[tuple[str, str], ...]
++
++    @classmethod
++    def bind(
++        cls,
++        model: SessionRelayChannel,
++        policy: SessionRelayChannel,
++        cwd: Path,
++        required: SandboxPolicy,
++        parent_env: Mapping[str, str],
++    ) -> SessionExecutionPolicy:
++        model.verify(session_id=model.session_id, runner_id=model.runner_id)
++        policy.verify(session_id=model.session_id, runner_id=model.runner_id)
++        if (
++            model.role != "model"
++            or policy.role != "policy"
++            or policy.generation != model.generation
++        ):
++            raise ValueError("Executor channels do not share Session authority")
++        if (
++            not required.active
++            or required.backend_type != "linux_bwrap"
++            or required.allow_network
++            or required.copy_on_write_roots
++            or required.credential_proxy
++            or required.git_ssh
++            or required.session_relay_pairs()
++            or required.egress_socket_path
++            or required.codex_requirements_path
++            or required.codex_environments_path
++        ):
++            raise ValueError("Executor requires the original, unexpanded linux_bwrap policy")
++        resolved = cwd.resolve(strict=True)
++        if not resolved.is_dir():
++            raise ValueError("Executor workspace is not a directory")
++        return cls(
++            model.session_id,
++            model.runner_id,
++            model.generation,
++            resolved,
++            json.dumps(required.to_jsonable(), sort_keys=True),
++            tuple(sorted(build_helper_env(parent_env, required).items())),
++        )
++
++    @property
++    def required(self) -> SandboxPolicy:
++        return SandboxPolicy.from_jsonable(json.loads(self.policy_json))
++
++    def _server_entries(
++        self, worker: Path, plan_root: Path, binary: Path | None = None
++    ) -> dict[Path, int]:
++        required = self.required
++        # Reuse the original mount/mask builder; unknown mount shapes fail closed.
++        if any(not path.exists() for path in required.write_roots):
++            raise ValueError("Declared write roots must already exist")
++        argv = BwrapSandboxBackend().wrap_launcher_argv(
++            [str(worker)],
++            required,
++            self.cwd,
++            target=str(binary) if binary else None,
++        )
++        entries: dict[Path, int] = {Path("/"): 0}
++        index = 1
++        while index < len(argv) and argv[index] != "--":
++            option = argv[index]
++            if option in {"--bind", "--bind-try", "--ro-bind", "--ro-bind-try"}:
++                source, target = Path(argv[index + 1]), Path(argv[index + 2])
++                if source == Path("/dev/null") and source != target:
++                    entries[target] = 0
++                elif source != target:
++                    if option.startswith("--ro-") and source.resolve() == target.resolve():
++                        entries[target] = 1
++                    else:
++                        raise ValueError("Unsupported executor mount translation")
++                elif source.exists():
++                    entries[target] = 1 if option.startswith("--ro-") else 2
++                index += 3
++            elif option in {"--tmpfs", "--proc", "--dev", "--dir", "--chdir"}:
++                target = Path(argv[index + 1])
++                if option == "--tmpfs" and target != Path("/tmp"):
++                    entries[target] = 0
++                index += 2
++            elif option == "--setenv":
++                index += 3
++            elif option in {
++                "--unshare-net",
++                "--unshare-pid",
++                "--unshare-uts",
++                "--unshare-ipc",
++                "--die-with-parent",
++                "--new-session",
++            }:
++                index += 1
++            else:
++                raise ValueError(f"Unsupported executor mount option: {option}")
++        for path in (plan_root, worker):
++            if any(path.is_relative_to(root.resolve()) for root in required.write_roots):
++                raise ValueError("Trusted executor input overlaps tool write grants")
++            entries[path] = 1
++        for path in [
++            *(required.credential_source_paths or []),
++            *(required.deny_unix_socket_paths or []),
++        ]:
++            entries[path.resolve()] = 0
++        for root in required.write_roots:
++            for name in _METADATA:
++                target = root.resolve() / name
++                entries[target] = min(entries.get(target, 1), 1)
++        return entries
++
++    def prepare(
++        self,
++        client: object,
++        *,
++        worker: Path,
++        plan_root: Path,
++        binary: Path | None = None,
++    ) -> dict[str, Any]:
++        """Fill absent context, intersect supplied restrictions, force managed isolation."""
++        server = self._server_entries(worker, plan_root, binary)
++        client_entries: dict[Path, int] | None = None
++        if client is not None:
++            if not isinstance(client, dict):
++                raise ValueError("Malformed client sandbox")
++            if client.get("cwd") is not None and native_path(client["cwd"]).resolve() != self.cwd:
++                raise ValueError("Client sandbox cwd differs from Session authority")
++            roots = client.get("workspaceRoots", [])
++            if roots and [native_path(root).resolve() for root in roots] != [self.cwd]:
++                raise ValueError("Client workspace roots differ from Session authority")
++            permissions = client.get("permissions")
++            if not isinstance(permissions, dict) or permissions.get("type") != "managed":
++                raise ValueError("Client cannot disable or externalize executor isolation")
++            fs = permissions.get("file_system")
++            if not isinstance(fs, dict) or fs.get("type") != "restricted":
++                raise ValueError("Client filesystem must be restricted")
++            raw_entries = fs.get("entries")
++            if not isinstance(raw_entries, list):
++                raise ValueError("Client filesystem entries are missing")
++            client_entries = {Path("/"): 0}
++            for entry in raw_entries:
++                if not isinstance(entry, dict) or entry.get("access") not in _ACCESS:
++                    raise ValueError("Invalid client filesystem entry")
++                item = entry.get("path")
++                if not isinstance(item, dict):
++                    raise ValueError("Invalid client filesystem path")
++                if item.get("type") == "path":
++                    roots = [native_path(item.get("path")).resolve()]
++                elif item.get("type") == "special" and isinstance(item.get("value"), dict):
++                    special = item["value"]
++                    kind = special.get("kind")
++                    if kind == "root":
++                        roots = [Path("/")]
++                    elif kind == "project_roots":
++                        subpath = special.get("subpath") or ""
++                        target = (self.cwd / subpath).resolve()
++                        if not target.is_relative_to(self.cwd):
++                            raise ValueError("Client project root escapes Session")
++                        roots = [target]
++                    elif kind == "slash_tmp":
++                        roots = [Path("/tmp")] if Path("/tmp").is_dir() else []
++                    elif kind == "tmpdir":
++                        value = dict(self.environment).get("TMPDIR")
++                        roots = [Path(value)] if value and Path(value).is_absolute() else []
++                    elif kind == "minimal":
++                        roots = (
++                            [Path(value) for value in _LINUX_MINIMAL_READ_ROOTS]
++                            if _ACCESS[entry["access"]]
++                            else []
++                        )
++                    else:
++                        raise ValueError("Unsupported client special filesystem restriction")
++                else:
++                    raise ValueError("Unsupported client filesystem restriction")
++                for root in roots:
++                    access = _ACCESS[entry["access"]]
++                    if item.get("type") == "special" and item["value"].get("kind") == "minimal":
++                        access = min(access, 1)
++                    previous = client_entries.get(root)
++                    client_entries[root] = (
++                        access
++                        if previous is None
++                        else (0 if 0 in (previous, access) else max(previous, access))
++                    )
++        boundaries = server.keys() | (client_entries.keys() if client_entries else set())
++        merged = {
++            path: min(_access(server, path), _access(client_entries, path))
++            if client_entries is not None
++            else _access(server, path)
++            for path in boundaries
++        }
++        # The trusted bootstrap and immutable plan are infrastructure, not client data grants.
++        merged[plan_root], merged[worker] = 1, 1
++        runtime = _ensure_executable_visible([str(worker)], self.cwd)
++        if binary is not None:
++            runtime += _ensure_executable_visible([str(binary)], self.cwd)
++        for index in range(0, len(runtime), 3):
++            root = Path(runtime[index + 2])
++            if any(
++                root.resolve().is_relative_to(path.resolve()) for path in self.required.write_roots
++            ):
++                raise ValueError("Trusted Python runtime overlaps tool write grants")
++            merged[root] = 1
++        reduced: dict[Path, int] = {}
++        for path in sorted(merged, key=lambda item: len(item.parts)):
++            if merged[path] != _access(reduced, path):
++                reduced[path] = merged[path]
++        return {
++            "permissions": {
++                "type": "managed",
++                "file_system": {
++                    "type": "restricted",
++                    "entries": [
++                        {
++                            "path": {"type": "path", "path": path.as_uri()},
++                            "access": ("deny", "read", "write")[access],
++                        }
++                        for path, access in sorted(reduced.items(), key=lambda item: str(item[0]))
++                    ],
++                },
++                "network": "restricted",
++            },
++            "cwd": self.cwd.as_uri(),
++            "workspaceRoots": [self.cwd.as_uri()],
++            "windowsSandboxLevel": "disabled",
++            "useLegacyLandlock": False,
++        }
++
++    def check_path(self, context: dict[str, Any], path: Path, *, write: bool) -> None:
++        """Constrain explicit FS calls before they enter the kernel sandbox."""
++        permissions = context["permissions"]
++        entries = permissions["file_system"]["entries"]
++        grants = {
++            native_path(entry["path"]["path"]).resolve(): _ACCESS[entry["access"]]
++            for entry in entries
++        }
++        resolved = path.resolve()
++        original = self.required
++        _assert_within_reach(self.cwd, original, resolved, need_write=write)
++        if write:
++            _assert_write_allowed(original, resolved)
++        else:
++            _assert_read_allowed(original, resolved, self.cwd)
++        if write and any(name in path.parts or name in resolved.parts for name in _METADATA):
++            raise PermissionError("Codex metadata is read-only")
++        if _access(grants, resolved) < (2 if write else 1):
++            raise PermissionError("Executor path is outside Session grants")
+diff --git a/omnigent/harnesses/codex_native/executor_transport.py b/omnigent/harnesses/codex_native/executor_transport.py
+new file mode 100644
+--- /dev/null
++++ b/omnigent/harnesses/codex_native/executor_transport.py
+@@ -0,0 +1,116 @@
++"""Fixed exec-server stdio transport to an already bound private Session socket."""
++
++from __future__ import annotations
++
++import argparse
++import contextlib
++import os
++import socket
++import sys
++import threading
++from dataclasses import dataclass
++from pathlib import Path
++
++from omnigent.runner.session_channels import SessionRelayChannel, verify_session_socket
++
++
++@dataclass(frozen=True)
++class SessionExecutorEndpoint:
++    """Transport identity supplied by the trusted Session executor owner."""
++
++    session_id: str
++    runner_id: str
++    generation: str
++    socket_path: Path
++    device: int
++    inode: int
++
++    def verify(self, model: SessionRelayChannel) -> None:
++        model.verify(session_id=self.session_id, runner_id=self.runner_id)
++        if self.generation != model.generation:
++            raise ValueError("Executor generation differs from its Session")
++        verify_session_socket(self.socket_path, device=self.device, inode=self.inode)
++
++    @property
++    def environment_id(self) -> str:
++        return "session_" + self.session_id.replace("-", "")
++
++    def environment_config(self, model: SessionRelayChannel) -> str:
++        import tomlkit
++
++        self.verify(model)
++        name = self.environment_id
++        return tomlkit.dumps(
++            {
++                "default": name,
++                "include_local": False,
++                "environments": [
++                    {
++                        "id": name,
++                        "program": sys.executable,
++                        "args": [
++                            "-I",
++                            "-m",
++                            __name__,
++                            "--socket",
++                            str(self.socket_path),
++                            "--device",
++                            str(self.device),
++                            "--inode",
++                            str(self.inode),
++                        ],
++                    }
++                ],
++            }
++        )
++
++
++def forward_stdio(path: Path, *, device: int, inode: int, stdin: int, stdout: int) -> None:
++    """Copy the existing protocol unchanged; this connector never executes tools."""
++    verify_session_socket(path, device=device, inode=inode)
++    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
++        stream.connect(str(path))
++        verify_session_socket(path, device=device, inode=inode)
++
++        def send_input() -> None:
++            try:
++                while data := os.read(stdin, 65536):
++                    stream.sendall(data)
++            except OSError:
++                pass
++            finally:
++                with contextlib.suppress(OSError):
++                    stream.shutdown(socket.SHUT_WR)
++
++        sender = threading.Thread(target=send_input, daemon=True)
++        sender.start()
++        try:
++            while data := stream.recv(65536):
++                pending = memoryview(data)
++                while pending:
++                    written = os.write(stdout, pending)
++                    if written == 0:
++                        raise BrokenPipeError("Executor client stopped reading")
++                    pending = pending[written:]
++        finally:
++            with contextlib.suppress(OSError):
++                stream.shutdown(socket.SHUT_RDWR)
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--socket", type=Path, required=True)
++    parser.add_argument("--device", type=int, required=True)
++    parser.add_argument("--inode", type=int, required=True)
++    args = parser.parse_args()
++    forward_stdio(
++        args.socket,
++        device=args.device,
++        inode=args.inode,
++        stdin=sys.stdin.fileno(),
++        stdout=sys.stdout.fileno(),
++    )
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/omnigent/harnesses/codex_native/executor_worker.py b/omnigent/harnesses/codex_native/executor_worker.py
+new file mode 100644
+--- /dev/null
++++ b/omnigent/harnesses/codex_native/executor_worker.py
+@@ -0,0 +1,153 @@
++"""Trusted bootstrap run only after the fixed Codex executor creates its sandbox."""
++
++from __future__ import annotations
++
++import base64
++import json
++import os
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++from typing import Any, BinaryIO
++
++from omnigent.harnesses.codex_native.executor_policy import (
++    FS_RESPONSE_LIMIT_BYTES,
++    SessionExecutionPolicy,
++    native_path,
++)
++from omnigent.inner.bwrap_sandbox import BwrapSandboxBackend
++from omnigent.inner.sandbox import SandboxPolicy
++
++
++def serve_read_handle(path: Path, source: BinaryIO, output: BinaryIO) -> None:
++    """Keep the actual file descriptor inside its original tool namespace."""
++
++    def reply(value: dict[str, Any]) -> None:
++        output.write(json.dumps(value).encode() + b"\n")
++        output.flush()
++
++    with path.open("rb") as file:
++        reply({"opened": True})
++        for line in source:
++            request = json.loads(line)
++            if request.get("close") is True:
++                break
++            offset, length = request.get("offset"), request.get("len")
++            if (
++                type(offset) is not int
++                or offset < 0
++                or type(length) is not int
++                or not 0 <= length <= 1048576
++            ):
++                raise ValueError("Invalid bounded file read")
++            file.seek(offset)
++            chunk = file.read(length)
++            reply(
++                {
++                    "chunk": base64.b64encode(chunk).decode(),
++                    "eof": file.tell() >= os.fstat(file.fileno()).st_size,
++                }
++            )
++    reply({"closed": True})
++
++
++def _read_file_response(path: Path) -> dict[str, str]:
++    overhead = len(json.dumps({"dataBase64": ""}).encode())
++    maximum = max(0, (FS_RESPONSE_LIMIT_BYTES - overhead) // 4 * 3)
++    if path.stat().st_size > maximum:
++        raise ValueError("Use the bounded filesystem stream for this file")
++    with path.open("rb") as source:
++        data = source.read(maximum + 1)
++    if len(data) > maximum:
++        raise ValueError("Use the bounded filesystem stream for this file")
++    return {"dataBase64": base64.b64encode(data).decode("ascii")}
++
++
++def run_plan(plan: dict[str, Any]) -> dict[str, Any] | None:
++    """Apply original hardening before either process exec or filesystem access."""
++    if not sys.platform.startswith("linux"):
++        raise OSError("Required executor hardening needs Linux")
++    required = SandboxPolicy.from_jsonable(plan["required"])
++    if not required.active or required.backend_type != "linux_bwrap" or required.allow_network:
++        raise ValueError("Missing required executor policy")
++    BwrapSandboxBackend().activate(required)
++    operation = plan["operation"]
++    os.chdir(plan["cwd"])
++    if operation == "process/start":
++        argv = plan["argv"]
++        if plan.get("supervised") is True:
++            # The original relay threads must outlive this fixed MCP child.
++            raise SystemExit(subprocess.call(argv, env=plan["env"]))
++        os.execvpe(argv[0], argv, plan["env"])
++    params, context = plan["params"], plan["context"]
++    policy = SessionExecutionPolicy(
++        "", "", "", Path(plan["cwd"]), json.dumps(plan["required"]), ()
++    )
++    write = operation in {"fs/writeFile", "fs/createDirectory", "fs/remove", "fs/copy"}
++    path = native_path(params["sourcePath"] if operation == "fs/copy" else params["path"])
++    policy.check_path(context, path, write=write and operation != "fs/copy")
++    if operation == "fs/open":
++        serve_read_handle(path, sys.stdin.buffer, sys.stdout.buffer)
++        return None
++    if operation == "fs/readFile":
++        return _read_file_response(path)
++    if operation == "fs/writeFile":
++        path.write_bytes(base64.b64decode(params["dataBase64"], validate=True))
++    elif operation == "fs/createDirectory":
++        path.mkdir(parents=bool(params.get("recursive")), exist_ok=True)
++    elif operation == "fs/getMetadata":
++        info = path.lstat()
++        return {
++            "isDirectory": path.is_dir(),
++            "isFile": path.is_file(),
++            "isSymlink": path.is_symlink(),
++            "size": info.st_size,
++            "createdAtMs": int(info.st_ctime * 1000),
++            "modifiedAtMs": int(info.st_mtime * 1000),
++        }
++    elif operation == "fs/canonicalize":
++        return {"path": path.resolve(strict=True).as_uri()}
++    elif operation == "fs/readDirectory":
++        return {
++            "entries": [
++                {"fileName": child.name, "isDirectory": child.is_dir(), "isFile": child.is_file()}
++                for child in path.iterdir()
++            ]
++        }
++    elif operation == "fs/remove":
++        if path.is_dir() and not path.is_symlink():
++            if params.get("recursive"):
++                shutil.rmtree(path)
++            else:
++                path.rmdir()
++        else:
++            path.unlink(missing_ok=bool(params.get("force")))
++    elif operation == "fs/copy":
++        destination = native_path(params["destinationPath"])
++        policy.check_path(context, destination, write=True)
++        if path.is_dir():
++            if not params.get("recursive"):
++                raise IsADirectoryError(str(path))
++            shutil.copytree(path, destination, symlinks=True)
++        else:
++            shutil.copyfile(path, destination)
++    else:
++        raise ValueError("Unsupported executor filesystem operation")
++    return {}
++
++
++def main() -> None:
++    if len(sys.argv) != 2:
++        raise ValueError("Executor worker requires its immutable operation plan")
++    plan_path = Path(sys.argv[1])
++    info = plan_path.lstat()
++    if plan_path.is_symlink() or info.st_uid != os.getuid() or info.st_mode & 0o077:
++        raise PermissionError("Executor operation plan is not private")
++    result = run_plan(json.loads(plan_path.read_text()))
++    if result is not None:
++        sys.stdout.write(json.dumps(result))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/omnigent/harnesses/codex_native/hook.py b/omnigent/harnesses/codex_native/hook.py
+--- a/omnigent/harnesses/codex_native/hook.py
++++ b/omnigent/harnesses/codex_native/hook.py
+@@ -27,6 +27,7 @@
+ from omnigent.native.native_policy_hook import (
+     evaluation_response_to_hook_output,
+     fail_ask_hook_output,
++    fail_closed_hook_output,
+     hook_payload_to_evaluation_request,
+     policy_hook_reauth,
+     post_evaluate_with_retry,
+@@ -110,14 +111,27 @@
+     :returns: Process exit code. Always ``0``.
+     """
+     args = _parse_evaluate_policy_args(argv)
++    required = args.required_session_id is not None or args.required_generation is not None
++    hook_event = args.required_hook_event or "PreToolUse"
++
++    def required_failure(detail: str) -> int:
++        out = fail_closed_hook_output(hook_event, detail)
++        if out is not None:
++            sys.stdout.write(json.dumps(out))
++        return 0
++
+     raw = sys.stdin.read()
+     try:
+         payload = json.loads(raw or "{}")
+     except json.JSONDecodeError as exc:
+         print(f"omnigent codex evaluate-policy hook: malformed JSON: {exc}", file=sys.stderr)
++        if required:
++            return required_failure("Required native hook payload is malformed")
+         return 0
+     if not isinstance(payload, dict):
+         print("omnigent codex evaluate-policy hook: expected JSON object", file=sys.stderr)
++        if required:
++            return required_failure("Required native hook payload is not an object")
+         return 0
+ 
+     bridge_dir = Path(args.bridge_dir)
+@@ -127,11 +141,58 @@
+     # generation, so an answer for the previous session opens no window.
+     cache_generation = policy_allow_cache.generation(bridge_dir)
+     state = read_bridge_state(bridge_dir)
++    if required and args.required_hook_event == "UserPromptSubmit" and state is None:
++        deadline = time.monotonic() + 15.0
++        while state is None and time.monotonic() < deadline:
++            time.sleep(0.05)
++            state = read_bridge_state(bridge_dir)
++    if (
++        required
++        and args.required_hook_event is not None
++        and payload.get("hook_event_name") != args.required_hook_event
++    ):
++        return required_failure("Required native hook event differs")
++    hook_event = args.required_hook_event or payload.get("hook_event_name", "")
++
+     if state is None:
++        if required:
++            return required_failure("Required native session state is missing")
+         return 0
+     session_id = state.session_id
+ 
+-    hook_event = payload.get("hook_event_name", "")
++    required_relay = None
++    if required:
++        if (
++            not args.required_session_id
++            or not args.required_generation
++            or session_id != args.required_session_id
++        ):
++            return required_failure("Required native session binding differs")
++        try:
++            advertisement = json.loads((bridge_dir / "tool_relay.json").read_text())
++        except (OSError, ValueError):
++            return required_failure("Required native policy transport is missing")
++        if (
++            not isinstance(advertisement, dict)
++            or advertisement.get("generation") != args.required_generation
++        ):
++            return required_failure("Required native policy transport binding differs")
++        relay_url = advertisement.get("url")
++        relay_token = advertisement.get("token")
++        relay_session = advertisement.get("session_id")
++        if (
++            not isinstance(relay_url, str)
++            or not isinstance(relay_token, str)
++            or relay_session != session_id
++        ):
++            return required_failure("Required native policy transport binding differs")
++        try:
++            relay_host = urllib.parse.urlsplit(relay_url).hostname
++        except ValueError:
++            return required_failure("Required native policy transport binding differs")
++        if relay_host != "127.0.0.1":
++            return required_failure("Required native policy transport binding differs")
++        required_relay = (relay_url, relay_token, session_id)
+     eval_request = hook_payload_to_evaluation_request(hook_event, payload)
+     if eval_request is None:
+         # Unrecognized hook event or an mcp__omnigent__* tool (relay-enforced).
+@@ -147,14 +208,19 @@
+         context["model"] = model
+ 
+     def _fail_closed(detail: str | None = None) -> int:
+-        out = fail_ask_hook_output(hook_event, detail)
++        out = (fail_closed_hook_output if required else fail_ask_hook_output)(hook_event, detail)
+         if out is not None:
+             sys.stdout.write(json.dumps(out))
+         return 0
+ 
+     # Prefer the relay (non-expiring local token); fall back to direct server
+     # call when the relay isn't up yet (first-call race) or not configured.
+-    relay = read_relay_policy_config(bridge_dir)
++    relay = required_relay if required else read_relay_policy_config(bridge_dir)
++    if relay is not None and relay[2] != session_id:
++        out = fail_closed_hook_output(hook_event, "Policy relay belongs to a different session")
++        if out is not None:
++            sys.stdout.write(json.dumps(out))
++        return 0
+     if relay:
+         relay_url, relay_token, _sid = relay
+         url = relay_policy_evaluate_url(relay_url)
+@@ -179,36 +245,40 @@
+         reauth = policy_hook_reauth(ap_server_url, headers)
+ 
+     requested_at = time.time()
+-    resp, api_error = post_evaluate_with_retry(
+-        url,
+-        headers,
+-        eval_request,
+-        _EVALUATE_POLICY_TIMEOUT_S,
+-        "codex evaluate-policy hook",
+-        reauth=reauth,
+-    )
+-    if resp is None:
+-        return _fail_closed(api_error or (reauth.failure_reason if reauth else None))
+-    if not resp.content:
+-        print("omnigent codex evaluate-policy hook: empty Omnigent response", file=sys.stderr)
+-        return _fail_closed()
+-
+     try:
+-        eval_response = resp.json()
+-    except json.JSONDecodeError:
+-        print(
+-            "omnigent codex evaluate-policy hook: malformed Omnigent response",
+-            file=sys.stderr,
++        resp, api_error = post_evaluate_with_retry(
++            url,
++            headers,
++            eval_request,
++            _EVALUATE_POLICY_TIMEOUT_S,
++            "codex evaluate-policy hook",
++            reauth=reauth,
+         )
+-        return _fail_closed()
+-
+-    # Through the relay the server evaluated the relay's session, which can
+-    # trail a session switch.
+-    if relay is None or relay[2] == session_id:
+-        policy_allow_cache.record(bridge_dir, cache_generation, eval_response, requested_at)
+-    hook_output = evaluation_response_to_hook_output(hook_event, eval_response)
+-    if hook_output is not None:
+-        sys.stdout.write(json.dumps(hook_output))
++        if resp is None:
++            return _fail_closed(api_error or (reauth.failure_reason if reauth else None))
++        if not resp.content:
++            print("omnigent codex evaluate-policy hook: empty Omnigent response", file=sys.stderr)
++            return _fail_closed()
++        try:
++            eval_response = resp.json()
++        except json.JSONDecodeError:
++            print(
++                "omnigent codex evaluate-policy hook: malformed Omnigent response", file=sys.stderr
++            )
++            return _fail_closed()
++        if required and not isinstance(eval_response, dict):
++            return required_failure("Required native policy verdict is not an object")
++        # Through the relay the server evaluated the relay's session, which can
++        # trail a session switch.
++        if relay is None or relay[2] == session_id:
++            policy_allow_cache.record(bridge_dir, cache_generation, eval_response, requested_at)
++        hook_output = evaluation_response_to_hook_output(hook_event, eval_response)
++        if hook_output is not None:
++            sys.stdout.write(json.dumps(hook_output))
++    except Exception:
++        if not required:
++            raise
++        return required_failure("Required native policy evaluation failed")
+     return 0
+ 
+ 
+@@ -224,6 +294,11 @@
+         prog="python -m omnigent.harnesses.codex_native.hook evaluate-policy"
+     )
+     parser.add_argument("--bridge-dir", required=True)
++    parser.add_argument("--required-session-id")
++    parser.add_argument("--required-generation")
++    parser.add_argument(
++        "--required-hook-event", choices=("PreToolUse", "PostToolUse", "UserPromptSubmit")
++    )
+     return parser.parse_args(argv)
+ 
+ 
+diff --git a/omnigent/harnesses/codex_native/main.py b/omnigent/harnesses/codex_native/main.py
+--- a/omnigent/harnesses/codex_native/main.py
++++ b/omnigent/harnesses/codex_native/main.py
+@@ -1923,6 +1923,8 @@
+     model_provider: str,
+     codex_path: str | None,
+     terminal_launch_args: Sequence[str] | None = None,
++    bridge_dir: Path | None = None,
++    fallback_codex_home: Path | None = None,
+ ) -> Path:
+     """
+     Refresh Codex's local rollout JSONL for cold resume.
+@@ -1961,6 +1963,8 @@
+         rollout, but treats the value as informational, so a flaky probe
+         must not cost the carried history.
+     :param terminal_launch_args: Persisted Codex approval/sandbox launch args.
++    :param bridge_dir: Original Session forwarding and dead-letter directory.
++    :param fallback_codex_home: Previous Session home used only for one valid local rollout.
+     :returns: Path to the refreshed rollout, or to a valid local fallback when
+         server history is temporarily unavailable.
+     :raises click.ClickException: If Omnigent history cannot be fetched and no
+@@ -1972,11 +1976,32 @@
+             f"Cannot resume Codex session {session_id!r}: persisted thread id "
+             f"{external_session_id!r} is not a safe Codex rollout id."
+         )
+-    await _replay_dead_letters_before_resume(client, codex_home.parent)
++    original_bridge = bridge_dir or codex_home.parent
++    await _replay_dead_letters_before_resume(client, original_bridge)
+     try:
+         items = await _fetch_all_session_items_for_codex_resume(client, session_id)
+     except _CodexResumeHistoryUnavailableError:
+         existing = _find_codex_rollout(codex_home, external_session_id)
++        if existing is None and fallback_codex_home is not None:
++            legacy = _find_codex_rollout(fallback_codex_home, external_session_id)
++            if legacy is not None and _is_resumable_codex_rollout(
++                legacy, external_session_id=external_session_id
++            ):
++                target = _codex_resume_rollout_path(codex_home, external_session_id)
++                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
++                temporary: Path | None = None
++                try:
++                    with NamedTemporaryFile(
++                        dir=target.parent, prefix=".resume-", delete=False
++                    ) as out:
++                        temporary = Path(out.name)
++                        with legacy.open("rb") as source:
++                            shutil.copyfileobj(source, out, length=1024 * 1024)
++                    os.replace(temporary, target)
++                finally:
++                    if temporary is not None:
++                        temporary.unlink(missing_ok=True)
++                existing = target
+         if existing is not None and _is_resumable_codex_rollout(
+             existing, external_session_id=external_session_id
+         ):
+@@ -1993,7 +2018,7 @@
+     # History stores attachments as raw file_ids; restore the files so the
+     # rebuilt thread can open local cached copies, as on a live turn.
+     items = await resolve_session_item_file_references(client, session_id=session_id, items=items)
+-    items = _codex_items_with_attachment_references(items, bridge_dir=codex_home.parent)
++    items = _codex_items_with_attachment_references(items, bridge_dir=original_bridge)
+     target = _codex_resume_rollout_path(codex_home, external_session_id)
+     cli_version = None
+     if codex_path is not None:
+diff --git a/omnigent/inner/bwrap_sandbox.py b/omnigent/inner/bwrap_sandbox.py
+--- a/omnigent/inner/bwrap_sandbox.py
++++ b/omnigent/inner/bwrap_sandbox.py
+@@ -87,6 +87,7 @@
+     SandboxBackend,
+     SandboxPolicy,
+     register_backend,
++    with_additional_read_roots,
+ )
+ 
+ _LOGGER = logging.getLogger(__name__)
+@@ -430,6 +431,9 @@
+         ``SandboxPolicy.spawn_env_allowlist`` prune in
+         :func:`omnigent.inner.sandbox.run_launcher`.
+         """
++        session_roots = [Path(path).parent for _, path in policy.session_relay_pairs()]
++        if session_roots:
++            policy = with_additional_read_roots(policy, session_roots)
+         policy = self.prepare_launcher_policy(policy)
+         cwd_resolved = cwd.resolve(strict=False)
+         chdir_target = chdir.resolve(strict=False) if chdir is not None else cwd_resolved
+@@ -593,6 +597,41 @@
+         # (same deny-wins ordering as the dotfile mask above).
+         for sock in policy.deny_unix_socket_paths or []:
+             bwrap_args += ["--bind-try", "/dev/null", str(sock)]
++        if policy.codex_requirements_path is not None:
++            requirements = Path(policy.codex_requirements_path)
++            if (
++                not policy.active
++                or policy.allow_network
++                or not requirements.is_absolute()
++                or requirements.resolve() != requirements
++                or not requirements.is_file()
++            ):
++                raise ValueError("Invalid required Codex configuration mount")
++            if any(requirements.is_relative_to(root.resolve()) for root in policy.write_roots):
++                raise ValueError("Required Codex configuration cannot be writable")
++            bwrap_args += [
++                "--dir",
++                "/etc/codex",
++                "--ro-bind",
++                str(requirements),
++                "/etc/codex/requirements.toml",
++            ]
++        if policy.codex_environments_path is not None:
++            source = Path(policy.codex_environments_path)
++            environments_target = source.parent / "home" / "environments.toml"
++            if (
++                policy.codex_requirements_path is None
++                or not policy.active
++                or policy.allow_network
++                or not source.is_absolute()
++                or source.resolve() != source
++                or not source.is_file()
++                or not environments_target.is_file()
++                or environments_target.is_symlink()
++                or any(source.is_relative_to(root.resolve()) for root in policy.write_roots)
++            ):
++                raise ValueError("Invalid required Codex executor configuration mount")
++            bwrap_args += ["--ro-bind", str(source), str(environments_target)]
+ 
+         # Set $TMPDIR (and friends) to the first write_root that lives
+         # under the system temp dir — the parent's
+@@ -685,6 +724,7 @@
+             :attr:`egress_socket_path` to conditionally start the
+             in-namespace relay.
+         """
++        session_relays = policy.session_relay_pairs()
+         _set_no_new_privs()
+         apply_baseline_denylist()
+         apply_seccomp_filter(_bwrap_extra_seccomp_rules())
+@@ -704,6 +744,11 @@
+                 policy.egress_relay_port,
+                 policy.egress_socket_path,
+             )
++        if session_relays:
++            from omnigent.inner.egress.relay import start_relay
++
++            for port, path in session_relays:
++                start_relay(port, path)
+ 
+ 
+ # ---------------------------------------------------------------------------
+diff --git a/omnigent/inner/sandbox.py b/omnigent/inner/sandbox.py
+--- a/omnigent/inner/sandbox.py
++++ b/omnigent/inner/sandbox.py
+@@ -141,6 +141,10 @@
+     :param egress_socket_path: Absolute path (inside the namespace) to
+         the Unix socket connecting to the parent's egress proxy. The
+         relay forwards all traffic through this socket.
++    :param model_relay_port: Session-bound model listener on isolated loopback.
++    :param model_relay_socket_path: Private model relay socket owned by the Host.
++    :param policy_relay_port: Session-bound policy listener on isolated loopback.
++    :param policy_relay_socket_path: Private policy socket owned by the Runner.
+     :param deny_unix_socket_paths: Absolute paths to AF_UNIX (pathname)
+         sockets the helper must NOT be able to ``connect(2)`` to, even
+         when ``allow_network`` is true. Keeps a sandboxed pane from
+@@ -192,6 +196,12 @@
+     bind_host_proc: bool | None = None
+     egress_relay_port: int | None = None
+     egress_socket_path: str | None = None
++    model_relay_port: int | None = None
++    model_relay_socket_path: str | None = None
++    policy_relay_port: int | None = None
++    policy_relay_socket_path: str | None = None
++    codex_requirements_path: str | None = None
++    codex_environments_path: str | None = None
+     git_ssh_socket_path: str | None = None
+     deny_unix_socket_paths: list[Path] | None = None
+     credential_source_paths: list[Path] | None = None
+@@ -217,7 +227,43 @@
+     # like ``credential_proxy`` it is intentionally NOT serialised.
+     mask_scan_skip_roots: list[Path] | None = None
+ 
++    def session_relay_pairs(self) -> list[tuple[int, str]]:
++        """Validate the two trusted session channels without changing egress rules."""
++        pairs: list[tuple[int, str]] = []
++        for port, path in (
++            (self.model_relay_port, self.model_relay_socket_path),
++            (self.policy_relay_port, self.policy_relay_socket_path),
++        ):
++            if port is None and path is None:
++                continue
++            if (
++                type(port) is not int
++                or not 1 <= port <= 65535
++                or not isinstance(path, str)
++                or not path
++                or not Path(path).is_absolute()
++                or str(Path(path).resolve()) != path
++            ):
++                raise ValueError("Invalid session relay pair")
++            if any(port == other_port or path == other_path for other_port, other_path in pairs):
++                raise ValueError("Session relay roles must have distinct endpoints")
++            if port == self.egress_relay_port:
++                raise ValueError("Session relay cannot replace the egress listener")
++            if path in (self.egress_socket_path, self.git_ssh_socket_path):
++                raise ValueError("Session relay cannot replace another broker endpoint")
++            if any(Path(path).is_relative_to(root.resolve()) for root in self.write_roots):
++                raise ValueError("Session relay socket cannot be inside a writable root")
++            if any(Path(path) == root.resolve() for root in self.write_files):
++                raise ValueError("Session relay socket cannot be writable")
++            pairs.append((port, path))
++        if pairs and (not self.active or self.backend_type != "linux_bwrap" or self.allow_network):
++            raise ValueError(
++                "Session relays require an active network-isolated linux_bwrap policy"
++            )
++        return pairs
++
+     def to_jsonable(self) -> dict[str, JsonValue]:
++        self.session_relay_pairs()
+         result: dict[str, JsonValue] = {
+             "backend_type": self.backend_type,
+             "active": self.active,
+@@ -257,6 +303,12 @@
+             "bind_host_proc": self.bind_host_proc,
+             "egress_relay_port": self.egress_relay_port,
+             "egress_socket_path": self.egress_socket_path,
++            "model_relay_port": self.model_relay_port,
++            "model_relay_socket_path": self.model_relay_socket_path,
++            "policy_relay_port": self.policy_relay_port,
++            "policy_relay_socket_path": self.policy_relay_socket_path,
++            "codex_requirements_path": self.codex_requirements_path,
++            "codex_environments_path": self.codex_environments_path,
+             "git_ssh_socket_path": self.git_ssh_socket_path,
+             "deny_unix_socket_paths": (
+                 _json_string_list(self.deny_unix_socket_paths)
+@@ -343,7 +395,7 @@
+             from omnigent.sandbox.copy_on_write import parse_namespace
+ 
+             namespace = parse_namespace(cow_namespace)
+-        return cls(
++        policy = cls(
+             copy_on_write_roots=[Path(str(p)) for p in cow_roots] or None,
+             copy_on_write_namespace=namespace,
+             backend_type=str(data.get("backend_type", "none")),
+@@ -366,6 +418,27 @@
+             deny_unix_socket_paths=deny_unix_socket_paths,
+             credential_source_paths=credential_source_paths,
+         )
++        requirements_path = data.get("codex_requirements_path")
++        if requirements_path is not None:
++            if not isinstance(requirements_path, str):
++                raise ValueError("Invalid Codex requirements path")
++            policy.codex_requirements_path = requirements_path
++        environments_path = data.get("codex_environments_path")
++        if environments_path is not None:
++            if not isinstance(environments_path, str):
++                raise ValueError("Invalid Codex environment configuration path")
++            policy.codex_environments_path = environments_path
++        for role in ("model", "policy"):
++            port = data.get(f"{role}_relay_port")
++            path = data.get(f"{role}_relay_socket_path")
++            if port is None and path is None:
++                continue
++            if type(port) is not int or not isinstance(path, str):
++                raise ValueError("Invalid session relay pair")
++            setattr(policy, f"{role}_relay_port", port)
++            setattr(policy, f"{role}_relay_socket_path", path)
++        policy.session_relay_pairs()
++        return policy
+ 
+ 
+ class ContainmentHandle(Protocol):
+@@ -862,6 +935,12 @@
+         bind_host_proc=policy.bind_host_proc,
+         egress_relay_port=policy.egress_relay_port,
+         egress_socket_path=policy.egress_socket_path,
++        model_relay_port=policy.model_relay_port,
++        model_relay_socket_path=policy.model_relay_socket_path,
++        policy_relay_port=policy.policy_relay_port,
++        policy_relay_socket_path=policy.policy_relay_socket_path,
++        codex_requirements_path=policy.codex_requirements_path,
++        codex_environments_path=policy.codex_environments_path,
+         git_ssh_socket_path=policy.git_ssh_socket_path,
+         deny_unix_socket_paths=(
+             list(policy.deny_unix_socket_paths)
+@@ -929,7 +1008,9 @@
+         for path in (policy.egress_socket_path, policy.git_ssh_socket_path)
+         if path is not None
+     ]
+-    return with_additional_write_roots(policy, roots) if roots else policy
++    policy = with_additional_write_roots(policy, roots) if roots else policy
++    session_roots = [Path(path).parent for _, path in policy.session_relay_pairs()]
++    return with_additional_read_roots(policy, session_roots) if session_roots else policy
+ 
+ 
+ def with_additional_read_roots(
+diff --git a/omnigent/runner/_entry.py b/omnigent/runner/_entry.py
+--- a/omnigent/runner/_entry.py
++++ b/omnigent/runner/_entry.py
+@@ -49,6 +49,7 @@
+ 
+     from omnigent.inner.databricks_executor import _ReusedDatabricksTokenSource
+     from omnigent.runner.native import ResolvedSpec
++    from omnigent.runner.session_channels import SessionRelayChannel
+     from omnigent.runner.transports.ws_tunnel.serve import _ASGIApp
+     from omnigent.spec.types import AgentSpec
+ 
+@@ -1309,6 +1310,19 @@
+     return os.environ.get(RUNNER_ISOLATE_SESSION_ENV_VAR, "").strip() == "1"
+ 
+ 
++def _consume_session_model_channel(runner_id: str) -> SessionRelayChannel | None:
++    """Consume Host metadata once, before creating any child process."""
++    from omnigent.runner.session_channels import SESSION_MODEL_CHANNEL_ENV, SessionRelayChannel
++
++    raw = os.environ.pop(SESSION_MODEL_CHANNEL_ENV, None)
++    if raw is None:
++        return None
++    primary_session = runner_primary_session_id()
++    if primary_session is None:
++        raise ValueError("Managed model channel requires the primary Session")
++    return SessionRelayChannel.from_json(raw, session_id=primary_session, runner_id=runner_id)
++
++
+ def _agent_cache_dest(spec_cache_root: Path, agent_id: str, version: str) -> Path:
+     """
+     Compute the cache directory for an agent bundle, contained to the root.
+@@ -1508,6 +1522,7 @@
+     # restarts (§5 "Persistence" in RUNNER.md).
+     _runner_id = get_stable_runner_id()
+     os.environ[RUNNER_ID_ENV_VAR] = _runner_id
++    session_model_channel = _consume_session_model_channel(_runner_id)
+     # Stamp the Omnigent session marker into the runner's environment so
+     # every process this runner spawns can detect it is running inside an
+     # Omnigent agent session, the way Claude Code sets CLAUDE_CODE and
+@@ -1661,6 +1676,7 @@
+         auth_token=runner_auth_token,
+         auth_token_factory=auth_token_factory,
+         require_start_sandbox=(os.environ.get(REQUIRED_START_SANDBOX_ENV) == "1"),
++        session_model_channel=session_model_channel,
+         native_pane_idle_timeout_s=resolve_native_pane_idle_timeout_s(
+             _load_runner_idle_timeout_s_from_config()
+         ),
+diff --git a/omnigent/runner/app.py b/omnigent/runner/app.py
+--- a/omnigent/runner/app.py
++++ b/omnigent/runner/app.py
+@@ -31,6 +31,7 @@
+     from omnigent.harnesses.claude_native.main import ClaudeNativeUcodeConfig
+     from omnigent.harnesses.codex_native.bridge import CodexNativeBridgeState
+     from omnigent.runner.mcp_manager import RunnerMcpManager
++    from omnigent.runner.session_channels import SessionRelayChannel
+     from omnigent.terminals.registry import TerminalRegistry
+ 
+ import httpx
+@@ -1200,6 +1201,7 @@
+     auth_token_factory: Callable[[], str | None] | None = None,
+     native_pane_idle_timeout_s: float | None = None,
+     require_start_sandbox: bool = False,
++    session_model_channel: SessionRelayChannel | None = None,
+ ) -> FastAPI:
+     """Build a fresh runner FastAPI app.
+ 
+@@ -1746,7 +1748,14 @@
+             terminal_registry=terminal_registry,
+             runner_workspace=runner_workspace,
+             per_session_workspace=per_session_workspace,
+-        )
++            session_model_channel=session_model_channel,
++        )
++    elif (
++        session_model_channel is not None
++        and resource_registry.model_channel_for(session_model_channel.session_id)
++        != session_model_channel
++    ):
++        raise ValueError("Runner resource registry has a different model binding")
+     if require_start_sandbox:
+         resource_registry.require_sandbox_binding()
+     app.state.session_resource_registry = resource_registry
+@@ -1770,7 +1779,45 @@
+         )
+         if enforced is None:
+             raise AgentStartPolicyError("server", "did not supply a required sandbox")
+-        resource_registry.bind_required_os_env(session_id, enforced)
++        if harness in ("codex-native", "native-codex"):
++            resource_registry.bind_required_os_env(
++                session_id, enforced, require_native_channels=True
++            )
++        else:
++            resource_registry.bind_required_os_env(session_id, enforced)
++        if harness in ("codex-native", "native-codex"):
++            from omnigent.harnesses.codex_native.bridge import (
++                CODEX_NATIVE_BRIDGE_ID_LABEL_KEY,
++                bridge_dir_for_bridge_id,
++            )
++
++            model_channel = resource_registry.model_channel_for(session_id)
++            if model_channel is None:
++                raise AgentStartPolicyError("server", "has no Host-bound native model channel")
++            labels = await _session_labels_for_runner_spawn(
++                server_client=server_client, session_id=session_id
++            )
++            directory = bridge_dir_for_bridge_id(
++                labels.get(CODEX_NATIVE_BRIDGE_ID_LABEL_KEY) or session_id
++            )
++            await _ensure_comment_relay_started(
++                session_id, explicit_bridge_dir=directory, policy_transport_only=True
++            )
++            binding = _session_comment_relays.get(session_id)
++            if binding is None:
++                raise AgentStartPolicyError("server", "has no native policy transport")
++            resource_registry.bind_native_policy_channel(
++                session_id,
++                port=binding.relay.port,
++                path=Path(model_channel.socket_path).parent / "policy.sock",
++            )
++            from omnigent.harnesses.codex_native.executor_artifact import (
++                prepare_installed_executor,
++            )
++
++            await prepare_installed_executor(
++                resource_registry, session_id, directory, server_client
++            )
+ 
+     def _publish_terminal_activity(session_id: str, terminal_id: str) -> None:
+         if process_manager is not None:
+@@ -4842,6 +4889,10 @@
+         binding = _session_comment_relays.get(session_id)
+         if binding is None or binding.relay is not relay:
+             return
++        if session_model_channel is not None and resource_registry.owns_native_policy_channel(
++            session_id, relay.port
++        ):
++            return
+         del _session_comment_relays[session_id]
+         relay.close()
+ 
+@@ -4852,6 +4903,7 @@
+         explicit_bridge_dir: Path | None = None,
+         await_notify: bool = False,
+         session_labels: Mapping[str, str] | None = None,
++        policy_transport_only: bool = False,
+     ) -> None:
+         import json as _json
+ 
+@@ -4896,7 +4948,25 @@
+         # can reassign it independently — the terminal-launch and per-harness
+         # startup paths — all pass a bridge hint and take the branch below.
+         current = _session_comment_relays.get(session_id)
+-        if current is not None and current.spec_entry is spec_entry and known_bridge_dir is None:
++        channel = (
++            resource_registry.model_channel_for(session_id)
++            if session_model_channel is not None
++            else None
++        )
++        if (
++            channel is not None
++            and current is not None
++            and (known_bridge_dir is None or current.bridge_dir == known_bridge_dir)
++        ):
++            current.relay.start_private_socket(
++                Path(channel.socket_path).parent / "policy.sock", generation=channel.generation
++            )
++        if (
++            current is not None
++            and current.spec_entry is spec_entry
++            and known_bridge_dir is None
++            and (policy_transport_only or current.tools_ready)
++        ):
+             return
+ 
+         bridge_dir = known_bridge_dir
+@@ -4917,14 +4987,17 @@
+             current is not None
+             and current.spec_entry is spec_entry
+             and current.bridge_dir == bridge_dir
++            and (policy_transport_only or current.tools_ready)
+         ):
+             return
+ 
+         from omnigent.runner.tool_dispatch import build_native_relay_tool_schemas
+ 
+         relay_spec = _unwrap_spec_entry(spec_entry)
+-        relay_schemas: list[_JsonObject] = build_native_relay_tool_schemas(relay_spec)
+-        if relay_spec is not None and relay_spec.mcp_servers:
++        relay_schemas: list[_JsonObject] = (
++            [] if policy_transport_only else build_native_relay_tool_schemas(relay_spec)
++        )
++        if not policy_transport_only and relay_spec is not None and relay_spec.mcp_servers:
+             # Native terminals consume the persistent relay, not per-turn schemas.
+             mcp = await ProxyMcpManager(session_id, server_client).schemas_for(relay_spec)
+             relay_schemas.extend(mcp.schemas)
+@@ -4940,6 +5013,7 @@
+                 current is not None
+                 and current.spec_entry is spec_entry
+                 and current.bridge_dir == bridge_dir
++                and current.tools_ready
+             ):
+                 return
+ 
+@@ -5019,6 +5093,10 @@
+                     policy_client=server_client,
+                     session_id=session_id,
+                     file_change_observer=_observe_native_file_changes,
++                    private_socket_path=(Path(channel.socket_path).parent / "policy.sock")
++                    if channel is not None
++                    else None,
++                    private_socket_generation=channel.generation if channel is not None else None,
+                 )
+         except (OSError, RuntimeError):
+             _logger.warning(
+@@ -5033,7 +5111,14 @@
+             relay=relay,
+             spec_entry=spec_entry,
+             bridge_dir=bridge_dir,
+-        )
++            tools_ready=not policy_transport_only,
++        )
++        notification_bridge_dir = bridge_dir
++        if session_model_channel is not None and not policy_transport_only:
++            runtime = resource_registry.native_runtime_for(session_id)
++            _model, policy_channel = resource_registry.native_channels_for(session_id)
++            runtime.refresh_projection(policy_channel)
++            notification_bridge_dir = runtime.bridge
+         # Close last: the new advertisement is already written, and
+         # ClaudeNativeToolRelay.close only unlinks a tool_relay.json that
+         # still points at the relay being closed, so a shared bridge dir
+@@ -5048,7 +5133,7 @@
+             try:
+                 # Bridge readiness waits must not compete with git or message delivery.
+                 await _BRIDGE_NOTIFICATIONS.run(
+-                    post_tools_changed, bridge_dir, cancelled=cancelled
++                    post_tools_changed, notification_bridge_dir, cancelled=cancelled
+                 )
+             except (RuntimeError, OSError):
+                 # Fire-and-forget below, so anything escaping here resurfaces as
+diff --git a/omnigent/runner/app_support.py b/omnigent/runner/app_support.py
+--- a/omnigent/runner/app_support.py
++++ b/omnigent/runner/app_support.py
+@@ -118,6 +118,7 @@
+     relay: ClaudeNativeToolRelay
+     spec_entry: _SpecEntry | None
+     bridge_dir: Path
++    tools_ready: bool = True
+ 
+ 
+ def _require_full_native_lock_coverage(
+diff --git a/omnigent/runner/native/orchestration.py b/omnigent/runner/native/orchestration.py
+--- a/omnigent/runner/native/orchestration.py
++++ b/omnigent/runner/native/orchestration.py
+@@ -4872,6 +4872,8 @@
+     assert codex_ws_url is not None
+     workspace = str(launch_config.workspace)
+     agent_os_env = _agent_os_env_from_spec(agent_spec)
++    if app_server.execution is not None:
++        agent_os_env = app_server.execution.required_spec
+     codex_remote_args = build_codex_remote_args(
+         codex_args=tuple(launch_config.terminal_launch_args or ()),
+         thread_id=thread_id,
+@@ -4909,6 +4911,8 @@
+         else None
+     )
+     codex_command = configured_codex_command or app_server.codex_path
++    if app_server.execution is not None and codex_command != app_server.codex_path:
++        raise ValueError("Managed native TUI requires the pinned official executable")
+     thread_start_timeout_seconds = (
+         CODEX_NATIVE_CONFIGURED_COMMAND_STARTUP_TIMEOUT_SECONDS
+         if configured_codex_command is not None and not login_required
+@@ -4958,6 +4962,11 @@
+             args=loggable_launch_args,
+         ),
+     )
++    terminal_env = codex_terminal_env(app_server)
++    if app_server.execution is not None:
++        from omnigent.inner.os_env import build_helper_env
++
++        terminal_env = build_helper_env(terminal_env, app_server.execution.environment.sandbox)
+     terminal_view = await resource_registry.launch_auxiliary_terminal(
+         session_id=session_id,
+         terminal_name="codex",
+@@ -4965,14 +4974,17 @@
+         resource_role=CODEX_NATIVE_TERMINAL_ROLE,
+         parent_os_env=agent_os_env,
+         spec=TerminalEnvSpec(
+-            os_env=OSEnvSpec(
++            os_env="inherit"
++            if app_server.execution is not None
++            else OSEnvSpec(
+                 type="caller_process",
+                 cwd=workspace,
+                 sandbox=(agent_os_env.sandbox if agent_os_env is not None else None),
+             ),
+             command=codex_command,
+             args=codex_launch_args,
+-            env=codex_terminal_env(app_server),
++            env=terminal_env,
++            inherit_env=app_server.execution is None,
+             # Match the local ``omnigent codex`` terminal scrollback.
+             scrollback=100_000,
+             # Preserve the final frame and exit status until lifecycle cleanup.
+@@ -5102,7 +5114,6 @@
+     import omnigent.harnesses.codex_native.main as _codex_native_main  # noqa: F401
+     import omnigent.harnesses.codex_native.process_registry as _process_registry  # noqa: F401
+     from omnigent.harnesses.codex_native.app_server import (
+-        CodexAppServerClient,
+         CodexAppServerResponseError,
+         apply_codex_thread_effort,
+         build_codex_native_server,
+@@ -5137,6 +5148,15 @@
+     bridge_dir = prepare_bridge_dir(launch_config.bridge_id or session_id)
+     socket_path = socket_path_for_bridge_dir(bridge_dir)
+     codex_home = codex_home_for_bridge_dir(bridge_dir)
++    fallback_codex_home = codex_home
++    required_native = resource_registry.required_os_env(session_id)
++    native_runtime = (
++        resource_registry.native_runtime_for(session_id) if required_native is not None else None
++    )
++    if native_runtime is not None:
++        if launch_config.bypass_sandbox:
++            raise ValueError("Required native sandbox cannot be bypassed")
++        socket_path, codex_home = native_runtime.control, native_runtime.home
+     app_server = _AUTO_CODEX_APP_SERVERS.get(session_id)
+     forwarder = _AUTO_FORWARDER_TASKS.get(session_id)
+     bridge_state = read_bridge_state(bridge_dir)
+@@ -5193,7 +5213,11 @@
+     codex_binding = binding_for_harness(load_runtime_inference_config(), "codex-native")
+     from omnigent.inner.codex_executor import _find_codex_cli
+ 
+-    _codex_cli_path = _find_codex_cli()
++    _codex_cli_path = (
++        str(native_runtime.codex_binary)
++        if native_runtime is not None and native_runtime.codex_binary is not None
++        else _find_codex_cli()
++    )
+     _catalog_launch = None
+     _fresh_codex_catalog: list[_JsonObject] | None = None
+     try:
+@@ -5536,6 +5560,8 @@
+             external_session_id=launch_config.external_session_id,
+             codex_home=codex_home,
+             workspace=Path(workspace).resolve(),
++            bridge_dir=bridge_dir,
++            fallback_codex_home=fallback_codex_home if native_runtime is not None else None,
+             model_provider=_session_meta_provider,
+             codex_path=_codex_cli_path,
+             terminal_launch_args=launch_config.terminal_launch_args,
+@@ -5568,10 +5594,13 @@
+             exc_info=True,
+         )
+ 
+-    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+-        s.bind(("127.0.0.1", 0))
+-        codex_ws_port = s.getsockname()[1]
+-    codex_ws_url = f"ws://127.0.0.1:{codex_ws_port}"
++    if native_runtime is not None:
++        codex_ws_url = f"unix://{socket_path}"
++    else:
++        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
++            s.bind(("127.0.0.1", 0))
++            codex_ws_port = s.getsockname()[1]
++        codex_ws_url = f"ws://127.0.0.1:{codex_ws_port}"
+ 
+     # Write the minimal MCP bridge config so serve-mcp can boot, and
+     # start the tool relay so tool_relay.json is on disk before codex
+@@ -5587,7 +5616,12 @@
+     )
+ 
+     write_mcp_bridge_config(bridge_dir)
+-    mcp_overrides = codex_mcp_config_overrides(bridge_dir)
++    if native_runtime is not None:
++        if native_runtime.mcp_overrides is None:
++            raise ValueError("Required native MCP role is not bound")
++        mcp_overrides = list(native_runtime.mcp_overrides)
++    else:
++        mcp_overrides = codex_mcp_config_overrides(bridge_dir)
+ 
+     # Omnigent coordinates for the codex-native policy hook. The hook runs as a
+     # separate subprocess that POSTs tool calls to /policies/evaluate, so
+@@ -5633,8 +5667,25 @@
+     )
+     # SDK initialization can block on DNS/auth before model discovery times out.
+     # Keep it off the runner loop so heartbeats and other sessions can progress.
++    native_execution = None
++    if native_runtime is not None:
++        assert required_native is not None
++        from omnigent.entities import DEFAULT_ENVIRONMENT_ID
++        from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
++        from omnigent.inner.os_env import CallerProcessOSEnvironment
++
++        environment = resource_registry.resolve_environment(session_id, DEFAULT_ENVIRONMENT_ID)
++        if not isinstance(environment, CallerProcessOSEnvironment):
++            raise ValueError("Required native execution has no caller-process OSEnv")
++        model_channel, policy_channel = resource_registry.native_channels_for(session_id)
++        native_execution = CodexSandboxLaunch(
++            session_id, required_native, environment, model_channel, policy_channel, native_runtime
++        )
++        if native_runtime.codex_binary is None:
++            raise ValueError("Required native Codex artifact is not bound")
+     app_server = await asyncio.to_thread(
+         build_codex_native_server,
++        codex_path=str(native_runtime.codex_binary) if native_runtime is not None else None,
+         session_id=session_id,
+         socket_path=socket_path,
+         codex_home=codex_home,
+@@ -5646,6 +5697,11 @@
+         ap_server_url=launch_config.policy_server_url,
+         ap_auth_headers=policy_headers,
+         bypass_sandbox=launch_config.bypass_sandbox,
++        require_policy_hooks=native_execution is not None,
++        required_policy_generation=native_runtime.generation
++        if native_runtime is not None
++        else None,
++        execution=native_execution,
+         developer_instructions=_codex_developer_instructions,
+         terminal_launch_args=launch_config.terminal_launch_args or (),
+         reasoning_effort=launch_config.reasoning_effort,
+@@ -5705,10 +5761,9 @@
+     _AUTO_CODEX_APP_SERVERS[session_id] = app_server
+     _AUTO_CODEX_BRIDGE_DIRS[session_id] = bridge_dir
+ 
+-    event_client = CodexAppServerClient(
+-        ws_url=codex_ws_url,
+-        client_name="omnigent-codex-native-auto",
+-    )
++    from omnigent.harnesses.codex_native.app_server import client_for_transport
++
++    event_client = client_for_transport(codex_ws_url, client_name="omnigent-codex-native-auto")
+     retained_resume_client: CodexAppServerClient | None = None
+     if launch_config.external_session_id is not None:
+         try:
+@@ -5726,9 +5781,8 @@
+                             if native_codex_launch_pins_model_provider(_codex_launch)
+                             else None
+                         ),
+-                        retain_client=codex_remote_resume_omits_permission_args(
+-                            app_server.codex_cli_version
+-                        ),
++                        retain_client=native_execution is not None
++                        or codex_remote_resume_omits_permission_args(app_server.codex_cli_version),
+                     )
+                     break
+                 except Exception as exc:
+@@ -5853,6 +5907,10 @@
+                     cwd=workspace,
+                 ),
+             )
++            if native_execution is not None and native_runtime is not None:
++                native_runtime.refresh_projection(
++                    native_execution.policy_channel, publish_state=True
++                )
+         launched = await _launch_codex_native_tui(
+             session_id,
+             resource_registry,
+@@ -6502,6 +6560,14 @@
+             ),
+         )
+ 
++        if (
++            app_server is not None
++            and app_server.execution is not None
++            and app_server.execution.runtime is not None
++        ):
++            app_server.execution.runtime.refresh_projection(
++                app_server.execution.policy_channel, publish_state=True
++            )
+         server_url = _required_runner_env("RUNNER_SERVER_URL")
+         auth_factory = await asyncio.to_thread(_make_auth_token_factory)
+         auth_token = await asyncio.to_thread(auth_factory) if auth_factory is not None else None
+diff --git a/omnigent/runner/resource_registry.py b/omnigent/runner/resource_registry.py
+--- a/omnigent/runner/resource_registry.py
++++ b/omnigent/runner/resource_registry.py
+@@ -45,12 +45,18 @@
+ from omnigent.inner.terminal_lifecycle import lifecycle_log_attributes
+ from omnigent.native.native_coding_agents import native_coding_agent_for_harness
+ from omnigent.native.native_dispatch import resolve_hook_for_key
++from omnigent.runner.session_channels import SessionRelayChannel, session_ids_match
+ from omnigent.server.feature_flags import Feature, resolve_feature_flags
+ from omnigent.telemetry.surface import CLIENT_SURFACE_ENV_VAR, CLIENT_SURFACES
+ 
+ if TYPE_CHECKING:
++    import httpx
++
+     from omnigent.harnesses.claude_native.program_status import ClaudeProgramStatusPoller
+     from omnigent.harnesses.claude_native.status_file import SessionStatusPoller
++    from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
++    from omnigent.harnesses.codex_native.executor_backend import SessionExecutorBackend
++    from omnigent.harnesses.codex_native.executor_policy import SessionExecutionPolicy
+     from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec
+     from omnigent.inner.os_env import OSEnvironment
+     from omnigent.inner.terminal import TerminalInstance
+@@ -501,6 +507,7 @@
+         runner_workspace: Path | None = None,
+         *,
+         per_session_workspace: bool = False,
++        session_model_channel: SessionRelayChannel | None = None,
+     ) -> None:
+         self._feature_flags = resolve_feature_flags()
+         self._terminal_registry = terminal_registry
+@@ -511,6 +518,17 @@
+         self._primary_envs: dict[str, OSEnvironment] = {}
+         self._primary_env_specs: dict[str, OSEnvSpec | None] = {}
+         self._required_os_envs: dict[str, OSEnvSpec] = {}
++        self._model_channel = session_model_channel
++        self._policy_channel: SessionRelayChannel | None = None
++        self._native_channel_session: str | None = None
++        self._native_runtime: CodexPrivateRuntime | None = None
++        self._native_executor: SessionExecutorBackend | None = None
++        self._native_executor_initializing = False
++        if session_model_channel is not None:
++            session_model_channel.verify(
++                session_id=session_model_channel.session_id,
++                runner_id=session_model_channel.runner_id,
++            )
+         self._require_sandbox_binding = False
+         self._client_surfaces: dict[str, str] = {}
+         self._codex_skills_dirs: dict[str, tempfile.TemporaryDirectory[str]] = {}
+@@ -1030,6 +1048,136 @@
+                 raise AgentStartPolicyError("server", "has not bound the required sandbox")
+             return deepcopy(spec)
+ 
++    def model_channel_for(self, session_id: str) -> SessionRelayChannel | None:
++        channel = self._model_channel
++        if channel is not None:
++            channel.verify(session_id=session_id, runner_id=channel.runner_id)
++        return channel
++
++    def bind_native_policy_channel(self, session_id: str, *, port: int, path: Path) -> None:
++        """Freeze the policy endpoint before materializing any execution environment."""
++        model = self.model_channel_for(session_id)
++        if model is None:
++            raise ValueError("Managed native launch has no Host model channel")
++        identity = path.lstat()
++        channel = replace(
++            model,
++            role="policy",
++            relay_port=port,
++            socket_path=str(path),
++            device=identity.st_dev,
++            inode=identity.st_ino,
++        )
++        channel.verify(session_id=session_id, runner_id=model.runner_id)
++        with self._lock:
++            if self._policy_channel == channel:
++                return
++            if session_id in self._primary_envs or self._policy_channel is not None:
++                raise ValueError("Cannot replace a live native policy channel")
++            self._policy_channel = channel
++
++    def native_channels_for(
++        self, session_id: str
++    ) -> tuple[SessionRelayChannel, SessionRelayChannel]:
++        model = self.model_channel_for(session_id)
++        policy = self._policy_channel
++        if model is None or policy is None:
++            raise ValueError("Managed native channels are not ready")
++        policy.verify(session_id=session_id, runner_id=model.runner_id)
++        if policy.generation != model.generation:
++            raise ValueError("Native channel generations differ")
++        return model, policy
++
++    def owns_native_policy_channel(self, session_id: str, port: int) -> bool:
++        """The Session, rather than a single pane attempt, owns this listener."""
++        try:
++            _model, policy = self.native_channels_for(session_id)
++        except (ValueError, OSError):
++            return False
++        return policy.relay_port == port
++
++    def native_executor_authority(self, session_id: str) -> SessionExecutionPolicy:
++        """Snapshot original requiredSpec before adding parent CLI transport grants."""
++        with self._lock:
++            return self._native_executor_authority_locked(session_id)
++
++    def _native_executor_authority_locked(self, session_id: str) -> SessionExecutionPolicy:
++        from omnigent.harnesses.codex_native.executor_policy import SessionExecutionPolicy
++        from omnigent.inner.sandbox import resolve_sandbox
++
++        required = deepcopy(self._required_os_envs.get(session_id))
++        if required is None:
++            raise ValueError("Session has no server-owned execution policy")
++        effective = self._effective_primary_spec(session_id, required)
++        cwd = Path(effective.cwd or "")
++        model, policy = self.native_channels_for(session_id)
++        resolved = resolve_sandbox(effective, cwd)
++        return SessionExecutionPolicy.bind(model, policy, cwd, resolved, os.environ)
++
++    async def prepare_native_executor(
++        self,
++        session_id: str,
++        bridge_dir: Path,
++        server_client: httpx.AsyncClient,
++        *,
++        binary: Path,
++        expected_sha256: str,
++    ) -> CodexPrivateRuntime:
++        """Prepare the outside owner before creating the parent execution environment."""
++        from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
++        from omnigent.harnesses.codex_native.executor_backend import SessionExecutorBackend
++
++        with self._lock:
++            if (
++                self._native_runtime is not None
++                or self._native_executor_initializing
++                or session_id in self._primary_envs
++            ):
++                raise ValueError("Native executor must precede runtime and environment creation")
++            authority = self._native_executor_authority_locked(session_id)
++            model, policy = self.native_channels_for(session_id)
++            self._native_executor_initializing = True
++        backend = None
++        runtime = None
++        try:
++            backend = await SessionExecutorBackend.start(
++                authority,
++                model,
++                policy,
++                server_client,
++                binary=binary,
++                expected_sha256=expected_sha256,
++            )
++            with self._lock:
++                if (
++                    not self._native_executor_initializing
++                    or self._native_runtime is not None
++                    or session_id in self._primary_envs
++                ):
++                    raise ValueError("Native environment changed during executor preparation")
++                runtime = CodexPrivateRuntime.create(
++                    model, policy, bridge_dir, executor=backend.endpoint()
++                )
++                runtime.codex_binary = binary
++                backend.bind_mcp(runtime)
++                self._native_executor, self._native_runtime = backend, runtime
++                return runtime
++        except BaseException:
++            if runtime is not None:
++                runtime.close()
++            if backend is not None:
++                await backend.close()
++            raise
++        finally:
++            with self._lock:
++                self._native_executor_initializing = False
++
++    def native_runtime_for(self, session_id: str) -> CodexPrivateRuntime:
++        runtime = self._native_runtime
++        if runtime is None or not session_ids_match(runtime.session_id, session_id):
++            raise ValueError("Native runtime is not ready")
++        return runtime
++
+     def require_sandbox_binding(self) -> None:
+         """Fail closed on managed execution that bypasses session initialization."""
+         with self._lock:
+@@ -1037,10 +1185,14 @@
+             if self._terminal_registry is not None:
+                 self._terminal_registry.require_environment_binding = True
+ 
+-    def bind_required_os_env(self, session_id: str, spec: OSEnvSpec) -> None:
++    def bind_required_os_env(
++        self, session_id: str, spec: OSEnvSpec, *, require_native_channels: bool = False
++    ) -> None:
+         """Bind before spawn; never reuse an older unqualified execution view."""
+         from omnigent.runner.policy import AgentStartPolicyError
+ 
++        if require_native_channels and self.model_channel_for(session_id) is None:
++            raise AgentStartPolicyError("server", "has no Host-bound native model channel")
+         enforced = self._effective_primary_spec(session_id, deepcopy(spec))
+         sandbox = enforced.sandbox
+         roots = (
+@@ -1055,6 +1207,16 @@
+                 "server", "workspace is outside the approved sandbox roots"
+             )
+         with self._lock:
++            if require_native_channels:
++                if (
++                    session_id in self._primary_envs
++                    and self._primary_env_specs.get(session_id) is not None
++                    and self._policy_channel is None
++                ):
++                    raise AgentStartPolicyError(
++                        "server", "cannot bind native channels after execution"
++                    )
++                self._native_channel_session = session_id
+             if self._required_os_envs.get(session_id) == enforced:
+                 return
+             if session_id in self._primary_envs:
+@@ -1184,6 +1346,10 @@
+         from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
+         from omnigent.inner.os_env import create_os_environment
+ 
++        if self._native_channel_session == session_id:
++            self.native_channels_for(session_id)
++            self.native_runtime_for(session_id)
++
+         # Prefer the CLI launch workspace so that the OS environment
+         # cwd matches the filesystem-registry watch path.  Fall back
+         # to the per-session temp dir for remote/cloud runners that
+@@ -1211,8 +1377,23 @@
+                     "Agent spec has no os_env; cannot create a primary filesystem environment."
+                 )
+             effective_spec = self._effective_primary_spec(session_id, spec_os_env)
++            sandbox_policy = None
++            if self._model_channel is not None:
++                from omnigent.inner.sandbox import resolve_sandbox
++
++                sandbox_policy = resolve_sandbox(
++                    effective_spec, Path(effective_spec.cwd or default_cwd)
++                )
++                sandbox_policy = self._model_channel.apply(sandbox_policy, session_id=session_id)
++                if self._policy_channel is not None:
++                    sandbox_policy = self._policy_channel.apply(
++                        sandbox_policy, session_id=session_id
++                    )
++                if self._native_runtime is not None:
++                    sandbox_policy = self._native_runtime.apply(sandbox_policy)
+             env = create_os_environment(
+                 effective_spec,
++                sandbox_policy=sandbox_policy,
+                 additional_read_roots=[self._codex_skills_dir_locked(session_id)],
+             )
+             if env is not None:
+@@ -2290,6 +2471,10 @@
+         self._take_session_status_memo(session_id)
+         with self._lock:
+             self._session_activity_epoch.pop(session_id, None)
++            if self._native_channel_session is not None and session_ids_match(
++                self._native_channel_session, session_id
++            ):
++                self._native_executor_initializing = False
+             self._client_surfaces.pop(session_id, None)
+             primary = self._primary_envs.pop(session_id, None)
+             self._primary_env_specs.pop(session_id, None)
+@@ -2302,12 +2487,14 @@
+             ]
+             for key in stale_lifecycle_keys:
+                 self._terminal_lifecycles.pop(key, None)
++        resources_closed = True
+         if self._terminal_registry is not None:
+             try:
+                 await self._terminal_registry.cleanup_conversation(
+                     session_id,
+                 )
+             except Exception:
++                resources_closed = False
+                 _logger.exception(
+                     "Error cleaning up terminals for session=%s",
+                     session_id,
+@@ -2321,10 +2508,29 @@
+                     session_id=session_id,
+                 )
+             except Exception:
++                resources_closed = False
+                 _logger.exception(
+                     "Error closing primary env for session=%s",
+                     session_id,
+                 )
++        runtime = self._native_runtime
++        executor = self._native_executor
++        if (
++            resources_closed
++            and executor is not None
++            and session_ids_match(executor.authority.session_id, session_id)
++        ):
++            await executor.close()
++            with self._lock:
++                if self._native_executor is executor:
++                    self._native_executor = None
++        if resources_closed and runtime is not None and runtime.session_id == session_id:
++            await run_sync_cleanup(
++                runtime.close, component="runner_native_projection", session_id=session_id
++            )
++            with self._lock:
++                if self._native_runtime is runtime:
++                    self._native_runtime = None
+         if skills_directory is not None:
+             try:
+                 await asyncio.to_thread(skills_directory.cleanup)
+diff --git a/omnigent/runner/session_channels.py b/omnigent/runner/session_channels.py
+new file mode 100644
+--- /dev/null
++++ b/omnigent/runner/session_channels.py
+@@ -0,0 +1,113 @@
++"""Host-owned model channel identity consumed before agent processes exist."""
++
++from __future__ import annotations
++
++import json
++import os
++import stat
++from dataclasses import asdict, dataclass, replace
++from pathlib import Path
++from uuid import UUID
++
++from omnigent.inner.sandbox import SandboxPolicy, with_additional_read_roots
++
++SESSION_MODEL_CHANNEL_ENV = "OMNIGENT_RUNNER_SESSION_MODEL_CHANNEL"
++SESSION_MODEL_CREDENTIAL_ENV = "OMNIGENT_PLATFORM_DEEPSEEK_KEY"
++
++
++def session_ids_match(left: str, right: str) -> bool:
++    """Compare legal UUID representations without rewriting protocol identifiers."""
++
++    def parse(value: str) -> UUID:
++        parsed = UUID(value)
++        if value.lower() not in (parsed.hex, str(parsed)):
++            raise ValueError("Invalid Session UUID representation")
++        return parsed
++
++    return parse(left) == parse(right)
++
++
++def verify_session_socket(path: Path, *, device: int, inode: int) -> None:
++    """Check a private endpoint before connecting to its fixed Session owner."""
++    parent = path.parent.lstat()
++    current = path.lstat()
++    if (
++        not path.is_absolute()
++        or path.resolve() != path
++        or parent.st_uid != os.getuid()
++        or stat.S_IMODE(parent.st_mode) != 0o700
++        or not stat.S_ISDIR(parent.st_mode)
++        or current.st_uid != os.getuid()
++        or stat.S_IMODE(current.st_mode) != 0o600
++        or not stat.S_ISSOCK(current.st_mode)
++        or (current.st_dev, current.st_ino) != (device, inode)
++    ):
++        raise ValueError("Session channel endpoint changed")
++
++
++@dataclass(frozen=True)
++class SessionRelayChannel:
++    """Non-secret, immutable transport binding; credentials stay in the Host relay."""
++
++    session_id: str
++    runner_id: str
++    generation: str
++    socket_path: str
++    relay_port: int
++    device: int
++    inode: int
++    role: str = "model"
++
++    def verify(self, *, session_id: str, runner_id: str) -> None:
++        if (
++            not session_ids_match(self.session_id, session_id)
++            or self.runner_id != runner_id
++            or not runner_id
++            or runner_id.strip() != runner_id
++            or "\x00" in runner_id
++            or len(self.generation) != 32
++            or any(c not in "0123456789abcdef" for c in self.generation)
++            or type(self.relay_port) is not int
++            or not 1 <= self.relay_port <= 65535
++            or self.role not in ("model", "policy")
++            or type(self.device) is not int
++            or type(self.inode) is not int
++        ):
++            raise ValueError("Invalid session model channel identity")
++        verify_session_socket(Path(self.socket_path), device=self.device, inode=self.inode)
++
++    def to_json(self) -> str:
++        self.verify(session_id=self.session_id, runner_id=self.runner_id)
++        return json.dumps(asdict(self))
++
++    @classmethod
++    def from_json(cls, raw: str, *, session_id: str, runner_id: str) -> SessionRelayChannel:
++        data = json.loads(raw)
++        if not isinstance(data, dict) or set(data) != set(cls.__dataclass_fields__):
++            raise ValueError("Invalid session model channel metadata")
++        for field in ("session_id", "runner_id", "generation", "socket_path", "role"):
++            if not isinstance(data[field], str):
++                raise ValueError("Invalid session model channel metadata")
++        for field in ("relay_port", "device", "inode"):
++            if type(data[field]) is not int:
++                raise ValueError("Invalid session model channel metadata")
++        channel = cls(**data)
++        if channel.role != "model":
++            raise ValueError("Host must supply a model channel")
++        channel.verify(session_id=session_id, runner_id=runner_id)
++        return channel
++
++    def apply(self, policy: SandboxPolicy, *, session_id: str) -> SandboxPolicy:
++        self.verify(session_id=session_id, runner_id=self.runner_id)
++        if self.role == "model":
++            policy = replace(
++                policy, model_relay_port=self.relay_port, model_relay_socket_path=self.socket_path
++            )
++        else:
++            policy = replace(
++                policy,
++                policy_relay_port=self.relay_port,
++                policy_relay_socket_path=self.socket_path,
++            )
++        policy.session_relay_pairs()
++        return with_additional_read_roots(policy, [Path(self.socket_path).parent])

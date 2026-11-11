@@ -1923,6 +1923,8 @@ async def _ensure_local_codex_resume_rollout(
     model_provider: str,
     codex_path: str | None,
     terminal_launch_args: Sequence[str] | None = None,
+    bridge_dir: Path | None = None,
+    fallback_codex_home: Path | None = None,
 ) -> Path:
     """
     Refresh Codex's local rollout JSONL for cold resume.
@@ -1961,6 +1963,8 @@ async def _ensure_local_codex_resume_rollout(
         rollout, but treats the value as informational, so a flaky probe
         must not cost the carried history.
     :param terminal_launch_args: Persisted Codex approval/sandbox launch args.
+    :param bridge_dir: Original Session forwarding and dead-letter directory.
+    :param fallback_codex_home: Previous Session home used only for one valid local rollout.
     :returns: Path to the refreshed rollout, or to a valid local fallback when
         server history is temporarily unavailable.
     :raises click.ClickException: If Omnigent history cannot be fetched and no
@@ -1972,11 +1976,32 @@ async def _ensure_local_codex_resume_rollout(
             f"Cannot resume Codex session {session_id!r}: persisted thread id "
             f"{external_session_id!r} is not a safe Codex rollout id."
         )
-    await _replay_dead_letters_before_resume(client, codex_home.parent)
+    original_bridge = bridge_dir or codex_home.parent
+    await _replay_dead_letters_before_resume(client, original_bridge)
     try:
         items = await _fetch_all_session_items_for_codex_resume(client, session_id)
     except _CodexResumeHistoryUnavailableError:
         existing = _find_codex_rollout(codex_home, external_session_id)
+        if existing is None and fallback_codex_home is not None:
+            legacy = _find_codex_rollout(fallback_codex_home, external_session_id)
+            if legacy is not None and _is_resumable_codex_rollout(
+                legacy, external_session_id=external_session_id
+            ):
+                target = _codex_resume_rollout_path(codex_home, external_session_id)
+                target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                temporary: Path | None = None
+                try:
+                    with NamedTemporaryFile(
+                        dir=target.parent, prefix=".resume-", delete=False
+                    ) as out:
+                        temporary = Path(out.name)
+                        with legacy.open("rb") as source:
+                            shutil.copyfileobj(source, out, length=1024 * 1024)
+                    os.replace(temporary, target)
+                finally:
+                    if temporary is not None:
+                        temporary.unlink(missing_ok=True)
+                existing = target
         if existing is not None and _is_resumable_codex_rollout(
             existing, external_session_id=external_session_id
         ):
@@ -1993,7 +2018,7 @@ async def _ensure_local_codex_resume_rollout(
     # History stores attachments as raw file_ids; restore the files so the
     # rebuilt thread can open local cached copies, as on a live turn.
     items = await resolve_session_item_file_references(client, session_id=session_id, items=items)
-    items = _codex_items_with_attachment_references(items, bridge_dir=codex_home.parent)
+    items = _codex_items_with_attachment_references(items, bridge_dir=original_bridge)
     target = _codex_resume_rollout_path(codex_home, external_session_id)
     cli_version = None
     if codex_path is not None:

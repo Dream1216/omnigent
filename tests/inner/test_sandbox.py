@@ -350,6 +350,92 @@ def test_credential_source_paths_survive_serialization_and_cloning(tmp_path: pat
     assert SandboxPolicy.from_jsonable({}).credential_source_paths is None
 
 
+def test_session_relays_survive_serialization_and_policy_clones(tmp_path: pathlib.Path) -> None:
+    from omnigent.inner.sandbox import _restore_broker_socket_roots, with_additional_write_roots
+
+    root = tmp_path.resolve()
+    policy = dataclasses.replace(
+        _noop_policy(),
+        active=True,
+        backend_type="linux_bwrap",
+        allow_network=False,
+        model_relay_port=31401,
+        model_relay_socket_path=str(root / "model" / "relay.sock"),
+        policy_relay_port=31402,
+        policy_relay_socket_path=str(root / "policy" / "relay.sock"),
+        egress_relay_port=31403,
+        egress_socket_path=str(root / "egress" / "proxy.sock"),
+    )
+    decoded = SandboxPolicy.from_jsonable(policy.to_jsonable())
+    cloned = with_additional_write_roots(decoded, [root / "scratch"])
+    restored = _restore_broker_socket_roots(cloned)
+    assert restored.session_relay_pairs() == policy.session_relay_pairs()
+    assert restored.egress_relay_port == 31403
+    assert restored.egress_socket_path == policy.egress_socket_path
+    assert restored.read_roots is not None
+    assert root / "model" in restored.read_roots
+    assert root / "policy" in restored.read_roots
+    assert root / "model" not in restored.write_roots
+    assert root / "policy" not in restored.write_roots
+    assert root / "egress" in restored.write_roots
+    assert SandboxPolicy.from_jsonable({}).session_relay_pairs() == []
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing_port",
+        "missing_path",
+        "bool",
+        "float",
+        "range",
+        "relative",
+        "network",
+        "backend",
+        "inactive",
+        "role_collision",
+        "egress_collision",
+        "writable",
+    ],
+)
+def test_session_relay_wire_rejects_invalid_or_unisolated_pair(
+    tmp_path: pathlib.Path, fault: str
+) -> None:
+    root = tmp_path.resolve()
+    policy = dataclasses.replace(
+        _noop_policy(),
+        active=True,
+        backend_type="linux_bwrap",
+        allow_network=False,
+        model_relay_port=31401,
+        model_relay_socket_path=str(root / "model.sock"),
+    )
+    wire = policy.to_jsonable()
+    if fault == "missing_port":
+        wire["model_relay_port"] = None
+    elif fault == "missing_path":
+        wire["model_relay_socket_path"] = None
+    elif fault in ("bool", "float", "range"):
+        wire["model_relay_port"] = {"bool": True, "float": 31401.5, "range": 0}[fault]
+    elif fault == "relative":
+        wire["model_relay_socket_path"] = "relative.sock"
+    elif fault == "network":
+        wire["allow_network"] = True
+    elif fault == "backend":
+        wire["backend_type"] = "none"
+    elif fault == "inactive":
+        wire["active"] = False
+    elif fault == "role_collision":
+        wire["policy_relay_port"] = 31401
+        wire["policy_relay_socket_path"] = str(root / "policy.sock")
+    elif fault == "egress_collision":
+        wire["egress_relay_port"] = 31401
+    elif fault == "writable":
+        wire["write_roots"] = [str(root)]
+    with pytest.raises(ValueError, match=r"[Ss]ession relay"):
+        SandboxPolicy.from_jsonable(wire)
+
+
 def test_sandbox_policy_round_trips_deny_unix_socket_paths() -> None:
     """``deny_unix_socket_paths`` survives the launcher wire encoding.
 

@@ -87,6 +87,7 @@ from .sandbox import (
     SandboxBackend,
     SandboxPolicy,
     register_backend,
+    with_additional_read_roots,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -430,6 +431,9 @@ class BwrapSandboxBackend(SandboxBackend):
         ``SandboxPolicy.spawn_env_allowlist`` prune in
         :func:`omnigent.inner.sandbox.run_launcher`.
         """
+        session_roots = [Path(path).parent for _, path in policy.session_relay_pairs()]
+        if session_roots:
+            policy = with_additional_read_roots(policy, session_roots)
         policy = self.prepare_launcher_policy(policy)
         cwd_resolved = cwd.resolve(strict=False)
         chdir_target = chdir.resolve(strict=False) if chdir is not None else cwd_resolved
@@ -593,6 +597,41 @@ class BwrapSandboxBackend(SandboxBackend):
         # (same deny-wins ordering as the dotfile mask above).
         for sock in policy.deny_unix_socket_paths or []:
             bwrap_args += ["--bind-try", "/dev/null", str(sock)]
+        if policy.codex_requirements_path is not None:
+            requirements = Path(policy.codex_requirements_path)
+            if (
+                not policy.active
+                or policy.allow_network
+                or not requirements.is_absolute()
+                or requirements.resolve() != requirements
+                or not requirements.is_file()
+            ):
+                raise ValueError("Invalid required Codex configuration mount")
+            if any(requirements.is_relative_to(root.resolve()) for root in policy.write_roots):
+                raise ValueError("Required Codex configuration cannot be writable")
+            bwrap_args += [
+                "--dir",
+                "/etc/codex",
+                "--ro-bind",
+                str(requirements),
+                "/etc/codex/requirements.toml",
+            ]
+        if policy.codex_environments_path is not None:
+            source = Path(policy.codex_environments_path)
+            environments_target = source.parent / "home" / "environments.toml"
+            if (
+                policy.codex_requirements_path is None
+                or not policy.active
+                or policy.allow_network
+                or not source.is_absolute()
+                or source.resolve() != source
+                or not source.is_file()
+                or not environments_target.is_file()
+                or environments_target.is_symlink()
+                or any(source.is_relative_to(root.resolve()) for root in policy.write_roots)
+            ):
+                raise ValueError("Invalid required Codex executor configuration mount")
+            bwrap_args += ["--ro-bind", str(source), str(environments_target)]
 
         # Set $TMPDIR (and friends) to the first write_root that lives
         # under the system temp dir — the parent's
@@ -685,6 +724,7 @@ class BwrapSandboxBackend(SandboxBackend):
             :attr:`egress_socket_path` to conditionally start the
             in-namespace relay.
         """
+        session_relays = policy.session_relay_pairs()
         _set_no_new_privs()
         apply_baseline_denylist()
         apply_seccomp_filter(_bwrap_extra_seccomp_rules())
@@ -704,6 +744,11 @@ class BwrapSandboxBackend(SandboxBackend):
                 policy.egress_relay_port,
                 policy.egress_socket_path,
             )
+        if session_relays:
+            from omnigent.inner.egress.relay import start_relay
+
+            for port, path in session_relays:
+                start_relay(port, path)
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,70 @@ from tests.harnesses.codex_native.app_server._support import (
 )
 
 
+async def test_close_reclaims_retained_owned_tree_after_leader_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = _test_app_server(tmp_path, tmp_path / "home", tmp_path / "bridge", tmp_path)
+    process = Mock(spec=asyncio.subprocess.Process)
+    process.pid = 99999999
+    process.returncode = 0
+    server.proc = process
+    reclaimed: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server._terminate_process_tree",
+        lambda owned: reclaimed.append(("terminate", owned)),
+    )
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server._kill_process_tree",
+        lambda owned: reclaimed.append(("kill", owned)),
+    )
+    await server.close()
+    assert reclaimed == [("terminate", process), ("kill", process)]
+    assert server.proc is None
+
+
+@pytest.mark.parametrize("invalid", [None, "session", "generation", "transport"])
+async def test_managed_app_server_uses_only_bound_private_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str | None
+) -> None:
+    from types import SimpleNamespace
+
+    from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
+
+    server = _test_app_server(tmp_path, tmp_path / "home", tmp_path / "bridge", tmp_path)
+    execution = Mock(spec=CodexSandboxLaunch)
+    execution.session_id = "session"
+    execution.model_channel = SimpleNamespace(generation="a" * 32)
+    execution.prepare_spawn.return_value = ("/owned/launcher", {"CODEX_HOME": "private-home"}, "/")
+    server.execution = execution
+    server.session_id = "other" if invalid == "session" else "session"
+    server.require_policy_hooks = True
+    server.required_policy_generation = "b" * 32 if invalid == "generation" else "a" * 32
+    process = AsyncMock()
+    process.pid = 99999999
+    process.returncode = 0
+    process.stderr = asyncio.StreamReader()
+    process.stderr.feed_eof()
+    spawn = AsyncMock(return_value=process)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    transport = (
+        "ws://127.0.0.1:12345" if invalid == "transport" else f"unix://{server.socket_path}"
+    )
+    if invalid is not None:
+        with pytest.raises(ValueError):
+            await server._spawn_app_server_process(transport)
+        spawn.assert_not_awaited()
+        execution.close.assert_called_once()
+    else:
+        await server._spawn_app_server_process(transport)
+        assert spawn.call_args.args[0] == "/owned/launcher"
+        assert spawn.call_args.kwargs["executable"] == "/owned/launcher"
+        assert spawn.call_args.kwargs["env"] == {"CODEX_HOME": "private-home"}
+        assert spawn.call_args.kwargs["cwd"] == "/"
+        await server.close()
+        execution.close.assert_called_once()
+
+
 async def test_start_reuses_initialized_readiness_client_for_hook_trust(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -81,6 +145,58 @@ async def test_start_reuses_initialized_readiness_client_for_hook_trust(
         assert startup_client.close_calls == 1
     finally:
         await server.close()
+
+
+async def test_managed_start_does_not_project_host_credentials_or_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tomllib
+    from types import SimpleNamespace
+
+    source = tmp_path / "host-home"
+    source.mkdir()
+    for filename in ("auth.json", ".credentials.json", "config.toml", "host.config.toml"):
+        (source / filename).write_text('host_secret = "synthetic-host-only"\n')
+    monkeypatch.setenv("CODEX_HOME", str(source))
+    _set_codex_version(monkeypatch, (0, 142, 0))
+    server = _test_app_server(tmp_path, tmp_path / "private", tmp_path / "bridge", tmp_path)
+    server.execution = Mock()
+    server.execution.runtime = SimpleNamespace(bridge=server.bridge_dir)
+    server.config_overrides = [
+        'model_provider="platform-deepseek"',
+        'model_providers.platform-deepseek={name="Session model", '
+        'base_url="http://127.0.0.1:31401/v1", env_key="OMNIGENT_PLATFORM_DEEPSEEK_KEY"}',
+    ]
+    reached_spawn = False
+
+    async def stop_before_spawn(_self: CodexNativeAppServer, _transport: str) -> None:
+        nonlocal reached_spawn
+        reached_spawn = True
+        raise RuntimeError("configuration prepared; no CLI launched")
+
+    def reject_host_profile(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("Managed runtime must not materialize a Host profile")
+
+    monkeypatch.setattr(CodexNativeAppServer, "_spawn_app_server_process", stop_before_spawn)
+    monkeypatch.setattr(
+        "omnigent.harnesses.codex_native.app_server._materialize_codex_profile_for_start",
+        reject_host_profile,
+    )
+    with pytest.raises(RuntimeError, match="configuration prepared"):
+        await server.start()
+    assert reached_spawn
+    for filename in ("auth.json", ".credentials.json", "host.config.toml"):
+        assert not (server.codex_home / filename).exists()
+        assert not (server.codex_home / filename).is_symlink()
+    config_path = server.codex_home / "config.toml"
+    assert "synthetic-host-only" not in config_path.read_text()
+    selected = tomllib.loads(config_path.read_text())["model_providers"]["platform-deepseek"]
+    assert selected["base_url"] == "http://127.0.0.1:31401/v1"
+    assert selected["env_key"] == "OMNIGENT_PLATFORM_DEEPSEEK_KEY"
+    assert 'model_provider="platform-deepseek"' in server.config_overrides
+    server.config_profile = "host"
+    with pytest.raises(ValueError, match="selected Session provider"):
+        await server.start()
 
 
 @dataclass
@@ -1146,6 +1262,8 @@ async def test_session_app_server_launches_through_the_configured_wrapper(
         stderr.feed_eof()
         proc = AsyncMock()
         proc.stderr = stderr
+        proc.pid = None  # This argv-only fake does not own an OS process.
+        proc.returncode = 0
         return proc
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)

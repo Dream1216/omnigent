@@ -479,3 +479,16 @@ stable-id conflict and data assertions and checks caller cancellation cleanup;
 the complete host-launch and startup-input suites retain their old assertions.
 The original 6c44 CI timeout cause remains unproven. The separately reproduced
 9f46 fast-handshake regression is corrected without extending any timeout.
+
+
+## Ordinary M native 0.142 Session isolation candidate
+
+Existing patch 0010-next-agent-session-reliability.patch also carries ordinary
+M required native execution: Session model/policy channels, contained app-server
+and interactive TUI, fixed executor-backed tool/MCP roles, and private rollout
+and dead-letter recovery mappings. The patch count remains nine; existing Host
+readiness bytes remain intact. This is a review candidate under unchanged
+budget/protected-path rules. Its final commit still requires its own existing
+source-budget, full patch replay and Linux qualification before adoption.
+Local unit contracts and prior-head receipts do not grant release or QA business
+qualification.

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
     from omnigent.inner.databricks_executor import _ReusedDatabricksTokenSource
     from omnigent.runner.native import ResolvedSpec
+    from omnigent.runner.session_channels import SessionRelayChannel
     from omnigent.runner.transports.ws_tunnel.serve import _ASGIApp
     from omnigent.spec.types import AgentSpec
 
@@ -1309,6 +1310,19 @@ def _runner_isolate_session_from_env() -> bool:
     return os.environ.get(RUNNER_ISOLATE_SESSION_ENV_VAR, "").strip() == "1"
 
 
+def _consume_session_model_channel(runner_id: str) -> SessionRelayChannel | None:
+    """Consume Host metadata once, before creating any child process."""
+    from omnigent.runner.session_channels import SESSION_MODEL_CHANNEL_ENV, SessionRelayChannel
+
+    raw = os.environ.pop(SESSION_MODEL_CHANNEL_ENV, None)
+    if raw is None:
+        return None
+    primary_session = runner_primary_session_id()
+    if primary_session is None:
+        raise ValueError("Managed model channel requires the primary Session")
+    return SessionRelayChannel.from_json(raw, session_id=primary_session, runner_id=runner_id)
+
+
 def _agent_cache_dest(spec_cache_root: Path, agent_id: str, version: str) -> Path:
     """
     Compute the cache directory for an agent bundle, contained to the root.
@@ -1508,6 +1522,7 @@ def create_app(
     # restarts (§5 "Persistence" in RUNNER.md).
     _runner_id = get_stable_runner_id()
     os.environ[RUNNER_ID_ENV_VAR] = _runner_id
+    session_model_channel = _consume_session_model_channel(_runner_id)
     # Stamp the Omnigent session marker into the runner's environment so
     # every process this runner spawns can detect it is running inside an
     # Omnigent agent session, the way Claude Code sets CLAUDE_CODE and
@@ -1661,6 +1676,7 @@ def create_app(
         auth_token=runner_auth_token,
         auth_token_factory=auth_token_factory,
         require_start_sandbox=(os.environ.get(REQUIRED_START_SANDBOX_ENV) == "1"),
+        session_model_channel=session_model_channel,
         native_pane_idle_timeout_s=resolve_native_pane_idle_timeout_s(
             _load_runner_idle_timeout_s_from_config()
         ),

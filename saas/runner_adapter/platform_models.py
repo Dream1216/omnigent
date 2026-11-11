@@ -12,10 +12,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
+from omnigent.runner.session_channels import SESSION_MODEL_CREDENTIAL_ENV
 from saas.control_plane.model_provider import PlatformManagedModelRuntimeConfiguration
 
 PLATFORM_MODEL_PROVIDER_NAME = "platform-deepseek"
-PLATFORM_MODEL_CREDENTIAL_ENV = "OMNIGENT_PLATFORM_DEEPSEEK_KEY"
+
+PLATFORM_MODEL_CREDENTIAL_ENV = SESSION_MODEL_CREDENTIAL_ENV
 PLATFORM_MODEL_RELAY_BASE_URL_ENV = "OMNIGENT_PROVIDER_LOOPBACK_TRANSPORTS"
 PLATFORM_MODEL_CREDENTIAL_REFERENCE = f"${PLATFORM_MODEL_CREDENTIAL_ENV}"
 PLATFORM_MODEL_VAULT_PROVIDER = "filesystem"

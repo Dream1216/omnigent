@@ -45,12 +45,18 @@ from omnigent.inner.sandbox import contained_realpath, containment_prefix
 from omnigent.inner.terminal_lifecycle import lifecycle_log_attributes
 from omnigent.native.native_coding_agents import native_coding_agent_for_harness
 from omnigent.native.native_dispatch import resolve_hook_for_key
+from omnigent.runner.session_channels import SessionRelayChannel, session_ids_match
 from omnigent.server.feature_flags import Feature, resolve_feature_flags
 from omnigent.telemetry.surface import CLIENT_SURFACE_ENV_VAR, CLIENT_SURFACES
 
 if TYPE_CHECKING:
+    import httpx
+
     from omnigent.harnesses.claude_native.program_status import ClaudeProgramStatusPoller
     from omnigent.harnesses.claude_native.status_file import SessionStatusPoller
+    from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
+    from omnigent.harnesses.codex_native.executor_backend import SessionExecutorBackend
+    from omnigent.harnesses.codex_native.executor_policy import SessionExecutionPolicy
     from omnigent.inner.datamodel import OSEnvSpec, TerminalEnvSpec
     from omnigent.inner.os_env import OSEnvironment
     from omnigent.inner.terminal import TerminalInstance
@@ -501,6 +507,7 @@ class SessionResourceRegistry:
         runner_workspace: Path | None = None,
         *,
         per_session_workspace: bool = False,
+        session_model_channel: SessionRelayChannel | None = None,
     ) -> None:
         self._feature_flags = resolve_feature_flags()
         self._terminal_registry = terminal_registry
@@ -511,6 +518,17 @@ class SessionResourceRegistry:
         self._primary_envs: dict[str, OSEnvironment] = {}
         self._primary_env_specs: dict[str, OSEnvSpec | None] = {}
         self._required_os_envs: dict[str, OSEnvSpec] = {}
+        self._model_channel = session_model_channel
+        self._policy_channel: SessionRelayChannel | None = None
+        self._native_channel_session: str | None = None
+        self._native_runtime: CodexPrivateRuntime | None = None
+        self._native_executor: SessionExecutorBackend | None = None
+        self._native_executor_initializing = False
+        if session_model_channel is not None:
+            session_model_channel.verify(
+                session_id=session_model_channel.session_id,
+                runner_id=session_model_channel.runner_id,
+            )
         self._require_sandbox_binding = False
         self._client_surfaces: dict[str, str] = {}
         self._codex_skills_dirs: dict[str, tempfile.TemporaryDirectory[str]] = {}
@@ -1030,6 +1048,136 @@ class SessionResourceRegistry:
                 raise AgentStartPolicyError("server", "has not bound the required sandbox")
             return deepcopy(spec)
 
+    def model_channel_for(self, session_id: str) -> SessionRelayChannel | None:
+        channel = self._model_channel
+        if channel is not None:
+            channel.verify(session_id=session_id, runner_id=channel.runner_id)
+        return channel
+
+    def bind_native_policy_channel(self, session_id: str, *, port: int, path: Path) -> None:
+        """Freeze the policy endpoint before materializing any execution environment."""
+        model = self.model_channel_for(session_id)
+        if model is None:
+            raise ValueError("Managed native launch has no Host model channel")
+        identity = path.lstat()
+        channel = replace(
+            model,
+            role="policy",
+            relay_port=port,
+            socket_path=str(path),
+            device=identity.st_dev,
+            inode=identity.st_ino,
+        )
+        channel.verify(session_id=session_id, runner_id=model.runner_id)
+        with self._lock:
+            if self._policy_channel == channel:
+                return
+            if session_id in self._primary_envs or self._policy_channel is not None:
+                raise ValueError("Cannot replace a live native policy channel")
+            self._policy_channel = channel
+
+    def native_channels_for(
+        self, session_id: str
+    ) -> tuple[SessionRelayChannel, SessionRelayChannel]:
+        model = self.model_channel_for(session_id)
+        policy = self._policy_channel
+        if model is None or policy is None:
+            raise ValueError("Managed native channels are not ready")
+        policy.verify(session_id=session_id, runner_id=model.runner_id)
+        if policy.generation != model.generation:
+            raise ValueError("Native channel generations differ")
+        return model, policy
+
+    def owns_native_policy_channel(self, session_id: str, port: int) -> bool:
+        """The Session, rather than a single pane attempt, owns this listener."""
+        try:
+            _model, policy = self.native_channels_for(session_id)
+        except (ValueError, OSError):
+            return False
+        return policy.relay_port == port
+
+    def native_executor_authority(self, session_id: str) -> SessionExecutionPolicy:
+        """Snapshot original requiredSpec before adding parent CLI transport grants."""
+        with self._lock:
+            return self._native_executor_authority_locked(session_id)
+
+    def _native_executor_authority_locked(self, session_id: str) -> SessionExecutionPolicy:
+        from omnigent.harnesses.codex_native.executor_policy import SessionExecutionPolicy
+        from omnigent.inner.sandbox import resolve_sandbox
+
+        required = deepcopy(self._required_os_envs.get(session_id))
+        if required is None:
+            raise ValueError("Session has no server-owned execution policy")
+        effective = self._effective_primary_spec(session_id, required)
+        cwd = Path(effective.cwd or "")
+        model, policy = self.native_channels_for(session_id)
+        resolved = resolve_sandbox(effective, cwd)
+        return SessionExecutionPolicy.bind(model, policy, cwd, resolved, os.environ)
+
+    async def prepare_native_executor(
+        self,
+        session_id: str,
+        bridge_dir: Path,
+        server_client: httpx.AsyncClient,
+        *,
+        binary: Path,
+        expected_sha256: str,
+    ) -> CodexPrivateRuntime:
+        """Prepare the outside owner before creating the parent execution environment."""
+        from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
+        from omnigent.harnesses.codex_native.executor_backend import SessionExecutorBackend
+
+        with self._lock:
+            if (
+                self._native_runtime is not None
+                or self._native_executor_initializing
+                or session_id in self._primary_envs
+            ):
+                raise ValueError("Native executor must precede runtime and environment creation")
+            authority = self._native_executor_authority_locked(session_id)
+            model, policy = self.native_channels_for(session_id)
+            self._native_executor_initializing = True
+        backend = None
+        runtime = None
+        try:
+            backend = await SessionExecutorBackend.start(
+                authority,
+                model,
+                policy,
+                server_client,
+                binary=binary,
+                expected_sha256=expected_sha256,
+            )
+            with self._lock:
+                if (
+                    not self._native_executor_initializing
+                    or self._native_runtime is not None
+                    or session_id in self._primary_envs
+                ):
+                    raise ValueError("Native environment changed during executor preparation")
+                runtime = CodexPrivateRuntime.create(
+                    model, policy, bridge_dir, executor=backend.endpoint()
+                )
+                runtime.codex_binary = binary
+                backend.bind_mcp(runtime)
+                self._native_executor, self._native_runtime = backend, runtime
+                return runtime
+        except BaseException:
+            if runtime is not None:
+                runtime.close()
+            if backend is not None:
+                await backend.close()
+            raise
+        finally:
+            with self._lock:
+                self._native_executor_initializing = False
+
+    def native_runtime_for(self, session_id: str) -> CodexPrivateRuntime:
+        runtime = self._native_runtime
+        if runtime is None or not session_ids_match(runtime.session_id, session_id):
+            raise ValueError("Native runtime is not ready")
+        return runtime
+
     def require_sandbox_binding(self) -> None:
         """Fail closed on managed execution that bypasses session initialization."""
         with self._lock:
@@ -1037,10 +1185,14 @@ class SessionResourceRegistry:
             if self._terminal_registry is not None:
                 self._terminal_registry.require_environment_binding = True
 
-    def bind_required_os_env(self, session_id: str, spec: OSEnvSpec) -> None:
+    def bind_required_os_env(
+        self, session_id: str, spec: OSEnvSpec, *, require_native_channels: bool = False
+    ) -> None:
         """Bind before spawn; never reuse an older unqualified execution view."""
         from omnigent.runner.policy import AgentStartPolicyError
 
+        if require_native_channels and self.model_channel_for(session_id) is None:
+            raise AgentStartPolicyError("server", "has no Host-bound native model channel")
         enforced = self._effective_primary_spec(session_id, deepcopy(spec))
         sandbox = enforced.sandbox
         roots = (
@@ -1055,6 +1207,16 @@ class SessionResourceRegistry:
                 "server", "workspace is outside the approved sandbox roots"
             )
         with self._lock:
+            if require_native_channels:
+                if (
+                    session_id in self._primary_envs
+                    and self._primary_env_specs.get(session_id) is not None
+                    and self._policy_channel is None
+                ):
+                    raise AgentStartPolicyError(
+                        "server", "cannot bind native channels after execution"
+                    )
+                self._native_channel_session = session_id
             if self._required_os_envs.get(session_id) == enforced:
                 return
             if session_id in self._primary_envs:
@@ -1184,6 +1346,10 @@ class SessionResourceRegistry:
         from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
         from omnigent.inner.os_env import create_os_environment
 
+        if self._native_channel_session == session_id:
+            self.native_channels_for(session_id)
+            self.native_runtime_for(session_id)
+
         # Prefer the CLI launch workspace so that the OS environment
         # cwd matches the filesystem-registry watch path.  Fall back
         # to the per-session temp dir for remote/cloud runners that
@@ -1211,8 +1377,23 @@ class SessionResourceRegistry:
                     "Agent spec has no os_env; cannot create a primary filesystem environment."
                 )
             effective_spec = self._effective_primary_spec(session_id, spec_os_env)
+            sandbox_policy = None
+            if self._model_channel is not None:
+                from omnigent.inner.sandbox import resolve_sandbox
+
+                sandbox_policy = resolve_sandbox(
+                    effective_spec, Path(effective_spec.cwd or default_cwd)
+                )
+                sandbox_policy = self._model_channel.apply(sandbox_policy, session_id=session_id)
+                if self._policy_channel is not None:
+                    sandbox_policy = self._policy_channel.apply(
+                        sandbox_policy, session_id=session_id
+                    )
+                if self._native_runtime is not None:
+                    sandbox_policy = self._native_runtime.apply(sandbox_policy)
             env = create_os_environment(
                 effective_spec,
+                sandbox_policy=sandbox_policy,
                 additional_read_roots=[self._codex_skills_dir_locked(session_id)],
             )
             if env is not None:
@@ -2290,6 +2471,10 @@ class SessionResourceRegistry:
         self._take_session_status_memo(session_id)
         with self._lock:
             self._session_activity_epoch.pop(session_id, None)
+            if self._native_channel_session is not None and session_ids_match(
+                self._native_channel_session, session_id
+            ):
+                self._native_executor_initializing = False
             self._client_surfaces.pop(session_id, None)
             primary = self._primary_envs.pop(session_id, None)
             self._primary_env_specs.pop(session_id, None)
@@ -2302,12 +2487,14 @@ class SessionResourceRegistry:
             ]
             for key in stale_lifecycle_keys:
                 self._terminal_lifecycles.pop(key, None)
+        resources_closed = True
         if self._terminal_registry is not None:
             try:
                 await self._terminal_registry.cleanup_conversation(
                     session_id,
                 )
             except Exception:
+                resources_closed = False
                 _logger.exception(
                     "Error cleaning up terminals for session=%s",
                     session_id,
@@ -2321,10 +2508,29 @@ class SessionResourceRegistry:
                     session_id=session_id,
                 )
             except Exception:
+                resources_closed = False
                 _logger.exception(
                     "Error closing primary env for session=%s",
                     session_id,
                 )
+        runtime = self._native_runtime
+        executor = self._native_executor
+        if (
+            resources_closed
+            and executor is not None
+            and session_ids_match(executor.authority.session_id, session_id)
+        ):
+            await executor.close()
+            with self._lock:
+                if self._native_executor is executor:
+                    self._native_executor = None
+        if resources_closed and runtime is not None and runtime.session_id == session_id:
+            await run_sync_cleanup(
+                runtime.close, component="runner_native_projection", session_id=session_id
+            )
+            with self._lock:
+                if self._native_runtime is runtime:
+                    self._native_runtime = None
         if skills_directory is not None:
             try:
                 await asyncio.to_thread(skills_directory.cleanup)

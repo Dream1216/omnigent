@@ -525,13 +525,13 @@ async def test_idle_pane_reap_closes_comment_relay(tmp_path: Path) -> None:
             # until the session is deleted, exhausting the runner's descriptors.
             assert not relay_file.exists(), "tool_relay.json survived the idle reap"
             with pytest.raises(httpx.ConnectError):
-                async with httpx.AsyncClient() as probe:
+                async with httpx.AsyncClient(trust_env=False) as probe:
                     await probe.get(relay_url, timeout=2.0)
 
             resp = await _launch_terminal(client, session_id, bridge_inject_dir=True)
             assert resp.status_code == 200, resp.text
             # The relay binds from a fixed port range, so the new one may reuse the port.
-            async with httpx.AsyncClient() as probe:
+            async with httpx.AsyncClient(trust_env=False) as probe:
                 await probe.get(json.loads(relay_file.read_text())["url"], timeout=2.0)
         finally:
             with contextlib.suppress(httpx.HTTPError):
@@ -1648,3 +1648,65 @@ async def test_failed_launch_rolls_back_only_new_relay(
                 await c.delete(f"/v1/sessions/{session_id}")
         shutil.rmtree(bridge_dir, ignore_errors=True)
         shutil.rmtree(next_bridge_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_managed_tools_changed_uses_verified_current_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Notify the MCP generation that published server.json, not the old bridge."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from omnigent.runner import app as runner_app
+
+    session_id = uuid.uuid4().hex
+    original = tmp_path / "original-bridge"
+    projection = tmp_path / "generation-b" / "bridge"
+    model = SimpleNamespace(
+        session_id=session_id, generation="b" * 32, socket_path=str(tmp_path / "model.sock")
+    )
+    policy = SimpleNamespace(generation=model.generation)
+    events = []
+
+    def refresh(actual_policy):
+        assert actual_policy is policy and actual_policy.generation == model.generation
+        events.append(("refreshed", projection))
+
+    runtime = SimpleNamespace(
+        bridge=projection, generation=model.generation, refresh_projection=refresh
+    )
+    registry = _StubResourceRegistry(tmp_path)
+    registry.model_channel_for = lambda requested: model if requested == session_id else None
+    registry.native_runtime_for = lambda requested: runtime
+    registry.native_channels_for = lambda requested: (model, policy)
+    relay = Mock()
+    monkeypatch.setattr(
+        "omnigent.harnesses.claude_native.bridge.start_tool_relay", lambda **kw: relay
+    )
+
+    def notify(target, *, cancelled):
+        assert not cancelled.is_set()
+        assert target == projection and target != original
+        assert events == [("refreshed", projection)]
+        events.append(("notified", target))
+
+    monkeypatch.setattr("omnigent.harnesses.claude_native.bridge.post_tools_changed", notify)
+    captured = {}
+    original_register = runner_app.register_resource_routes
+
+    def capture(app, **kwargs):
+        captured.update(kwargs)
+        return original_register(app, **kwargs)
+
+    monkeypatch.setattr(runner_app, "register_resource_routes", capture)
+    create_runner_app(
+        resource_registry=registry,  # type: ignore[arg-type]
+        server_client=NullServerClient(),  # type: ignore[arg-type]
+        session_model_channel=model,  # type: ignore[arg-type]
+    )
+    await captured["_ensure_comment_relay_started"](
+        session_id, explicit_bridge_dir=original, await_notify=True
+    )
+    assert events == [("refreshed", projection), ("notified", projection)]

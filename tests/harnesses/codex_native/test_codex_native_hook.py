@@ -182,6 +182,399 @@ def _run_hook(
     return codex_native_hook.main(["evaluate-policy", "--bridge-dir", str(bridge_dir)])
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "state",
+        "missing_relay",
+        "generation",
+        "session",
+        "endpoint",
+        "malformed_url",
+        "malformed_payload",
+        "event",
+    ],
+)
+@pytest.mark.parametrize("event", ["PreToolUse", "UserPromptSubmit"])
+def test_required_hook_rejects_missing_or_different_binding(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fault: str,
+    event: str,
+) -> None:
+    if fault == "state":
+        monkeypatch.setattr(codex_native_hook, "read_bridge_state", lambda _directory: None)
+    info = {
+        "url": "http://127.0.0.1:12345",
+        "token": "local-capability",
+        "session_id": "conv_active",
+        "generation": "a" * 32,
+    }
+    if fault == "generation":
+        info["generation"] = "b" * 32
+    elif fault == "session":
+        info["session_id"] = "conv_other"
+    elif fault == "endpoint":
+        info["url"] = "http://untrusted.invalid:12345"
+    elif fault == "malformed_url":
+        info["url"] = "http://["
+    if fault != "missing_relay":
+        (bridge_dir / "tool_relay.json").write_text(json.dumps(info))
+    monkeypatch.setattr(httpx, "Client", _RaisesIfCalled)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "hook_event_name": event,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "whoami"},
+                    "prompt": "hello",
+                }
+            )
+        ),
+    )
+    if fault == "malformed_payload":
+        monkeypatch.setattr(sys, "stdin", io.StringIO("not json"))
+    elif fault == "event":
+        monkeypatch.setattr(
+            sys, "stdin", io.StringIO(json.dumps({"hook_event_name": "PostToolUse"}))
+        )
+    assert (
+        codex_native_hook.main(
+            [
+                "evaluate-policy",
+                "--bridge-dir",
+                str(bridge_dir),
+                "--required-session-id",
+                "conv_active",
+                "--required-generation",
+                "a" * 32,
+                "--required-hook-event",
+                event,
+            ]
+        )
+        == 0
+    )
+    output = json.loads(capsys.readouterr().out)
+    if event == "PreToolUse":
+        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+    else:
+        assert output["decision"] == "block"
+
+
+def test_required_hook_command_cannot_shortcut_its_identity_check(bridge_dir: Path) -> None:
+    command = _codex_policy_hook_command(
+        bridge_dir, sys.executable, required_session_id="conv_active", required_generation="a" * 32
+    )
+    assert "--required-session-id conv_active" in command
+    assert "--required-generation " + "a" * 32 in command
+    assert "evaluate-policy" in command
+    assert ".policy-allow" not in command
+
+
+@pytest.mark.parametrize("advertisement", [None, []], ids=["null", "list"])
+@pytest.mark.parametrize("event", ["PreToolUse", "UserPromptSubmit"])
+def test_required_hook_rejects_non_object_relay_snapshot(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    advertisement: object,
+    event: str,
+) -> None:
+    (bridge_dir / "tool_relay.json").write_text(json.dumps(advertisement))
+    monkeypatch.setattr(httpx, "Client", _RaisesIfCalled)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"hook_event_name": event})))
+    assert (
+        codex_native_hook.main(
+            [
+                "evaluate-policy",
+                "--bridge-dir",
+                str(bridge_dir),
+                "--required-session-id",
+                "conv_active",
+                "--required-generation",
+                "a" * 32,
+                "--required-hook-event",
+                event,
+            ]
+        )
+        == 0
+    )
+    output = json.loads(capsys.readouterr().out)
+    if event == "PreToolUse":
+        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+    else:
+        assert output["decision"] == "block"
+
+
+def test_required_hook_uses_one_generation_and_credential_snapshot(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    relay_file = bridge_dir / "tool_relay.json"
+    before = {
+        "generation": "a" * 32,
+        "session_id": "conv_active",
+        "url": "http://127.0.0.1:12345",
+        "token": "capability-a",
+    }
+    after = {
+        "generation": "b" * 32,
+        "session_id": "conv_active",
+        "url": "http://127.0.0.1:23456",
+        "token": "capability-b",
+    }
+    read_text = Path.read_text
+    reads: list[Path] = []
+
+    def changing_advertisement(
+        path: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
+        if path == relay_file:
+            reads.append(path)
+            return json.dumps(before if len(reads) == 1 else after)
+        return read_text(path, encoding=encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", changing_advertisement)
+    _DenyHttpxClient.captured.clear()
+    monkeypatch.setattr(httpx, "Client", _DenyHttpxClient)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}})
+        ),
+    )
+    assert (
+        codex_native_hook.main(
+            [
+                "evaluate-policy",
+                "--bridge-dir",
+                str(bridge_dir),
+                "--required-session-id",
+                "conv_active",
+                "--required-generation",
+                "a" * 32,
+                "--required-hook-event",
+                "PreToolUse",
+            ]
+        )
+        == 0
+    )
+    assert reads == [relay_file]
+    assert _DenyHttpxClient.captured["url"] == before["url"] + "/policies/evaluate"
+    headers = _DenyHttpxClient.captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Authorization"] == "Bearer capability-a"
+    assert (
+        json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    )
+
+
+@pytest.mark.parametrize("event", ["PreToolUse", "UserPromptSubmit"])
+@pytest.mark.parametrize("mode", ["connect_error", "non_2xx", "empty_body", "malformed_json"])
+def test_required_hook_does_not_delegate_unavailable_verdict_to_codex(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    event: str,
+    mode: str,
+) -> None:
+    (bridge_dir / "tool_relay.json").write_text(
+        json.dumps(
+            {
+                "url": "http://127.0.0.1:12345",
+                "token": "local-capability",
+                "session_id": "conv_active",
+                "generation": "a" * 32,
+            }
+        )
+    )
+    monkeypatch.setattr(native_policy_hook, "_EVALUATE_POLICY_RETRY_BUDGET_S", 0.0)
+    monkeypatch.setattr(native_policy_hook.httpx, "Client", make_failing_client(mode))
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "hook_event_name": event,
+                    "tool_name": "Bash",
+                    "tool_input": {},
+                    "prompt": "hello",
+                }
+            )
+        ),
+    )
+    assert (
+        codex_native_hook.main(
+            [
+                "evaluate-policy",
+                "--bridge-dir",
+                str(bridge_dir),
+                "--required-session-id",
+                "conv_active",
+                "--required-generation",
+                "a" * 32,
+                "--required-hook-event",
+                event,
+            ]
+        )
+        == 0
+    )
+    output = json.loads(capsys.readouterr().out)
+    if event == "PreToolUse":
+        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+    else:
+        assert output["decision"] == "block"
+
+
+@pytest.mark.parametrize("fault", ["invalid_url", "non_object_response"])
+def test_required_hook_contains_request_and_conversion_errors(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fault: str,
+) -> None:
+    event = "PreToolUse" if fault == "invalid_url" else "UserPromptSubmit"
+    (bridge_dir / "tool_relay.json").write_text(
+        json.dumps(
+            {
+                "url": "http://127.0.0.1:bad"
+                if fault == "invalid_url"
+                else "http://127.0.0.1:12345",
+                "token": "local-capability",
+                "session_id": "conv_active",
+                "generation": "a" * 32,
+            }
+        )
+    )
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=[])
+
+    real_client = httpx.Client
+
+    def client(**kwargs: object) -> httpx.Client:
+        return real_client(transport=httpx.MockTransport(handler), trust_env=False, **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", client)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "hook_event_name": event,
+                    "tool_name": "Bash",
+                    "tool_input": {},
+                    "prompt": "hello",
+                }
+            )
+        ),
+    )
+    assert (
+        codex_native_hook.main(
+            [
+                "evaluate-policy",
+                "--bridge-dir",
+                str(bridge_dir),
+                "--required-session-id",
+                "conv_active",
+                "--required-generation",
+                "a" * 32,
+                "--required-hook-event",
+                event,
+            ]
+        )
+        == 0
+    )
+    output = json.loads(capsys.readouterr().out)
+    if fault == "invalid_url":
+        assert calls == []
+        assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
+    else:
+        assert len(calls) == 1
+        assert output["decision"] == "block"
+
+
+@pytest.mark.parametrize("state_arrives", [True, False])
+def test_required_first_prompt_waits_for_actual_thread_state(
+    bridge_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    state_arrives: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    state = codex_native_hook.read_bridge_state(bridge_dir)
+    elapsed = 0.0
+    reads = 0
+
+    def read_state(_directory: Path) -> CodexNativeBridgeState | None:
+        nonlocal reads
+        reads += 1
+        return state if state_arrives and reads > 1 else None
+
+    def sleep(seconds: float) -> None:
+        nonlocal elapsed
+        elapsed += seconds
+
+    monkeypatch.setattr(codex_native_hook, "read_bridge_state", read_state)
+    monkeypatch.setattr(
+        codex_native_hook,
+        "time",
+        SimpleNamespace(monotonic=lambda: elapsed, sleep=sleep, time=time.time),
+    )
+    (bridge_dir / "tool_relay.json").write_text(
+        json.dumps(
+            {
+                "url": "http://127.0.0.1:12345",
+                "token": "local-capability",
+                "session_id": "conv_active",
+                "generation": "a" * 32,
+            }
+        )
+    )
+    _DenyHttpxClient.captured = {}
+    monkeypatch.setattr(httpx, "Client", _DenyHttpxClient)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": "hi"})),
+    )
+    assert (
+        codex_native_hook.main(
+            [
+                "evaluate-policy",
+                "--bridge-dir",
+                str(bridge_dir),
+                "--required-session-id",
+                "conv_active",
+                "--required-generation",
+                "a" * 32,
+                "--required-hook-event",
+                "UserPromptSubmit",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["decision"] == "block"
+    if state_arrives:
+        assert elapsed == 0.05
+        assert reads == 2
+        assert _DenyHttpxClient.captured["url"]
+    else:
+        assert 15.0 <= elapsed < 15.1
+        assert _DenyHttpxClient.captured == {}
+
+
 def test_pre_tool_use_converts_posts_and_returns_deny(
     bridge_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -637,6 +1030,7 @@ def test_relay_answer_opens_window_only_for_the_hooks_session(
     monkeypatch: pytest.MonkeyPatch,
     relay_session_id: str,
     window_opens: bool,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Through the relay the server evaluated the relay's session, which can trail a switch."""
     from omnigent.harnesses.claude_native.bridge import _TOOL_RELAY_FILE
@@ -647,10 +1041,14 @@ def test_relay_answer_opens_window_only_for_the_hooks_session(
         )
     )
     monkeypatch.setattr(native_policy_hook.httpx, "Client", make_verdict_client(_NO_POLICY_ALLOW))
+    if not window_opens:
+        monkeypatch.setattr(native_policy_hook.httpx, "Client", _RaisesIfCalled)
     payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}}
 
     assert _run_hook(bridge_dir, payload, monkeypatch) == 0
-
+    output = capsys.readouterr().out
+    if not window_opens:
+        assert json.loads(output)["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert (policy_allow_cache._read_state(bridge_dir)[0] > 0) is window_opens
 
 

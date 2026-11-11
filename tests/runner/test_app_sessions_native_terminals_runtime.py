@@ -510,8 +510,26 @@ async def test_auto_create_codex_terminal_keeps_loop_responsive_during_credentia
     ]
     + [
         pytest.param(
+            (0, 142, 0),
+            ["--config", "approval_policy=on-request"],
+            True,
+            False,
+            True,
+            None,
+            id="managed-0142",
+        ),
+        pytest.param(
+            (0, 142, 0),
+            ["--config", "approval_policy=on-request"],
+            True,
+            True,
+            True,
+            None,
+            id="managed-0142-cancel",
+        ),
+        pytest.param(
             (0, 154, 0), [], True, False, True, "configured-workspace", id="configured-provider"
-        )
+        ),
     ],
 )
 @pytest.mark.parametrize("rotated", [False, True], ids=["session-dir", "label-dir"])
@@ -546,12 +564,62 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
     :param monkeypatch: Pytest monkeypatch fixture.
     :returns: None.
     """
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
     import omnigent.harness_startup_config as startup_config_mod
     import omnigent.harnesses.codex_native.app_server as codex_app_mod
+    from omnigent.harnesses.codex_native import execution as execution_mod
+    from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
+    from omnigent.inner.os_env import CallerProcessOSEnvironment
+    from omnigent.inner.sandbox import SandboxPolicy
     from omnigent.runner import app as runner_app_mod
     from omnigent.runner.native import orchestration
 
     session_id = "76cbdcbbf84d4149b2a7d7441b6966c1"
+    managed = version == (0, 142, 0)
+    required = OSEnvSpec(sandbox=OSEnvSandboxSpec(type="linux_bwrap", allow_network=False))
+    projection_calls: list[str] = []
+    model_channel, policy_channel = object(), object()
+
+    def refresh_projection(channel: object, *, publish_state: bool) -> None:
+        state = codex_native_bridge.read_bridge_state(bridge_dir)
+        assert state is not None and state.thread_id == thread_id
+        assert channel is policy_channel and publish_state is True
+        projection_calls.append(state.thread_id)
+
+    native_runtime = SimpleNamespace(
+        codex_binary=Path("/opt/codex/bin/codex"),
+        mcp_overrides=('mcp_servers.omnigent.environment_id="session_fixture"',),
+        home=tmp_path / "managed-home",
+        control=tmp_path / "private-control" / "app.sock",
+        bridge=tmp_path / "projection",
+        generation="a" * 32,
+        refresh_projection=refresh_projection,
+    )
+    environment = Mock(spec=CallerProcessOSEnvironment)
+    environment.sandbox = SandboxPolicy(
+        "linux_bwrap", True, [], [tmp_path], [], False, env_passthrough=["CODEX_HOME"]
+    )
+    execution = SimpleNamespace(
+        required_spec=required,
+        environment=environment,
+        runtime=native_runtime,
+        policy_channel=policy_channel,
+    )
+
+    def compose_execution(*args: object) -> object:
+        assert args == (
+            session_id,
+            required,
+            environment,
+            model_channel,
+            policy_channel,
+            native_runtime,
+        )
+        return execution
+
+    monkeypatch.setattr(execution_mod, "CodexSandboxLaunch", compose_execution)
     thread_id = "019e96aa-0be2-7343-8d3b-6f914d60936b"
     monkeypatch.setattr(codex_native_bridge, "_BRIDGE_ROOT", tmp_path / "codex-bridge")
     monkeypatch.setenv("OMNIGENT_RUNNER_WORKSPACE", str(tmp_path / "workspace"))
@@ -658,6 +726,7 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
             self.listen_url: str | None = None
             self.started = False
             self.closed = False
+            self.execution = None
             # Provider/model -c overrides the runner forwards to the
             # --remote TUI; empty here (no profile in this test).
             self.config_overrides: list[str] = []
@@ -697,6 +766,7 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
         assert session_reap_calls == [bridge_dir]
         build_calls.append(kwargs)
         app_server.codex_home = kwargs["codex_home"]
+        app_server.execution = kwargs["execution"]
         return app_server
 
     class _UnexpectedDiscoveryClient:
@@ -739,6 +809,22 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
     class _FakeResourceRegistry(SessionResourceRegistry):
         """Resource registry that records the launched terminal spec."""
 
+        def required_os_env(self, requested: str) -> OSEnvSpec | None:
+            assert requested == session_id
+            return required if managed else None
+
+        def native_runtime_for(self, requested: str) -> Any:
+            assert requested == session_id and managed
+            return native_runtime
+
+        def native_channels_for(self, requested: str) -> Any:
+            assert requested == session_id and managed
+            return model_channel, policy_channel
+
+        def resolve_environment(self, requested: str, _environment_id: str) -> Any:
+            assert requested == session_id and managed
+            return environment
+
         async def launch_auxiliary_terminal(
             self,
             *,
@@ -774,6 +860,11 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
             assert preloaded_state is not None
             assert preloaded_state.thread_id == thread_id
             launched_specs.append(spec)
+            if managed:
+                assert parent_os_env is required
+                assert spec.os_env == "inherit" and spec.inherit_env is False
+                assert projection_calls == [thread_id]
+                assert "OPENAI_API_KEY" not in spec.env
             if cancel_launch:
                 raise asyncio.CancelledError
             return SessionResourceView(
@@ -846,6 +937,13 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
         _fake_build_codex_native_server,
     )
     monkeypatch.setattr(codex_app_mod, "CodexAppServerClient", _UnexpectedDiscoveryClient)
+    monkeypatch.setattr(
+        codex_app_mod,
+        "client_for_transport",
+        lambda transport, *, client_name: _UnexpectedDiscoveryClient(
+            ws_url=transport, client_name=client_name
+        ),
+    )
     monkeypatch.setattr(codex_app_mod, "preload_codex_thread_for_resume", _fake_preload_thread)
     monkeypatch.setattr(codex_app_mod, "apply_codex_thread_effort", _fake_apply_effort)
     monkeypatch.setattr(
@@ -855,7 +953,7 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
     monkeypatch.setattr(
         startup_config_mod,
         "resolve_harness_config",
-        lambda _cfg: (None, {"codex-native": {"command": "codex-wrapper"}}),
+        lambda _cfg: (None, {} if managed else {"codex-native": {"command": "codex-wrapper"}}),
     )
     monkeypatch.setattr(
         startup_config_mod,
@@ -928,7 +1026,11 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
 
     assert terminal_view.id == "terminal_codex_main"
     assert app_server.started is True
-    expected_codex_home = codex_native_bridge.codex_home_for_bridge_dir(bridge_dir)
+    expected_codex_home = (
+        native_runtime.home
+        if managed
+        else codex_native_bridge.codex_home_for_bridge_dir(bridge_dir)
+    )
     assert app_server.codex_home == expected_codex_home
     # The terminal-reuse check reads the app-server's stop record from this directory.
     assert remembered_dir == bridge_dir
@@ -946,7 +1048,11 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
     )
     assert len(launched_specs) == 1
     launched = launched_specs[0]
-    assert launched.command == "codex-wrapper"
+    assert launched.command == (app_server.codex_path if managed else "codex-wrapper")
+    if managed:
+        assert app_server.listen_url == f"unix://{native_runtime.control}"
+        assert build_calls[0]["require_policy_hooks"] is True
+        assert build_calls[0]["execution"] is execution
     # Older TUIs still need permission flags; Codex 0.154+ rejects them.
     assert launched.args == [
         "codex",
@@ -961,8 +1067,10 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
         thread_id,
     ]
     assert app_server.listen_url is not None
-    assert app_server.listen_url.startswith("ws://127.0.0.1:")
-    assert launched.env["OPENAI_API_KEY"] == "sk-test"
+    if not managed:
+        assert app_server.listen_url.startswith("ws://127.0.0.1:")
+    if not managed:
+        assert launched.env["OPENAI_API_KEY"] == "sk-test"
     assert "IGNORED" not in launched.env
     assert launched.env["CODEX_HOME"] == str(app_server.codex_home)
     assert launched.tmux_start_on_attach is False
@@ -975,7 +1083,7 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
     ]
     assert len(launch_events) == 1
     assert launch_events[0].session_id == session_id
-    assert launch_events[0].attributes["command"] == "codex-wrapper"
+    assert launch_events[0].attributes["command"] == launched.command
     assert launch_events[0].attributes["resume"] is True
     from omnigent.harnesses.codex_native.launch_args import redact_codex_launch_args
 
@@ -1034,8 +1142,9 @@ async def test_auto_create_codex_terminal_uses_persisted_resume_launch_config(
     # Resume state is published before the configured wrapper starts, so the
     # executor never needs a startup-timeout marker for this path.
     assert codex_native_bridge.read_bridge_startup_timeout(bridge_dir) is None
-    assert "bridge state is preloaded" in caplog.text
-    assert "no bridge-state wait extension is needed" in caplog.text
+    if not managed:
+        assert "bridge state is preloaded" in caplog.text
+        assert "no bridge-state wait extension is needed" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -4717,6 +4826,8 @@ async def test_codex_discover_thread_and_forward_persists_workspace_as_bridge_cw
     commands run from the wrong directory instead of the selected workspace.
     A Plan-armed launch must switch the thread before that state is published.
     """
+    from types import SimpleNamespace
+
     from omnigent.harnesses.codex_native import app_server as codex_app_mod
     from omnigent.harnesses.codex_native import forwarder as codex_native_forwarder
     from omnigent.runner.app import (
@@ -4729,6 +4840,7 @@ async def test_codex_discover_thread_and_forward_persists_workspace_as_bridge_cw
     workspace = tmp_path / "selected-workspace"
     wait_calls: list[dict[str, object]] = []
     patch_requests: list[httpx.Request] = []
+    projection_calls: list[str] = []
     real_async_client = httpx.AsyncClient
 
     def _handle_patch(request: httpx.Request) -> httpx.Response:
@@ -4766,6 +4878,18 @@ async def test_codex_discover_thread_and_forward_persists_workspace_as_bridge_cw
             return None
 
     class _AppServer:
+        def __init__(self) -> None:
+            self.execution = SimpleNamespace(
+                policy_channel="owned-policy",
+                runtime=SimpleNamespace(refresh_projection=self.refresh_projection),
+            )
+
+        def refresh_projection(self, policy: str, *, publish_state: bool) -> None:
+            state = codex_native_bridge.read_bridge_state(tmp_path)
+            assert state is not None and state.thread_id == thread_id
+            assert publish_state is True and policy == "owned-policy"
+            projection_calls.append(state.thread_id)
+
         async def close(self) -> None:
             return None
 
@@ -4777,7 +4901,8 @@ async def test_codex_discover_thread_and_forward_persists_workspace_as_bridge_cw
 
     session_id = "9f1f7f7bd7f24f80a621d9a3ba3fbc10"
     codex_native_bridge.write_bridge_startup_timeout(tmp_path, 120.0)
-    _AUTO_CODEX_APP_SERVERS[session_id] = _AppServer()
+    app_server = _AppServer()
+    _AUTO_CODEX_APP_SERVERS[session_id] = app_server
     try:
         with (
             pytest.raises(RuntimeError, match="Could not enable Codex Plan mode")
@@ -4794,6 +4919,7 @@ async def test_codex_discover_thread_and_forward_persists_workspace_as_bridge_cw
                 routing_summary="provider 'test' (model=gpt-test)",
                 thread_start_timeout_seconds=120.0,
                 apply_plan_mode=_apply_plan_mode,
+                app_server=app_server,
             )
     finally:
         _AUTO_CODEX_APP_SERVERS.pop(session_id, None)
@@ -4806,7 +4932,9 @@ async def test_codex_discover_thread_and_forward_persists_workspace_as_bridge_cw
         failure = codex_native_bridge.read_bridge_startup_failure(tmp_path)
         assert failure is not None and failure.code == "codex_plan_mode_failed"
         assert patch_requests == []
+        assert projection_calls == []
         return
+    assert projection_calls == [thread_id]
     assert len(patch_requests) == 1
     patch_request = patch_requests[0]
     assert patch_request.method == "PATCH"

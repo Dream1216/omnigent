@@ -99,19 +99,21 @@ def test_controller_budget_keeps_the_frozen_producer_contract() -> None:
     assert scope["frozen_producer_control_revision"] == "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5"
     budget = dict(baseline["source_intrusion_budget"])
     assert scope["frozen_product_file_ceiling"] == 226
-    assert budget["max_direct_upstream_files"] == 230
-    assert budget["max_upstream_net_added_loc"] == 7090
-    assert scope["current_controller_file_ceiling"] == 230
+    finite = "ordinary_m_native_0142_finite_approval" in baseline
+    expected_files, expected_loc = (261, 12528) if finite else (230, 7090)
+    assert budget["max_direct_upstream_files"] == expected_files
+    assert budget["max_upstream_net_added_loc"] == expected_loc
+    assert scope["current_controller_file_ceiling"] == expected_files
     assert controller["source_intrusion_budget"] == budget
     workflow = (root / ".github/workflows/saas-upstream-compat.yml").read_text()
     assert f"--manifest {controller_path}" in workflow
     file_limit = "direct upstream file budget exceeded"
     loc_limit = "upstream net-added LOC budget exceeded"
     for count, loc, violations in (
-        (230, 7090, []),
-        (231, 7090, [file_limit]),
-        (230, 7091, [loc_limit]),
-        (231, 7091, [file_limit, loc_limit]),
+        (expected_files, expected_loc, []),
+        (expected_files + 1, expected_loc, [file_limit]),
+        (expected_files, expected_loc + 1, [loc_limit]),
+        (expected_files + 1, expected_loc + 1, [file_limit, loc_limit]),
     ):
         deltas = [
             FileDelta(f"tests/controller_case_{index}.py", loc if index == 0 else 0, 0)
@@ -125,6 +127,7 @@ def test_controller_budget_keeps_the_frozen_producer_contract() -> None:
             reverse_dependencies=[],
             lineage_ok=True,
             version_ok=True,
+            source_root=root,
         )
         assert result["violations"] == violations
         assert result["status"] == ("fail" if violations else "pass")
@@ -190,8 +193,10 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     repo = Path(__file__).resolve().parents[2]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
-    assert budget["max_upstream_net_added_loc"] == 7090
-    assert budget["max_direct_upstream_files"] == 230
+    finite = "ordinary_m_native_0142_finite_approval" in manifest
+    expected_files, expected_loc = (261, 12528) if finite else (230, 7090)
+    assert budget["max_upstream_net_added_loc"] == expected_loc
+    assert budget["max_direct_upstream_files"] == expected_files
     assert budget["max_active_patches"] == 9
     assert budget["min_isolated_custom_code_ratio"] == 0.85
     revision = manifest["source_intrusion_budget_revision"]
@@ -642,6 +647,7 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,
+        source_root=repo,
     )
     assert report["status"] == ("fail" if extra_lines else "pass")
     assert report["violations"] == (
@@ -663,6 +669,7 @@ def test_dependency_security_budget_revision_retains_a_hard_file_ceiling(
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,
+        source_root=repo,
     )
     assert report["status"] == ("fail" if extra_files else "pass")
     assert report["violations"] == (
@@ -684,6 +691,7 @@ def test_e2e_ui_governance_files_are_downstream_owned() -> None:
         reverse_dependencies=[],
         lineage_ok=True,
         version_ok=True,
+        source_root=repo,
     )
     assert report["status"] == "pass"
     assert report["metrics"]["direct_upstream_file_count"] == 0
@@ -711,3 +719,227 @@ def test_source_isolation_floor_remains_enforced_at_085(
     assert report["violations"] == (
         ["isolated custom-code ratio is below budget"] if expected == "fail" else []
     )
+
+
+@pytest.fixture
+def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
+    from saas.scripts import check_upstream_delta as guard
+
+    root = Path(__file__).resolve().parents[2]
+    manifest = json.loads((root / "saas/upstream-baseline.json").read_text())
+    scope = json.loads((root / guard._ORDINARY_M_SCOPE_PATH).read_text())
+    manifest["source_intrusion_budget"] = dict(scope["budgets"])
+    # This synthetic unit decision is never written into an adopted manifest.
+    manifest[guard._ORDINARY_M_APPROVAL] = {
+        "candidate_manifest_sha256": guard._ORDINARY_M_CANDIDATE,
+        "decision": "approved",
+        "approver": "Dream1216",
+        "authority_record_sha256": "1" * 64,
+    }
+    deltas = [FileDelta(guard._ORDINARY_M_PROTECTED_PATH, 12528, 0)]
+    deltas.extend(FileDelta(f"omnigent/finite_case_{index}.py", 0, 0) for index in range(260))
+    deltas.append(FileDelta("saas/finite_fixture.py", 100000, 0))
+    base_changes = [
+        FileDelta(path, 1, 0)
+        for path in [*(item["path"] for item in scope["files"]), *scope["governance_paths"]]
+    ]
+    monkeypatch.setattr(guard, "_git", lambda repo, *args: "")
+    monkeypatch.setattr(
+        guard,
+        "collect_deltas",
+        lambda repo, revision: base_changes if revision == scope["public_base"] else deltas,
+    )
+    return root, manifest, deltas, base_changes
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "valid",
+        "prepared",
+        "missing",
+        "candidate",
+        "author",
+        "old-authority",
+        "scope-bytes",
+        "protected-bytes",
+        "other-source-bytes",
+        "symlink",
+    ],
+)
+def test_ordinary_m_finite_approval_checks_exact_current_sources(
+    ordinary_m_finite_scope,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+) -> None:
+    from saas.scripts import check_upstream_delta as guard
+
+    root, manifest, deltas, _base_changes = ordinary_m_finite_scope
+    decision = manifest[guard._ORDINARY_M_APPROVAL]
+    if fault == "prepared":
+        decision["decision"] = "prepared"
+    elif fault == "missing":
+        manifest.pop(guard._ORDINARY_M_APPROVAL)
+    elif fault == "candidate":
+        decision["candidate_manifest_sha256"] = "0" * 64
+    elif fault == "author":
+        decision["approver"] = "another-user"
+    elif fault == "old-authority":
+        decision["authority_record_sha256"] = (
+            "6dafe4dcbb355c133f649db972a764abeebd43aedbd59f66cc8c9f1e991154ba"
+        )
+    target = {
+        "scope-bytes": root / guard._ORDINARY_M_SCOPE_PATH,
+        "protected-bytes": root / guard._ORDINARY_M_PROTECTED_PATH,
+        "other-source-bytes": root / "omnigent/harnesses/codex_native/executor_worker.py",
+        "symlink": root / guard._ORDINARY_M_PROTECTED_PATH,
+    }.get(fault)
+    if target is not None:
+        if fault == "symlink":
+            original = Path.is_symlink
+            monkeypatch.setattr(Path, "is_symlink", lambda path: path == target or original(path))
+        else:
+            original_read = Path.read_bytes
+
+            def changed_bytes(path):
+                data = original_read(path)
+                if path != target:
+                    return data
+                if fault == "scope-bytes":
+                    return data + b"changed"
+                return data[:-1] + bytes([data[-1] ^ 1])
+
+            monkeypatch.setattr(Path, "read_bytes", changed_bytes)
+    result = evaluate_delta(
+        deltas,
+        manifest,
+        active_patch_count=9,
+        reverse_dependencies=[],
+        lineage_ok=True,
+        version_ok=True,
+        source_root=root,
+    )
+    assert result["metrics"]["direct_upstream_file_count"] == 261
+    assert result["metrics"]["upstream_net_added_loc"] == 12528
+    assert result["metrics"]["forbidden_upstream_files"] == [guard._ORDINARY_M_PROTECTED_PATH]
+    assert result["status"] == ("pass" if fault == "valid" else "fail")
+    assert result["approved_protected_sources"] == (
+        [guard._ORDINARY_M_PROTECTED_PATH] if fault == "valid" else []
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "other-protected",
+        "file-overflow",
+        "loc-overflow",
+        "patch-overflow",
+        "isolation-floor",
+        "reverse-dependency",
+        "lineage",
+        "version",
+    ],
+)
+def test_ordinary_m_finite_approval_keeps_other_original_gates(
+    ordinary_m_finite_scope,
+    fault: str,
+) -> None:
+    root, manifest, deltas, _base_changes = ordinary_m_finite_scope
+    patches, reverse, lineage, version = 9, [], True, True
+    if fault == "other-protected":
+        deltas.append(FileDelta("omnigent/runner/native/another.py", 0, 0))
+    elif fault == "file-overflow":
+        deltas.append(FileDelta("omnigent/extra_case.py", 0, 0))
+    elif fault == "loc-overflow":
+        deltas[0] = FileDelta(deltas[0].path, 12529, 0)
+    elif fault == "patch-overflow":
+        patches = 10
+    elif fault == "isolation-floor":
+        deltas[-1] = FileDelta("saas/finite_fixture.py", 1, 0)
+    elif fault == "reverse-dependency":
+        reverse = ["omnigent/forbidden_import.py"]
+    elif fault == "lineage":
+        lineage = False
+    elif fault == "version":
+        version = False
+    result = evaluate_delta(
+        deltas,
+        manifest,
+        active_patch_count=patches,
+        reverse_dependencies=reverse,
+        lineage_ok=lineage,
+        version_ok=version,
+        source_root=root,
+    )
+    assert result["status"] == "fail"
+    if fault == "other-protected":
+        assert "omnigent/runner/native/another.py" in result["metrics"]["forbidden_upstream_files"]
+        assert "forbidden Agent/Harness/Native Bridge paths were modified" in result["violations"]
+
+
+def test_ordinary_m_normal_cli_consumes_only_complete_record(
+    ordinary_m_finite_scope,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from types import SimpleNamespace
+
+    from saas.scripts import check_upstream_delta as guard
+
+    root, manifest, deltas, _base_changes = ordinary_m_finite_scope
+
+    def read_git(repo, *args):
+        if args[:2] == ("merge-base", "--is-ancestor"):
+            return ""
+        assert args in {
+            ("rev-parse", "--show-toplevel"),
+            ("rev-parse", "HEAD"),
+        }
+        return str(root) if args[-1] == "--show-toplevel" else "synthetic-unit-head"
+
+    monkeypatch.setattr(guard, "_git", read_git)
+    monkeypatch.setattr(guard, "_load_manifest", lambda path: manifest)
+    monkeypatch.setattr(
+        guard,
+        "collect_deltas",
+        lambda repo, revision: _base_changes if revision.startswith("aadd44ed") else deltas,
+    )
+    monkeypatch.setattr(guard, "scan_reverse_dependencies", lambda repo, paths: [])
+    monkeypatch.setattr(guard.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(guard.sys, "argv", ["check_upstream_delta.py"])
+    assert guard.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["approved_protected_sources"] == [guard._ORDINARY_M_PROTECTED_PATH]
+    assert result["metrics"]["direct_upstream_file_count"] == 261
+    manifest[guard._ORDINARY_M_APPROVAL]["decision"] = "prepared"
+    assert guard.main() == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "fail"
+
+
+@pytest.mark.parametrize("fault", ["existing-source-net-zero", "forbidden-controls"])
+def test_ordinary_m_finite_approval_rejects_other_candidate_and_rule_drift(
+    ordinary_m_finite_scope,
+    fault: str,
+) -> None:
+
+    root, manifest, deltas, base_changes = ordinary_m_finite_scope
+    if fault == "existing-source-net-zero":
+        # Already counted upstream file: same file count and net LOC after an edit.
+        deltas[1] = FileDelta("omnigent/cli.py", 1, 1)
+        base_changes.append(FileDelta("omnigent/cli.py", 1, 1))
+    else:
+        manifest["forbidden_upstream_prefixes"] = []
+    result = evaluate_delta(
+        deltas,
+        manifest,
+        active_patch_count=9,
+        reverse_dependencies=[],
+        lineage_ok=True,
+        version_ok=True,
+        source_root=root,
+    )
+    assert result["metrics"]["direct_upstream_file_count"] == 261
+    assert result["metrics"]["upstream_net_added_loc"] == 12528
+    assert result["status"] == "fail"
+    assert "ordinary M finite source approval is missing or mismatched" in result["violations"]

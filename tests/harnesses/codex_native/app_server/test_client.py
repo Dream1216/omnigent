@@ -20,6 +20,18 @@ from omnigent.harnesses.codex_native.app_server import (
 )
 
 
+@pytest.mark.parametrize("transport", ["/private/control.sock", "unix:///private/control.sock"])
+def test_unix_control_uri_uses_the_filesystem_socket(transport: str) -> None:
+    client = app_server.client_for_transport(transport)
+    assert str(client._socket_path) == "/private/control.sock"
+    assert client._ws_url is None
+
+
+def test_unix_control_uri_requires_an_explicit_path() -> None:
+    with pytest.raises(ValueError, match="requires a socket path"):
+        app_server.client_for_transport("unix://")
+
+
 @pytest.mark.parametrize(
     ("code", "message", "expected"),
     [

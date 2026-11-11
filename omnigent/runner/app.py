@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from omnigent.harnesses.claude_native.main import ClaudeNativeUcodeConfig
     from omnigent.harnesses.codex_native.bridge import CodexNativeBridgeState
     from omnigent.runner.mcp_manager import RunnerMcpManager
+    from omnigent.runner.session_channels import SessionRelayChannel
     from omnigent.terminals.registry import TerminalRegistry
 
 import httpx
@@ -1200,6 +1201,7 @@ def create_runner_app(
     auth_token_factory: Callable[[], str | None] | None = None,
     native_pane_idle_timeout_s: float | None = None,
     require_start_sandbox: bool = False,
+    session_model_channel: SessionRelayChannel | None = None,
 ) -> FastAPI:
     """Build a fresh runner FastAPI app.
 
@@ -1746,7 +1748,14 @@ def create_runner_app(
             terminal_registry=terminal_registry,
             runner_workspace=runner_workspace,
             per_session_workspace=per_session_workspace,
+            session_model_channel=session_model_channel,
         )
+    elif (
+        session_model_channel is not None
+        and resource_registry.model_channel_for(session_model_channel.session_id)
+        != session_model_channel
+    ):
+        raise ValueError("Runner resource registry has a different model binding")
     if require_start_sandbox:
         resource_registry.require_sandbox_binding()
     app.state.session_resource_registry = resource_registry
@@ -1770,7 +1779,45 @@ def create_runner_app(
         )
         if enforced is None:
             raise AgentStartPolicyError("server", "did not supply a required sandbox")
-        resource_registry.bind_required_os_env(session_id, enforced)
+        if harness in ("codex-native", "native-codex"):
+            resource_registry.bind_required_os_env(
+                session_id, enforced, require_native_channels=True
+            )
+        else:
+            resource_registry.bind_required_os_env(session_id, enforced)
+        if harness in ("codex-native", "native-codex"):
+            from omnigent.harnesses.codex_native.bridge import (
+                CODEX_NATIVE_BRIDGE_ID_LABEL_KEY,
+                bridge_dir_for_bridge_id,
+            )
+
+            model_channel = resource_registry.model_channel_for(session_id)
+            if model_channel is None:
+                raise AgentStartPolicyError("server", "has no Host-bound native model channel")
+            labels = await _session_labels_for_runner_spawn(
+                server_client=server_client, session_id=session_id
+            )
+            directory = bridge_dir_for_bridge_id(
+                labels.get(CODEX_NATIVE_BRIDGE_ID_LABEL_KEY) or session_id
+            )
+            await _ensure_comment_relay_started(
+                session_id, explicit_bridge_dir=directory, policy_transport_only=True
+            )
+            binding = _session_comment_relays.get(session_id)
+            if binding is None:
+                raise AgentStartPolicyError("server", "has no native policy transport")
+            resource_registry.bind_native_policy_channel(
+                session_id,
+                port=binding.relay.port,
+                path=Path(model_channel.socket_path).parent / "policy.sock",
+            )
+            from omnigent.harnesses.codex_native.executor_artifact import (
+                prepare_installed_executor,
+            )
+
+            await prepare_installed_executor(
+                resource_registry, session_id, directory, server_client
+            )
 
     def _publish_terminal_activity(session_id: str, terminal_id: str) -> None:
         if process_manager is not None:
@@ -4842,6 +4889,10 @@ def create_runner_app(
         binding = _session_comment_relays.get(session_id)
         if binding is None or binding.relay is not relay:
             return
+        if session_model_channel is not None and resource_registry.owns_native_policy_channel(
+            session_id, relay.port
+        ):
+            return
         del _session_comment_relays[session_id]
         relay.close()
 
@@ -4852,6 +4903,7 @@ def create_runner_app(
         explicit_bridge_dir: Path | None = None,
         await_notify: bool = False,
         session_labels: Mapping[str, str] | None = None,
+        policy_transport_only: bool = False,
     ) -> None:
         import json as _json
 
@@ -4896,7 +4948,25 @@ def create_runner_app(
         # can reassign it independently — the terminal-launch and per-harness
         # startup paths — all pass a bridge hint and take the branch below.
         current = _session_comment_relays.get(session_id)
-        if current is not None and current.spec_entry is spec_entry and known_bridge_dir is None:
+        channel = (
+            resource_registry.model_channel_for(session_id)
+            if session_model_channel is not None
+            else None
+        )
+        if (
+            channel is not None
+            and current is not None
+            and (known_bridge_dir is None or current.bridge_dir == known_bridge_dir)
+        ):
+            current.relay.start_private_socket(
+                Path(channel.socket_path).parent / "policy.sock", generation=channel.generation
+            )
+        if (
+            current is not None
+            and current.spec_entry is spec_entry
+            and known_bridge_dir is None
+            and (policy_transport_only or current.tools_ready)
+        ):
             return
 
         bridge_dir = known_bridge_dir
@@ -4917,14 +4987,17 @@ def create_runner_app(
             current is not None
             and current.spec_entry is spec_entry
             and current.bridge_dir == bridge_dir
+            and (policy_transport_only or current.tools_ready)
         ):
             return
 
         from omnigent.runner.tool_dispatch import build_native_relay_tool_schemas
 
         relay_spec = _unwrap_spec_entry(spec_entry)
-        relay_schemas: list[_JsonObject] = build_native_relay_tool_schemas(relay_spec)
-        if relay_spec is not None and relay_spec.mcp_servers:
+        relay_schemas: list[_JsonObject] = (
+            [] if policy_transport_only else build_native_relay_tool_schemas(relay_spec)
+        )
+        if not policy_transport_only and relay_spec is not None and relay_spec.mcp_servers:
             # Native terminals consume the persistent relay, not per-turn schemas.
             mcp = await ProxyMcpManager(session_id, server_client).schemas_for(relay_spec)
             relay_schemas.extend(mcp.schemas)
@@ -4940,6 +5013,7 @@ def create_runner_app(
                 current is not None
                 and current.spec_entry is spec_entry
                 and current.bridge_dir == bridge_dir
+                and current.tools_ready
             ):
                 return
 
@@ -5019,6 +5093,10 @@ def create_runner_app(
                     policy_client=server_client,
                     session_id=session_id,
                     file_change_observer=_observe_native_file_changes,
+                    private_socket_path=(Path(channel.socket_path).parent / "policy.sock")
+                    if channel is not None
+                    else None,
+                    private_socket_generation=channel.generation if channel is not None else None,
                 )
         except (OSError, RuntimeError):
             _logger.warning(
@@ -5033,7 +5111,14 @@ def create_runner_app(
             relay=relay,
             spec_entry=spec_entry,
             bridge_dir=bridge_dir,
+            tools_ready=not policy_transport_only,
         )
+        notification_bridge_dir = bridge_dir
+        if session_model_channel is not None and not policy_transport_only:
+            runtime = resource_registry.native_runtime_for(session_id)
+            _model, policy_channel = resource_registry.native_channels_for(session_id)
+            runtime.refresh_projection(policy_channel)
+            notification_bridge_dir = runtime.bridge
         # Close last: the new advertisement is already written, and
         # ClaudeNativeToolRelay.close only unlinks a tool_relay.json that
         # still points at the relay being closed, so a shared bridge dir
@@ -5048,7 +5133,7 @@ def create_runner_app(
             try:
                 # Bridge readiness waits must not compete with git or message delivery.
                 await _BRIDGE_NOTIFICATIONS.run(
-                    post_tools_changed, bridge_dir, cancelled=cancelled
+                    post_tools_changed, notification_bridge_dir, cancelled=cancelled
                 )
             except (RuntimeError, OSError):
                 # Fire-and-forget below, so anything escaping here resurfaces as

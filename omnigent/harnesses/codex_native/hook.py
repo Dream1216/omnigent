@@ -27,6 +27,7 @@ from omnigent.harnesses.codex_native.bridge import (
 from omnigent.native.native_policy_hook import (
     evaluation_response_to_hook_output,
     fail_ask_hook_output,
+    fail_closed_hook_output,
     hook_payload_to_evaluation_request,
     policy_hook_reauth,
     post_evaluate_with_retry,
@@ -110,14 +111,27 @@ def _main_evaluate_policy(argv: list[str]) -> int:
     :returns: Process exit code. Always ``0``.
     """
     args = _parse_evaluate_policy_args(argv)
+    required = args.required_session_id is not None or args.required_generation is not None
+    hook_event = args.required_hook_event or "PreToolUse"
+
+    def required_failure(detail: str) -> int:
+        out = fail_closed_hook_output(hook_event, detail)
+        if out is not None:
+            sys.stdout.write(json.dumps(out))
+        return 0
+
     raw = sys.stdin.read()
     try:
         payload = json.loads(raw or "{}")
     except json.JSONDecodeError as exc:
         print(f"omnigent codex evaluate-policy hook: malformed JSON: {exc}", file=sys.stderr)
+        if required:
+            return required_failure("Required native hook payload is malformed")
         return 0
     if not isinstance(payload, dict):
         print("omnigent codex evaluate-policy hook: expected JSON object", file=sys.stderr)
+        if required:
+            return required_failure("Required native hook payload is not an object")
         return 0
 
     bridge_dir = Path(args.bridge_dir)
@@ -127,11 +141,58 @@ def _main_evaluate_policy(argv: list[str]) -> int:
     # generation, so an answer for the previous session opens no window.
     cache_generation = policy_allow_cache.generation(bridge_dir)
     state = read_bridge_state(bridge_dir)
+    if required and args.required_hook_event == "UserPromptSubmit" and state is None:
+        deadline = time.monotonic() + 15.0
+        while state is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+            state = read_bridge_state(bridge_dir)
+    if (
+        required
+        and args.required_hook_event is not None
+        and payload.get("hook_event_name") != args.required_hook_event
+    ):
+        return required_failure("Required native hook event differs")
+    hook_event = args.required_hook_event or payload.get("hook_event_name", "")
+
     if state is None:
+        if required:
+            return required_failure("Required native session state is missing")
         return 0
     session_id = state.session_id
 
-    hook_event = payload.get("hook_event_name", "")
+    required_relay = None
+    if required:
+        if (
+            not args.required_session_id
+            or not args.required_generation
+            or session_id != args.required_session_id
+        ):
+            return required_failure("Required native session binding differs")
+        try:
+            advertisement = json.loads((bridge_dir / "tool_relay.json").read_text())
+        except (OSError, ValueError):
+            return required_failure("Required native policy transport is missing")
+        if (
+            not isinstance(advertisement, dict)
+            or advertisement.get("generation") != args.required_generation
+        ):
+            return required_failure("Required native policy transport binding differs")
+        relay_url = advertisement.get("url")
+        relay_token = advertisement.get("token")
+        relay_session = advertisement.get("session_id")
+        if (
+            not isinstance(relay_url, str)
+            or not isinstance(relay_token, str)
+            or relay_session != session_id
+        ):
+            return required_failure("Required native policy transport binding differs")
+        try:
+            relay_host = urllib.parse.urlsplit(relay_url).hostname
+        except ValueError:
+            return required_failure("Required native policy transport binding differs")
+        if relay_host != "127.0.0.1":
+            return required_failure("Required native policy transport binding differs")
+        required_relay = (relay_url, relay_token, session_id)
     eval_request = hook_payload_to_evaluation_request(hook_event, payload)
     if eval_request is None:
         # Unrecognized hook event or an mcp__omnigent__* tool (relay-enforced).
@@ -147,14 +208,19 @@ def _main_evaluate_policy(argv: list[str]) -> int:
         context["model"] = model
 
     def _fail_closed(detail: str | None = None) -> int:
-        out = fail_ask_hook_output(hook_event, detail)
+        out = (fail_closed_hook_output if required else fail_ask_hook_output)(hook_event, detail)
         if out is not None:
             sys.stdout.write(json.dumps(out))
         return 0
 
     # Prefer the relay (non-expiring local token); fall back to direct server
     # call when the relay isn't up yet (first-call race) or not configured.
-    relay = read_relay_policy_config(bridge_dir)
+    relay = required_relay if required else read_relay_policy_config(bridge_dir)
+    if relay is not None and relay[2] != session_id:
+        out = fail_closed_hook_output(hook_event, "Policy relay belongs to a different session")
+        if out is not None:
+            sys.stdout.write(json.dumps(out))
+        return 0
     if relay:
         relay_url, relay_token, _sid = relay
         url = relay_policy_evaluate_url(relay_url)
@@ -179,36 +245,40 @@ def _main_evaluate_policy(argv: list[str]) -> int:
         reauth = policy_hook_reauth(ap_server_url, headers)
 
     requested_at = time.time()
-    resp, api_error = post_evaluate_with_retry(
-        url,
-        headers,
-        eval_request,
-        _EVALUATE_POLICY_TIMEOUT_S,
-        "codex evaluate-policy hook",
-        reauth=reauth,
-    )
-    if resp is None:
-        return _fail_closed(api_error or (reauth.failure_reason if reauth else None))
-    if not resp.content:
-        print("omnigent codex evaluate-policy hook: empty Omnigent response", file=sys.stderr)
-        return _fail_closed()
-
     try:
-        eval_response = resp.json()
-    except json.JSONDecodeError:
-        print(
-            "omnigent codex evaluate-policy hook: malformed Omnigent response",
-            file=sys.stderr,
+        resp, api_error = post_evaluate_with_retry(
+            url,
+            headers,
+            eval_request,
+            _EVALUATE_POLICY_TIMEOUT_S,
+            "codex evaluate-policy hook",
+            reauth=reauth,
         )
-        return _fail_closed()
-
-    # Through the relay the server evaluated the relay's session, which can
-    # trail a session switch.
-    if relay is None or relay[2] == session_id:
-        policy_allow_cache.record(bridge_dir, cache_generation, eval_response, requested_at)
-    hook_output = evaluation_response_to_hook_output(hook_event, eval_response)
-    if hook_output is not None:
-        sys.stdout.write(json.dumps(hook_output))
+        if resp is None:
+            return _fail_closed(api_error or (reauth.failure_reason if reauth else None))
+        if not resp.content:
+            print("omnigent codex evaluate-policy hook: empty Omnigent response", file=sys.stderr)
+            return _fail_closed()
+        try:
+            eval_response = resp.json()
+        except json.JSONDecodeError:
+            print(
+                "omnigent codex evaluate-policy hook: malformed Omnigent response", file=sys.stderr
+            )
+            return _fail_closed()
+        if required and not isinstance(eval_response, dict):
+            return required_failure("Required native policy verdict is not an object")
+        # Through the relay the server evaluated the relay's session, which can
+        # trail a session switch.
+        if relay is None or relay[2] == session_id:
+            policy_allow_cache.record(bridge_dir, cache_generation, eval_response, requested_at)
+        hook_output = evaluation_response_to_hook_output(hook_event, eval_response)
+        if hook_output is not None:
+            sys.stdout.write(json.dumps(hook_output))
+    except Exception:
+        if not required:
+            raise
+        return required_failure("Required native policy evaluation failed")
     return 0
 
 
@@ -224,6 +294,11 @@ def _parse_evaluate_policy_args(argv: list[str]) -> argparse.Namespace:
         prog="python -m omnigent.harnesses.codex_native.hook evaluate-policy"
     )
     parser.add_argument("--bridge-dir", required=True)
+    parser.add_argument("--required-session-id")
+    parser.add_argument("--required-generation")
+    parser.add_argument(
+        "--required-hook-event", choices=("PreToolUse", "PostToolUse", "UserPromptSubmit")
+    )
     return parser.parse_args(argv)
 
 

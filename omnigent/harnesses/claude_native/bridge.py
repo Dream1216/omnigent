@@ -1373,6 +1373,11 @@ class ClaudeNativeToolRelay:
         identifies this relay's advertisement on close.
     """
 
+    @property
+    def port(self) -> int:
+        """Existing listener port reused by the isolated private-channel relay."""
+        return _http_server_host_port(self._httpd)[1]
+
     def __init__(
         self,
         *,
@@ -1398,6 +1403,67 @@ class ClaudeNativeToolRelay:
         self._advertised_url = advertised_url
         self._relay_info = relay_info
         self._tool_executor = tool_executor
+        self._private_httpd: socketserver.ThreadingUnixStreamServer | None = None
+        self._private_socket_path: Path | None = None
+        self._private_socket_identity: tuple[int, int] | None = None
+        self._closed = False
+
+    def start_private_socket(self, path: Path, *, generation: str | None = None) -> None:
+        """Expose the existing token/session-bound handler on an owned private socket."""
+        if self._closed:
+            raise RuntimeError("Native relay is closed")
+        if generation is not None and (
+            len(generation) != 32 or any(c not in "0123456789abcdef" for c in generation)
+        ):
+            raise ValueError("Invalid native relay generation")
+        if self._private_httpd is not None:
+            if path != self._private_socket_path or (
+                generation is not None and self._relay_info.get("generation") != generation
+            ):
+                raise RuntimeError("Native relay private transport is already bound")
+            return
+        owner = path.parent.lstat()
+        if (
+            not path.is_absolute()
+            or path.parent.resolve() != path.parent
+            or not stat.S_ISDIR(owner.st_mode)
+            or owner.st_uid != os.getuid()
+            or stat.S_IMODE(owner.st_mode) != 0o700
+            or len(os.fsencode(path)) >= 104
+        ):
+            raise OSError("Native relay socket requires a private owned directory")
+
+        def handle_private_request(
+            request: Any, address: Any, _server: socketserver.BaseServer
+        ) -> socketserver.BaseRequestHandler:
+            """Reuse the original HTTP handler and its owning server configuration."""
+            return self._httpd.RequestHandlerClass(request, address, self._httpd)
+
+        private = socketserver.ThreadingUnixStreamServer(str(path), handle_private_request)
+        identity = path.lstat()
+        self._private_socket_path = path
+        self._private_socket_identity = (identity.st_dev, identity.st_ino)
+        try:
+            path.chmod(0o600)
+            private.daemon_threads = True
+            thread = threading.Thread(
+                target=private.serve_forever, daemon=True, name="native-tool-relay-private"
+            )
+            thread.start()
+        except BaseException:
+            private.server_close()
+            with contextlib.suppress(OSError):
+                current = path.lstat()
+                if (current.st_dev, current.st_ino) == self._private_socket_identity:
+                    path.unlink()
+            raise
+        self._private_httpd = private
+        self._relay_info = {
+            **self._relay_info,
+            "socket_path": str(path),
+            "generation": generation if generation is not None else secrets.token_hex(16),
+        }
+        _write_json_file(self._bridge_dir / _TOOL_RELAY_FILE, self._relay_info)
 
     def update_tools(self, tools: list[_JsonObject], tool_executor: ToolExecutor) -> None:
         """Refresh tools on the owning event loop without changing cached relay credentials.
@@ -1430,6 +1496,7 @@ class ClaudeNativeToolRelay:
         :returns: None.
         """
         relay_file = self._bridge_dir / _TOOL_RELAY_FILE
+        self._closed = True
         # A newer relay that overwrote the file advertises a different url
         # (this relay's socket is still bound, so its port is unique), so the
         # file is left for that relay to own.
@@ -1438,6 +1505,14 @@ class ClaudeNativeToolRelay:
                 relay_file.unlink()
         self._httpd.shutdown()
         self._httpd.server_close()
+        if self._private_httpd is not None:
+            self._private_httpd.shutdown()
+            self._private_httpd.server_close()
+        if self._private_socket_path is not None:
+            with contextlib.suppress(OSError):
+                current = self._private_socket_path.lstat()
+                if (current.st_dev, current.st_ino) == self._private_socket_identity:
+                    self._private_socket_path.unlink()
 
 
 def _ensure_secure_dir(target: Path) -> None:
@@ -7406,6 +7481,8 @@ def start_tool_relay(
     policy_client: httpx.AsyncClient | None = None,
     session_id: str | None = None,
     file_change_observer: Callable[[_JsonObject], Awaitable[None]] | None = None,
+    private_socket_path: Path | None = None,
+    private_socket_generation: str | None = None,
 ) -> ClaudeNativeToolRelay:
     """
     Start the shared relay for native-harness Omnigent tool calls.
@@ -7479,6 +7556,12 @@ def start_tool_relay(
         daemon=True,
     )
     thread.start()
+    if private_socket_path is not None:
+        try:
+            relay.start_private_socket(private_socket_path, generation=private_socket_generation)
+        except BaseException:
+            relay.close()
+            raise
     return relay
 
 

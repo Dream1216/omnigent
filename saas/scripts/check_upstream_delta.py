@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -26,6 +27,96 @@ def _is_under(path: str, prefixes: tuple[str, ...]) -> bool:
     return any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in prefixes)
 
 
+_ORDINARY_M_APPROVAL = "ordinary_m_native_0142_finite_approval"
+_ORDINARY_M_CANDIDATE = "630d1e9fb80bb8fb72e76299687131516d560e52265552e963e5389c49aaf752"
+_ORDINARY_M_PROTECTED_PATH = "omnigent/runner/native/orchestration.py"
+_ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.json"
+_ORDINARY_M_SCOPE_SHA256 = "b9d340952d91215546aa865b432b0e069a61f7b7bc44c67a95c573aca250d0ec"
+
+
+def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:
+    controls = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"source_intrusion_budget", _ORDINARY_M_APPROVAL}
+    }
+    if "controller_budget_scope" in controls:
+        controls["controller_budget_scope"] = {
+            key: value
+            for key, value in controls["controller_budget_scope"].items()
+            if key
+            not in {
+                "current_controller_file_ceiling",
+                "current_controller_baseline_sha256",
+                "authority",
+                "prior_approved_controller_authority",
+            }
+        }
+    return hashlib.sha256(
+        json.dumps(controls, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, Any]) -> bool:
+    """Match this fixed source scope; normal maintainer review owns decision authority."""
+    decision = manifest.get(_ORDINARY_M_APPROVAL)
+    if (
+        source_root is None
+        or not isinstance(decision, dict)
+        or set(decision)
+        != {"candidate_manifest_sha256", "decision", "approver", "authority_record_sha256"}
+        or decision.get("candidate_manifest_sha256") != _ORDINARY_M_CANDIDATE
+        or decision.get("decision") != "approved"
+        or decision.get("approver") != "Dream1216"
+        or not re.fullmatch(r"[a-f0-9]{64}", str(decision.get("authority_record_sha256", "")))
+        or decision.get("authority_record_sha256")
+        in {
+            "0" * 64,
+            "6dafe4dcbb355c133f649db972a764abeebd43aedbd59f66cc8c9f1e991154ba",
+        }
+    ):
+        return False
+    try:
+        root = source_root.resolve(strict=True)
+        scope_path = root / _ORDINARY_M_SCOPE_PATH
+        if scope_path.is_symlink() or not scope_path.resolve(strict=True).is_relative_to(root):
+            return False
+        raw = scope_path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != _ORDINARY_M_SCOPE_SHA256:
+            return False
+        scope = json.loads(raw)
+        if (
+            scope["candidate_manifest_sha256"] != _ORDINARY_M_CANDIDATE
+            or manifest["upstream_revision"] != scope["upstream_revision"]
+            or manifest["source_intrusion_budget"] != scope["budgets"]
+        ):
+            return False
+        kind = "controller" if "controller_budget_scope" in manifest else "baseline"
+        if _manifest_controls_sha256(manifest) != scope["manifest_controls_sha256"][kind]:
+            return False
+        if kind == "controller" and (
+            manifest["controller_budget_scope"]["current_controller_file_ceiling"] != 261
+            or manifest["controller_budget_scope"].get("prior_approved_controller_authority")
+            != scope["previous_controller_authority"]
+        ):
+            return False
+        _git(root, "merge-base", "--is-ancestor", scope["public_base"], "HEAD")
+        _git(root, "merge-base", "--is-ancestor", scope["scope_main"], scope["public_base"])
+        expected_paths = {item["path"] for item in scope["files"]} | set(scope["governance_paths"])
+        if {item.path for item in collect_deltas(root, scope["public_base"])} != expected_paths:
+            return False
+        for item in scope["files"]:
+            target = root / item["path"]
+            if target.is_symlink() or not target.resolve(strict=True).is_relative_to(root):
+                return False
+            data = target.read_bytes()
+            if len(data) != item["bytes"] or hashlib.sha256(data).hexdigest() != item["sha256"]:
+                return False
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def evaluate_delta(
     deltas: list[FileDelta],
     manifest: dict[str, Any],
@@ -34,8 +125,9 @@ def evaluate_delta(
     reverse_dependencies: list[str],
     lineage_ok: bool,
     version_ok: bool,
+    source_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Evaluate a prepared delta without invoking Git, enabling unit tests."""
+    """Evaluate deltas without Git; finite source approval also checks current bytes."""
 
     budgets = manifest["source_intrusion_budget"]
     downstream_prefixes = tuple(manifest["downstream_owned_prefixes"])
@@ -45,6 +137,13 @@ def evaluate_delta(
     forbidden_files = sorted(
         d.path for d in upstream_deltas if _is_under(d.path, forbidden_prefixes)
     )
+    finite_requested = _ORDINARY_M_APPROVAL in manifest or (
+        budgets["max_direct_upstream_files"],
+        budgets["max_upstream_net_added_loc"],
+    ) == (261, 12528)
+    finite_verified = finite_requested and _ordinary_m_candidate_matches(source_root, manifest)
+    approved_protected = [_ORDINARY_M_PROTECTED_PATH] if finite_verified else []
+    unapproved_forbidden = [path for path in forbidden_files if path not in approved_protected]
     total_added = sum(delta.added for delta in deltas)
     downstream_added = sum(
         delta.added for delta in deltas if _is_under(delta.path, downstream_prefixes)
@@ -61,6 +160,8 @@ def evaluate_delta(
         "upstream_net_added_loc": upstream_net_added,
     }
     violations: list[str] = []
+    if finite_requested and not finite_verified:
+        violations.append("ordinary M finite source approval is missing or mismatched")
     if not lineage_ok:
         violations.append("upstream baseline is not an ancestor of the product revision")
     if not version_ok:
@@ -73,7 +174,7 @@ def evaluate_delta(
         violations.append("active patch queue budget exceeded")
     if isolated_ratio < budgets["min_isolated_custom_code_ratio"]:
         violations.append("isolated custom-code ratio is below budget")
-    if forbidden_files:
+    if unapproved_forbidden:
         violations.append("forbidden Agent/Harness/Native Bridge paths were modified")
     if reverse_dependencies:
         violations.append("official code imports downstream SaaS packages")
@@ -81,6 +182,7 @@ def evaluate_delta(
     return {
         "status": "pass" if not violations else "fail",
         "metrics": metrics,
+        "approved_protected_sources": approved_protected,
         "budgets": budgets,
         "violations": violations,
         "files": [asdict(delta) for delta in sorted(deltas, key=lambda item: item.path)],
@@ -190,6 +292,7 @@ def main() -> int:
         reverse_dependencies=reverse_dependencies,
         lineage_ok=lineage,
         version_ok=version_ok,
+        source_root=repo,
     )
     report["upstream_revision"] = baseline
     report["product_revision"] = product_revision
