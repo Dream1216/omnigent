@@ -300,7 +300,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
  && test "$(stat -c %a /tmp)" = 1777 \
  && touch -h -d "@${SOURCE_DATE_EPOCH}" /opt /tmp
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
-    apk add --no-cache \
+    apk add --no-cache glibc-2.44=2.44-r16 glibc-2.44-locale-posix=2.44-r16 ld-linux-2.44=2.44-r16 \
       ca-certificates-bundle=20260909-r3 \
       gdbm=1.26-r7 \
       libbrotlicommon1=1.2.0-r7 \
@@ -504,7 +504,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       findutils=4.11.0-r3 \
       gcc=16.2.0-r1 \
       git=2.56.0-r0 \
-      glibc-2.44-dev=2.44-r8 \
+      glibc-2.44-dev=2.44-r16 \
       gmp=6.3.0-r11 \
       grep=3.12-r9 \
       gzip=1.14-r10 \
