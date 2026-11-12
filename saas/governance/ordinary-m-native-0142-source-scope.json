@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "7d35269c5b86ccd487fe9bbcf7c50cf2d3c18fdd3f3db226f5639abb05cc27c6",
+  "candidate_manifest_sha256": "f2eab70932f74c3723cd518c89e20147b954d13942bb92562248ceb5b4fde3f8",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -158,8 +158,8 @@
     },
     {
       "path": "saas/scripts/benchmark_fork_diagnostics.py",
-      "bytes": 17157,
-      "sha256": "720740e5ab3facf86f0b3daaa2c2c003e0eeaa474de33597a96b51b357fd9d64"
+      "bytes": 17151,
+      "sha256": "002f99cf1cc843c30257e878eff3eee3dd885628f07d64aaca784cb9978ddff6"
     },
     {
       "path": "saas/supply_chain/wolfi-runtime-lock.json",

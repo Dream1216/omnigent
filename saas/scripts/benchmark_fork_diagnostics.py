@@ -11,6 +11,7 @@ import signal
 import time
 import uuid
 from collections.abc import Mapping
+from importlib import import_module
 from pathlib import Path
 
 import httpx
@@ -375,8 +376,8 @@ async def diagnose_retained_fork(
                     timeout=25,
                 )
                 response.raise_for_status()
-                report["profile"] = response.json()
-                profile = report["profile"]
+                profile: dict[str, object] = response.json()
+                report["profile"] = profile
                 _require_component_binding(profile, installed)
                 after = await _fork_source_snapshot(env.client, source_id)
                 stable = all(
@@ -389,9 +390,7 @@ async def diagnose_retained_fork(
                 }
                 report["source_stable_during_diagnostic"] = stable
                 report["status"] = (
-                    "complete"
-                    if stable and report["profile"].get("status") == "complete"
-                    else "incomplete"
+                    "complete" if stable and profile.get("status") == "complete" else "incomplete"
                 )
     except Exception as error:  # noqa: BLE001 — preserve the independent formal verdict.
         report["error_type"] = type(error).__name__
@@ -419,8 +418,8 @@ def main() -> int:
 
 
 if __name__ == "omnigent_benchmark_fork_diagnostics":
-    from omnigent_benchmark_debug import DEBUG_ROUTERS as DEBUG_ROUTERS
-    from omnigent_benchmark_debug import router
+    _debug = import_module("omnigent_benchmark_debug")
+    DEBUG_ROUTERS, router = _debug.DEBUG_ROUTERS, _debug.router
 
     if (_binding := _diagnostic_binding()) is not None:
         install_fork_diagnostic(router, _binding)
