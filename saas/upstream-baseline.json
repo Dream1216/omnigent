@@ -115,7 +115,7 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 264,
-    "max_upstream_net_added_loc": 12547,
+    "max_upstream_net_added_loc": 12548,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1450,9 +1450,9 @@
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "upstream_version": "0.21.0.dev20261031",
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "8a18de194456a269533a870c35ef74e8f1b656e30bda47221e2d036efdaaf371",
+    "candidate_manifest_sha256": "7ac908fe1b41b9aa918d10f6186449c13bdb534f740da3b0ad0c7e4d7d10c9c3",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "0c954b1d83804bafaf78142c42a27eef16f63e7be1dbe2cce3eed6a69e14d025"
+    "authority_record_sha256": "7ce353d6a58ea9083be29c081b9c093052f2ddae1c075ab46f1451dd5c92c5a3"
   }
 }

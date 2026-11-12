@@ -1,16 +1,21 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "8a18de194456a269533a870c35ef74e8f1b656e30bda47221e2d036efdaaf371",
+  "candidate_manifest_sha256": "7ac908fe1b41b9aa918d10f6186449c13bdb534f740da3b0ad0c7e4d7d10c9c3",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 264,
-    "max_upstream_net_added_loc": 12547,
+    "max_upstream_net_added_loc": 12548,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
+    {
+      "path": "deploy/docker/Dockerfile",
+      "bytes": 53528,
+      "sha256": "2f7b7b04ae26053b0c74b91a24642278cd9fb4d0e6a80994fac9bbad05431add"
+    },
     {
       "path": "omnigent/harnesses/claude_native/bridge.py",
       "bytes": 466788,
@@ -132,6 +137,11 @@
       "sha256": "05904c734b950f3143196807311d7823319581539429e21c5a3e580fc2e088bb"
     },
     {
+      "path": "saas/supply_chain/wolfi-runtime-lock.json",
+      "bytes": 4464,
+      "sha256": "42ba9063969a9474d54220b06e5cdc772f0ea866330d42c45fb2fbf7a7f0081f"
+    },
+    {
       "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
       "bytes": 260451,
       "sha256": "3e8477014b17afbe80c37f3e20e7bb0231b33ab4cf77628c5a39b92316daacf6"
@@ -245,6 +255,11 @@
       "path": "tests/saas/test_platform_model_relay.py",
       "bytes": 16399,
       "sha256": "c8643101093c3a6b37927de51dad0b8b135f0716ef5323b7572ef1db81166a8c"
+    },
+    {
+      "path": "tests/saas/test_runtime_security_overlays.py",
+      "bytes": 12415,
+      "sha256": "3119a33b4a1f4d9920d4cd3d2cb3f70ac32b4e7196d46cb3f9cb67521e44346b"
     }
   ],
   "governance_paths": [

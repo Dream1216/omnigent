@@ -31,7 +31,12 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
     assert runtime["runtime_contract"]["common_packages"]["libexpat1"] == "2.10.0-r0"
     assert runtime["runtime_contract"]["common_packages"]["libseccomp"] == "2.6.1-r4"
     assert runtime["runtime_contract"]["common_packages"]["zlib"] == ("1.3.2.1_rc20260917-r0")
-    for package in ("glibc-2.44", "glibc-2.44-locale-posix", "ld-linux-2.44"):
+    for package in (
+        "glibc-2.44",
+        "glibc-2.44-locale-posix",
+        "ld-linux-2.44",
+        "libcrypt1-2.44",
+    ):
         assert runtime["runtime_contract"]["common_packages"][package] == "2.44-r16"
     assert runtime["runtime_contract"]["server_packages"] == {
         "bubblewrap": "0.13.0-r0",
@@ -213,6 +218,12 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
 @pytest.mark.parametrize(
     ("stage", "target", "replacement", "expected"),
     [
+        (
+            "rootfs",
+            "libcrypt1-2.44=2.44-r16",
+            "libcrypt1-2.44=2.44-r8",
+            "Wolfi common_packages pins must be installed exactly",
+        ),
         (
             "rootfs",
             "libseccomp=2.6.1-r4",

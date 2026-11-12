@@ -307,6 +307,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       libbrotlidec1=1.2.0-r7 \
       libbrotlienc1=1.2.0-r7 \
       libbz2-1=1.0.8-r25 \
+      libcrypt1-2.44=2.44-r16 \
       libexpat1=2.10.0-r0 \
       libffi=3.8.0-r2 \
       libseccomp=2.6.1-r4 \
