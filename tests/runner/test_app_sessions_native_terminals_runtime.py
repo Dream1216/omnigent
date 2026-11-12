@@ -462,7 +462,7 @@ async def test_auto_create_codex_terminal_keeps_loop_responsive_during_credentia
     task = asyncio.create_task(
         _auto_create_codex_terminal(
             uuid.uuid4().hex,
-            cast(SessionResourceRegistry, object()),
+            SessionResourceRegistry(),
             lambda _session_id, _event: None,
             server_client=cast(httpx.AsyncClient, NullServerClient()),
         )
@@ -1289,6 +1289,7 @@ async def test_auto_create_codex_terminal_fork_clones_rollout_and_resumes(
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = codex_home_for_bridge_dir(bridge_dir_for_bridge_id(session_id))
             self.listen_url: str | None = None
+            self.execution = None
             self.started = False
             # Provider/model -c overrides forwarded to the --remote TUI.
             self.config_overrides: list[str] = []
@@ -1596,6 +1597,7 @@ async def test_auto_create_codex_terminal_fork_builds_rollout_from_items_and_res
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = codex_home_for_bridge_dir(bridge_dir_for_bridge_id(session_id))
             self.listen_url: str | None = None
+            self.execution = None
             self.started = False
             self.config_overrides: list[str] = []
 
@@ -1843,6 +1845,7 @@ async def test_auto_create_codex_terminal_uses_worktree_workspace_not_bundle_dir
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = tmp_path / "codex-home"
             self.listen_url: str | None = None
+            self.execution = None
             self.started = False
             # Provider/model -c overrides forwarded to the --remote TUI.
             self.config_overrides: list[str] = []
@@ -2112,6 +2115,7 @@ async def test_auto_create_codex_terminal_fresh_launch_loads_relaunch_graph(
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = tmp_path / "codex-home"
             self.listen_url: str | None = None
+            self.execution = None
             self.config_overrides: list[str] = []
 
         async def start(self) -> None:
@@ -2365,6 +2369,7 @@ async def test_auto_create_codex_terminal_starts_relay_at_session_creation(
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = tmp_path / "codex-home"
             self.listen_url: str | None = None
+            self.execution = None
             # Provider/model -c overrides forwarded to the --remote TUI.
             self.config_overrides: list[str] = []
 
@@ -4285,6 +4290,8 @@ async def test_codex_discover_thread_and_forward_marks_its_pane_for_replacement(
             return None
 
     class _AppServer:
+        execution = None
+
         async def close(self) -> None:
             return None
 
@@ -4525,6 +4532,8 @@ async def test_codex_discover_thread_and_forward_waits_while_terminal_alive(
             return None
 
     class _AppServer:
+        execution = None
+
         async def close(self) -> None:
             timeline.append("app_server_closed")
 
@@ -4659,6 +4668,8 @@ async def test_codex_discover_thread_and_forward_records_a_sign_in_prompt_before
             return None
 
     class _AppServer:
+        execution = None
+
         async def close(self) -> None:
             return None
 
@@ -5170,6 +5181,7 @@ async def test_auto_create_codex_terminal_default_pin_requires_a_fresh_catalog(
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = tmp_path / "unconfigured-codex-home"
             self.listen_url: str | None = None
+            self.execution = None
             self.started = False
             self.config_overrides: list[str] = []
 
@@ -5410,6 +5422,7 @@ async def test_auto_create_codex_terminal_accepts_gateway_spelled_override(
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = tmp_path / "unconfigured-codex-home"
             self.listen_url: str | None = None
+            self.execution = None
             self.started = False
             self.config_overrides: list[str] = []
 
@@ -5594,11 +5607,11 @@ async def test_codex_tui_recovery_preserves_live_control_plane(
         if launch_fails:
             with pytest.raises(RuntimeError, match="TUI launch failed"):
                 await native._auto_create_codex_terminal(
-                    session_id, cast(Any, None), lambda *_: None
+                    session_id, SessionResourceRegistry(), lambda *_: None
                 )
         else:
             result = await native._auto_create_codex_terminal(
-                session_id, cast(Any, None), lambda *_: None
+                session_id, SessionResourceRegistry(), lambda *_: None
             )
             assert result is fake_view
         cancel.assert_not_awaited()

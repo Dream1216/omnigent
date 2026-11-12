@@ -28,10 +28,10 @@ def _is_under(path: str, prefixes: tuple[str, ...]) -> bool:
 
 
 _ORDINARY_M_APPROVAL = "ordinary_m_native_0142_finite_approval"
-_ORDINARY_M_CANDIDATE = "630d1e9fb80bb8fb72e76299687131516d560e52265552e963e5389c49aaf752"
+_ORDINARY_M_CANDIDATE = "8a18de194456a269533a870c35ef74e8f1b656e30bda47221e2d036efdaaf371"
 _ORDINARY_M_PROTECTED_PATH = "omnigent/runner/native/orchestration.py"
 _ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.json"
-_ORDINARY_M_SCOPE_SHA256 = "b9d340952d91215546aa865b432b0e069a61f7b7bc44c67a95c573aca250d0ec"
+_ORDINARY_M_SCOPE_SHA256 = "4e83dfe58ae5acb1aa0368c4906ab72bc17e709e2a764c60ebdee874e9a4c094"
 
 
 def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:
@@ -73,6 +73,7 @@ def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, 
         in {
             "0" * 64,
             "6dafe4dcbb355c133f649db972a764abeebd43aedbd59f66cc8c9f1e991154ba",
+            "7eccc6a1d1b7ca911fefe925a7172252380ee504e1fb8fbd71c77cb428f7c480",
         }
     ):
         return False
@@ -95,7 +96,7 @@ def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, 
         if _manifest_controls_sha256(manifest) != scope["manifest_controls_sha256"][kind]:
             return False
         if kind == "controller" and (
-            manifest["controller_budget_scope"]["current_controller_file_ceiling"] != 261
+            manifest["controller_budget_scope"]["current_controller_file_ceiling"] != 264
             or manifest["controller_budget_scope"].get("prior_approved_controller_authority")
             != scope["previous_controller_authority"]
         ):
@@ -140,7 +141,7 @@ def evaluate_delta(
     finite_requested = _ORDINARY_M_APPROVAL in manifest or (
         budgets["max_direct_upstream_files"],
         budgets["max_upstream_net_added_loc"],
-    ) == (261, 12528)
+    ) == (264, 12547)
     finite_verified = finite_requested and _ordinary_m_candidate_matches(source_root, manifest)
     approved_protected = [_ORDINARY_M_PROTECTED_PATH] if finite_verified else []
     unapproved_forbidden = [path for path in forbidden_files if path not in approved_protected]

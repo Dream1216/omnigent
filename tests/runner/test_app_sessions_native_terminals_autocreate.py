@@ -5695,6 +5695,7 @@ async def test_codex_tui_launch_keeps_user_config_when_process_cwd_is_gone(
     captured: dict[str, Any] = {}
     app_server = SimpleNamespace(
         listen_url="ws://127.0.0.1:9876",
+        execution=None,
         config_overrides=[],
         codex_cli_version=None,
         codex_path="/opt/codex/bin/codex",

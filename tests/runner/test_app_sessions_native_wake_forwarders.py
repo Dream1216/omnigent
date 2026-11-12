@@ -969,6 +969,7 @@ async def test_auto_create_codex_terminal_recovers_without_restarting_healthy_se
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = tmp_path / "unconfigured-codex-home"
             self.listen_url: str | None = None
+            self.execution = None
             self.config_overrides: list[str] = []
             self.proc = SimpleNamespace(returncode=None)
             self.closed = False
@@ -1303,6 +1304,7 @@ async def test_auto_create_codex_terminal_refused_resume_closes_app_server(
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = tmp_path / "unconfigured-codex-home"
             self.listen_url: str | None = None
+            self.execution = None
             self.config_overrides: list[str] = []
 
         async def start(self) -> None:
@@ -1478,6 +1480,7 @@ async def test_auto_create_codex_terminal_retries_resume_until_rollout_is_found(
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = tmp_path / "unconfigured-codex-home"
             self.listen_url: str | None = None
+            self.execution = None
             self.config_overrides: list[str] = []
             self.proc = SimpleNamespace(returncode=None)
 
@@ -1746,6 +1749,7 @@ async def test_auto_create_codex_terminal_unreadable_thread_starts_fresh(
             self.env = {"OPENAI_API_KEY": "sk-test"}
             self.codex_home = tmp_path / "unconfigured-codex-home"
             self.listen_url: str | None = None
+            self.execution = None
             self.config_overrides: list[str] = []
 
         async def start(self) -> None:

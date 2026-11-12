@@ -5136,6 +5136,7 @@ async def _auto_create_codex_terminal(
         write_bridge_startup_timeout,
         write_bridge_state,
     )
+    from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
     from omnigent.inner.codex_executor import codex_extended_catalog_env
 
     launch_config = await _codex_native_launch_config(
@@ -5671,7 +5672,6 @@ async def _auto_create_codex_terminal(
     if native_runtime is not None:
         assert required_native is not None
         from omnigent.entities import DEFAULT_ENVIRONMENT_ID
-        from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
         from omnigent.inner.os_env import CallerProcessOSEnvironment
 
         environment = resource_registry.resolve_environment(session_id, DEFAULT_ENVIRONMENT_ID)

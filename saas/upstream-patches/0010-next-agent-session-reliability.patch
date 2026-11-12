@@ -5791,3 +5791,11 @@ new file mode 100644
 +            )
 +        policy.session_relay_pairs()
 +        return with_additional_read_roots(policy, [Path(self.socket_path).parent])
+diff --git a/omnigent/runner/native/orchestration.py b/omnigent/runner/native/orchestration.py
+index 80bc624ebbd..e3800e702c3 100644
+--- a/omnigent/runner/native/orchestration.py
++++ b/omnigent/runner/native/orchestration.py
+@@ -5138,0 +5139 @@ async def _auto_create_codex_terminal(
++    from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
+@@ -5674 +5674,0 @@ async def _auto_create_codex_terminal(
+-        from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch

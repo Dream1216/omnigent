@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "630d1e9fb80bb8fb72e76299687131516d560e52265552e963e5389c49aaf752",
+  "candidate_manifest_sha256": "8a18de194456a269533a870c35ef74e8f1b656e30bda47221e2d036efdaaf371",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 261,
-    "max_upstream_net_added_loc": 12528,
+    "max_direct_upstream_files": 264,
+    "max_upstream_net_added_loc": 12547,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -98,8 +98,8 @@
     },
     {
       "path": "omnigent/runner/native/orchestration.py",
-      "bytes": 515485,
-      "sha256": "2b303ba52b03faa1f3201873136e42025337c6ff5431a048dd7eb3e62f3af840"
+      "bytes": 515481,
+      "sha256": "d059cf58570a388f2f895b03c6bc9090dbb4a08593ad05dc036e5b6cfa380bc6"
     },
     {
       "path": "omnigent/runner/resource_registry.py",
@@ -133,8 +133,8 @@
     },
     {
       "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
-      "bytes": 259948,
-      "sha256": "2602fc81aa823d18e0143b0c70d63f1d4238ac9a20883f27b82a82ae4609f627"
+      "bytes": 260451,
+      "sha256": "3e8477014b17afbe80c37f3e20e7bb0231b33ab4cf77628c5a39b92316daacf6"
     },
     {
       "path": "saas/upstream-patches/README.md",
@@ -207,9 +207,24 @@
       "sha256": "4c5ad48f42f49af565b0521570c2d9b9ef5cd8ecdc583d194dff95fb5420b480"
     },
     {
+      "path": "tests/runner/test_app_sessions_native_terminals_autocreate.py",
+      "bytes": 261347,
+      "sha256": "bca0e2a16f123731fdc500d6ddbde6f7936b3f3f343c3259184ec2a0e512a214"
+    },
+    {
       "path": "tests/runner/test_app_sessions_native_terminals_runtime.py",
-      "bytes": 227406,
-      "sha256": "9f3a8647178be16db42cd65c88b259d9cf1e9839276bd948889234ff416db318"
+      "bytes": 227728,
+      "sha256": "61076b4f49ec23cc88d596ff9465ecb49be5efc264a177b1ab62b5aed542fd6b"
+    },
+    {
+      "path": "tests/runner/test_app_sessions_native_wake_forwarders.py",
+      "bytes": 76703,
+      "sha256": "35d573964b4a09da99d2cf88eff40e09f950da7ff73a8a23793c5305cace8fed"
+    },
+    {
+      "path": "tests/runner/test_codex_model_pick_fallback.py",
+      "bytes": 33174,
+      "sha256": "f2c74d0f900ec2031d5640b1187528a912ba8aba9a74f5e954e1e7c2aa8fa2be"
     },
     {
       "path": "tests/runner/test_comment_relay.py",

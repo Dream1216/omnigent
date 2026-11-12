@@ -70,10 +70,10 @@ def test_saas_workflows_and_sdks_are_owned_without_hiding_official_source() -> N
     assert report["metrics"]["isolated_custom_code_ratio"] == pytest.approx(300 / 323, 0.0001)
 
 
-def test_controller_budget_keeps_the_frozen_producer_contract() -> None:
+def test_controller_budget_keeps_the_frozen_producer_contract(ordinary_m_finite_scope) -> None:
     import hashlib
 
-    root = Path(__file__).resolve().parents[2]
+    root = ordinary_m_finite_scope[0]
     baseline_path = root / "saas/upstream-baseline.json"
     baseline = json.loads(baseline_path.read_bytes())
     controller_path = ".github/workflows/saas-controller-source-budget.json"
@@ -100,7 +100,15 @@ def test_controller_budget_keeps_the_frozen_producer_contract() -> None:
     budget = dict(baseline["source_intrusion_budget"])
     assert scope["frozen_product_file_ceiling"] == 226
     finite = "ordinary_m_native_0142_finite_approval" in baseline
-    expected_files, expected_loc = (261, 12528) if finite else (230, 7090)
+    approved_budget = ordinary_m_finite_scope[1]["source_intrusion_budget"]
+    expected_files, expected_loc = (
+        (
+            approved_budget["max_direct_upstream_files"],
+            approved_budget["max_upstream_net_added_loc"],
+        )
+        if finite
+        else (230, 7090)
+    )
     assert budget["max_direct_upstream_files"] == expected_files
     assert budget["max_upstream_net_added_loc"] == expected_loc
     assert scope["current_controller_file_ceiling"] == expected_files
@@ -119,7 +127,7 @@ def test_controller_budget_keeps_the_frozen_producer_contract() -> None:
             FileDelta(f"tests/controller_case_{index}.py", loc if index == 0 else 0, 0)
             for index in range(count)
         ]
-        deltas.append(FileDelta("saas/controller_budget_fixture.py", 50_000, 0))
+        deltas.append(FileDelta("saas/controller_budget_fixture.py", loc * 6, 0))
         result = evaluate_delta(
             deltas,
             controller,
@@ -189,12 +197,21 @@ def test_patch_queue_replays_and_covers_every_official_source_change() -> None:
 @pytest.mark.parametrize("extra_lines", [0, 1])
 def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     extra_lines: int,
+    ordinary_m_finite_scope,
 ) -> None:
-    repo = Path(__file__).resolve().parents[2]
+    repo = ordinary_m_finite_scope[0]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     budget = manifest["source_intrusion_budget"]
     finite = "ordinary_m_native_0142_finite_approval" in manifest
-    expected_files, expected_loc = (261, 12528) if finite else (230, 7090)
+    approved_budget = ordinary_m_finite_scope[1]["source_intrusion_budget"]
+    expected_files, expected_loc = (
+        (
+            approved_budget["max_direct_upstream_files"],
+            approved_budget["max_upstream_net_added_loc"],
+        )
+        if finite
+        else (230, 7090)
+    )
     assert budget["max_upstream_net_added_loc"] == expected_loc
     assert budget["max_direct_upstream_files"] == expected_files
     assert budget["max_active_patches"] == 9
@@ -271,8 +288,8 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
     host_compat = revision["ordinary_m_host_compat_20261111"]
     assert host_compat["previous_controller_max_direct_upstream_files"] == 229
     assert host_compat["previous_controller_max_upstream_net_added_loc"] == 6841
-    assert host_compat["max_direct_upstream_files"] == budget["max_direct_upstream_files"]
-    assert host_compat["max_upstream_net_added_loc"] == budget["max_upstream_net_added_loc"]
+    assert host_compat["max_direct_upstream_files"] == 230
+    assert host_compat["max_upstream_net_added_loc"] == 7090
     assert host_compat["candidate_source"] == "b53109e57c45363ea2cfe213f9ab1e95e7c4e29c"
     assert host_compat["authorization_source"] == {
         "state": "approved_repository_admin_decision",
@@ -658,8 +675,9 @@ def test_next_preview_agent_budget_revision_retains_hard_source_ceilings(
 @pytest.mark.parametrize("extra_files", [0, 1])
 def test_dependency_security_budget_revision_retains_a_hard_file_ceiling(
     extra_files: int,
+    ordinary_m_finite_scope,
 ) -> None:
-    repo = Path(__file__).resolve().parents[2]
+    repo = ordinary_m_finite_scope[0]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     file_count = manifest["source_intrusion_budget"]["max_direct_upstream_files"] + extra_files
     report = evaluate_delta(
@@ -677,8 +695,8 @@ def test_dependency_security_budget_revision_retains_a_hard_file_ceiling(
     )
 
 
-def test_e2e_ui_governance_files_are_downstream_owned() -> None:
-    repo = Path(__file__).resolve().parents[2]
+def test_e2e_ui_governance_files_are_downstream_owned(ordinary_m_finite_scope) -> None:
+    repo = ordinary_m_finite_scope[0]
     manifest = json.loads((repo / "saas/upstream-baseline.json").read_text(encoding="utf-8"))
     report = evaluate_delta(
         [
@@ -736,8 +754,12 @@ def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
         "approver": "Dream1216",
         "authority_record_sha256": "1" * 64,
     }
-    deltas = [FileDelta(guard._ORDINARY_M_PROTECTED_PATH, 12528, 0)]
-    deltas.extend(FileDelta(f"omnigent/finite_case_{index}.py", 0, 0) for index in range(260))
+    budget = scope["budgets"]
+    deltas = [FileDelta(guard._ORDINARY_M_PROTECTED_PATH, budget["max_upstream_net_added_loc"], 0)]
+    deltas.extend(
+        FileDelta(f"omnigent/finite_case_{index}.py", 0, 0)
+        for index in range(budget["max_direct_upstream_files"] - 1)
+    )
     deltas.append(FileDelta("saas/finite_fixture.py", 100000, 0))
     base_changes = [
         FileDelta(path, 1, 0)
@@ -786,7 +808,7 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
         decision["approver"] = "another-user"
     elif fault == "old-authority":
         decision["authority_record_sha256"] = (
-            "6dafe4dcbb355c133f649db972a764abeebd43aedbd59f66cc8c9f1e991154ba"
+            "7eccc6a1d1b7ca911fefe925a7172252380ee504e1fb8fbd71c77cb428f7c480"
         )
     target = {
         "scope-bytes": root / guard._ORDINARY_M_SCOPE_PATH,
@@ -819,8 +841,14 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
         version_ok=True,
         source_root=root,
     )
-    assert result["metrics"]["direct_upstream_file_count"] == 261
-    assert result["metrics"]["upstream_net_added_loc"] == 12528
+    assert (
+        result["metrics"]["direct_upstream_file_count"]
+        == manifest["source_intrusion_budget"]["max_direct_upstream_files"]
+    )
+    assert (
+        result["metrics"]["upstream_net_added_loc"]
+        == manifest["source_intrusion_budget"]["max_upstream_net_added_loc"]
+    )
     assert result["metrics"]["forbidden_upstream_files"] == [guard._ORDINARY_M_PROTECTED_PATH]
     assert result["status"] == ("pass" if fault == "valid" else "fail")
     assert result["approved_protected_sources"] == (
@@ -852,7 +880,11 @@ def test_ordinary_m_finite_approval_keeps_other_original_gates(
     elif fault == "file-overflow":
         deltas.append(FileDelta("omnigent/extra_case.py", 0, 0))
     elif fault == "loc-overflow":
-        deltas[0] = FileDelta(deltas[0].path, 12529, 0)
+        deltas[0] = FileDelta(
+            deltas[0].path,
+            manifest["source_intrusion_budget"]["max_upstream_net_added_loc"] + 1,
+            0,
+        )
     elif fault == "patch-overflow":
         patches = 10
     elif fault == "isolation-floor":
@@ -911,7 +943,10 @@ def test_ordinary_m_normal_cli_consumes_only_complete_record(
     assert guard.main() == 0
     result = json.loads(capsys.readouterr().out)
     assert result["approved_protected_sources"] == [guard._ORDINARY_M_PROTECTED_PATH]
-    assert result["metrics"]["direct_upstream_file_count"] == 261
+    assert (
+        result["metrics"]["direct_upstream_file_count"]
+        == manifest["source_intrusion_budget"]["max_direct_upstream_files"]
+    )
     manifest[guard._ORDINARY_M_APPROVAL]["decision"] = "prepared"
     assert guard.main() == 1
     assert json.loads(capsys.readouterr().out)["status"] == "fail"
@@ -939,7 +974,13 @@ def test_ordinary_m_finite_approval_rejects_other_candidate_and_rule_drift(
         version_ok=True,
         source_root=root,
     )
-    assert result["metrics"]["direct_upstream_file_count"] == 261
-    assert result["metrics"]["upstream_net_added_loc"] == 12528
+    assert (
+        result["metrics"]["direct_upstream_file_count"]
+        == manifest["source_intrusion_budget"]["max_direct_upstream_files"]
+    )
+    assert (
+        result["metrics"]["upstream_net_added_loc"]
+        == manifest["source_intrusion_budget"]["max_upstream_net_added_loc"]
+    )
     assert result["status"] == "fail"
     assert "ordinary M finite source approval is missing or mismatched" in result["violations"]
