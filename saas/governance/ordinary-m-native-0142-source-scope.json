@@ -1,20 +1,40 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "7ac908fe1b41b9aa918d10f6186449c13bdb534f740da3b0ad0c7e4d7d10c9c3",
+  "candidate_manifest_sha256": "7d35269c5b86ccd487fe9bbcf7c50cf2d3c18fdd3f3db226f5639abb05cc27c6",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 264,
-    "max_upstream_net_added_loc": 12548,
+    "max_direct_upstream_files": 266,
+    "max_upstream_net_added_loc": 12601,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
     {
+      "path": ".github/workflows/saas-upgrade-benchmark.yml",
+      "bytes": 6551,
+      "sha256": "e02569df2582a36a3f469f8d92df09297f38ebd6af264ff54512da302da3d66d"
+    },
+    {
       "path": "deploy/docker/Dockerfile",
       "bytes": 53528,
       "sha256": "2f7b7b04ae26053b0c74b91a24642278cd9fb4d0e6a80994fac9bbad05431add"
+    },
+    {
+      "path": "dev/benchmarks/omnigent/environment.py",
+      "bytes": 71097,
+      "sha256": "ce943c2dfb666fafc9372f5daf3eff403005975c3f36daff490df49efdb4e111"
+    },
+    {
+      "path": "dev/benchmarks/omnigent/journeys.py",
+      "bytes": 53693,
+      "sha256": "8f711ba5bec92aa175a3c20a23cbc2ffe0b7230395d479701a442162b6aaddef"
+    },
+    {
+      "path": "dev/benchmarks/omnigent/run.py",
+      "bytes": 14701,
+      "sha256": "d450ae0bef6bfc8ca56054b109a942349a7f58d3eacf15ff5835d36fe6adf3d5"
     },
     {
       "path": "omnigent/harnesses/claude_native/bridge.py",
@@ -135,6 +155,11 @@
       "path": "saas/runner_adapter/platform_models.py",
       "bytes": 23208,
       "sha256": "05904c734b950f3143196807311d7823319581539429e21c5a3e580fc2e088bb"
+    },
+    {
+      "path": "saas/scripts/benchmark_fork_diagnostics.py",
+      "bytes": 17157,
+      "sha256": "720740e5ab3facf86f0b3daaa2c2c003e0eeaa474de33597a96b51b357fd9d64"
     },
     {
       "path": "saas/supply_chain/wolfi-runtime-lock.json",
@@ -260,6 +285,11 @@
       "path": "tests/saas/test_runtime_security_overlays.py",
       "bytes": 12415,
       "sha256": "3119a33b4a1f4d9920d4cd3d2cb3f70ac32b4e7196d46cb3f9cb67521e44346b"
+    },
+    {
+      "path": "tests/saas/test_upgrade_benchmark_fixture.py",
+      "bytes": 9217,
+      "sha256": "d5badd325cedca1b7da380a5c5feebea14e346cc2de800d3b828f226d3462791"
     }
   ],
   "governance_paths": [

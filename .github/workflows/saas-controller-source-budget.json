@@ -24,19 +24,19 @@
   ],
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 264,
-    "max_upstream_net_added_loc": 12548,
+    "max_direct_upstream_files": 266,
+    "max_upstream_net_added_loc": 12601,
     "min_isolated_custom_code_ratio": 0.85
   },
   "controller_budget_scope": {
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "03653c2ead9f4d463e9032a84281f62ae6fcb458526aa42488089c5542407baa",
+    "current_controller_baseline_sha256": "a8080582e1f107c764e4df6b444cd0cb72d7c79cb8860e5c2b315df6f6f38b71",
     "frozen_product_file_ceiling": 226,
-    "current_controller_file_ceiling": 264,
+    "current_controller_file_ceiling": 266,
     "reason": "Retain the three existing asynchronous test observation boundaries and the reviewed Host readiness change. The measured controller budget increases by one file and 249 net lines.",
-    "authority": "Dream1216 approved exact functional50 candidate 7ac908fe1b41b9aa918d10f6186449c13bdb534f740da3b0ad0c7e4d7d10c9c3;264files/12548netLOC and unchanged sole protected orchestration d059; actual human receipt SHA256 7ce353d6a58ea9083be29c081b9c093052f2ddae1c075ab46f1451dd5c92c5a3; original gates retained.",
+    "authority": "Root recorded one zero-budget normal-hook canonicalization to fixed56 7d35269c5b86ccd487fe9bbcf7c50cf2d3c18fdd3f3db226f5639abb05cc27c6 under direct human9bd normal-hooks authorization; not a new direct human approval of7d; exact derived record SHA256 b3e28b17a47ef63690a3c52417e2e277bf07c9c0c8a47816248e43da782c234f;266files/12601netLOC,9patches,0.85floor and all original gates retained.",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,9 +47,9 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "7ac908fe1b41b9aa918d10f6186449c13bdb534f740da3b0ad0c7e4d7d10c9c3",
+    "candidate_manifest_sha256": "7d35269c5b86ccd487fe9bbcf7c50cf2d3c18fdd3f3db226f5639abb05cc27c6",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "7ce353d6a58ea9083be29c081b9c093052f2ddae1c075ab46f1451dd5c92c5a3"
+    "authority_record_sha256": "b3e28b17a47ef63690a3c52417e2e277bf07c9c0c8a47816248e43da782c234f"
   }
 }

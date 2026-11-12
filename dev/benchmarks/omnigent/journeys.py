@@ -487,6 +487,8 @@ class _ForkContext:
 async def _setup_fork_session(env: BenchEnvironment) -> _ForkContext:
     """Resolve a session to fork; start an empty fork-id collector."""
     source_id = await _setup_target_session(env)
+    if env.fork_state_path is not None:
+        env.fork_sources.append(source_id)
     return _ForkContext(source_id=source_id, fork_ids=[])
 
 
