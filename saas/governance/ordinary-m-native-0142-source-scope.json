@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "48508b3a80e194fdf8ede7237206757137cc70446083a4dc2b5777629d9c694b",
+  "candidate_manifest_sha256": "8be6b49d7768982f8447bc87c8e43b62414eff333bce6109d3e98aa1bb1accf9",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -300,6 +300,11 @@
       "path": "tests/saas/test_platform_model_relay.py",
       "bytes": 16399,
       "sha256": "c8643101093c3a6b37927de51dad0b8b135f0716ef5323b7572ef1db81166a8c"
+    },
+    {
+      "path": "tests/saas/test_production_server.py",
+      "bytes": 59440,
+      "sha256": "56d8b3d67c229a37327aa60e8d3f0306e4ca3be985e00595b795cc16e6d353c7"
     },
     {
       "path": "tests/saas/test_runtime_security_overlays.py",

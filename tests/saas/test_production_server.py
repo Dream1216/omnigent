@@ -694,38 +694,70 @@ def test_builds_tenant_and_public_run_services_with_version_and_readiness(
         sessions.close()
 
 
-def test_runtime_database_is_a_mandatory_readiness_dependency(tmp_path: Path) -> None:
-    sessions = _sessions()
-    runtime_statements: list[str] = []
-
-    @sa.event.listens_for(sessions.runtime_engine, "before_cursor_execute")
-    def fail_runtime_probe(
-        _connection: object,
-        _cursor: object,
-        statement: str,
-        _parameters: object,
-        _context: object,
-        _executemany: bool,
-    ) -> None:
-        runtime_statements.append(statement)
-        raise RuntimeError("runtime database unavailable")
+@pytest.mark.parametrize("database_role", ["runtime", "authenticator"])
+def test_database_role_is_a_mandatory_readiness_dependency(
+    tmp_path: Path,
+    database_role: str,
+) -> None:
+    billing_enabled = database_role == "authenticator"
+    sessions = _sessions(billing=billing_enabled)
+    config = _config(
+        tmp_path,
+        capabilities=(
+            frozenset({"tenant", "run", "enterprise", "billing"}) if billing_enabled else None
+        ),
+    )
+    probe_statements: list[str] = []
 
     try:
-        with pytest.raises(ProductionServerCompositionError, match=r"database[.]runtime"):
-            build_production_saas_services(_config(tmp_path), sessions)
-        assert runtime_statements == ["SELECT 1"]
+        if billing_enabled:
+            billing_statements: list[str] = []
+            sa.event.listen(
+                sessions.engines["billing"],
+                "before_cursor_execute",
+                lambda _connection, _cursor, statement, _parameters, _context, _executemany: (
+                    billing_statements.append(statement)
+                ),
+            )
+            services = build_production_saas_services(config, sessions)
+            try:
+                assert billing_statements == ["SELECT 1"]
+            finally:
+                services.close()
+
+        @sa.event.listens_for(sessions.engines[database_role], "before_cursor_execute")
+        def fail_database_probe(
+            _connection: object,
+            _cursor: object,
+            statement: str,
+            _parameters: object,
+            _context: object,
+            _executemany: bool,
+        ) -> None:
+            probe_statements.append(statement)
+            raise RuntimeError(f"{database_role} database unavailable")
+
+        with pytest.raises(
+            ProductionServerCompositionError,
+            match=rf"database[.]{database_role}",
+        ):
+            build_production_saas_services(config, sessions)
+        assert probe_statements == ["SELECT 1"]
     finally:
         sessions.close()
 
 
 def test_enterprise_and_billing_capabilities_mount_reviewed_services_only(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(server_module, "_runtime_database_check", lambda _engine: lambda: None)
     sessions = _sessions(billing=True)
     config = _config(
         tmp_path,
         capabilities=frozenset({"tenant", "run", "enterprise", "billing"}),
     )
+    services = None
     try:
         services = build_production_saas_services(config, sessions)
         paths = {getattr(route, "path", None) for route in services.integration.router.routes}
@@ -733,9 +765,12 @@ def test_enterprise_and_billing_capabilities_mount_reviewed_services_only(
         assert "/tenants/{tenant_id}/enterprise/scim-directories" in paths
         assert "/tenants/{tenant_id}/billing" in paths
         assert "billing" in sessions.engines
-        services.close()
     finally:
-        sessions.close()
+        try:
+            if services is not None:
+                services.close()
+        finally:
+            sessions.close()
 
     missing_billing = _sessions()
     try:
