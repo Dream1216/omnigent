@@ -34,6 +34,7 @@ from tests._helpers.server_runner import server_runner
 from tests.e2e.conftest import (
     configure_mock_llm,
     create_runner_bound_session,
+    mock_llm_failure_note,
     upload_agent,
 )
 
@@ -241,7 +242,21 @@ def test_codex_native_parent_woken_by_independent_child(
             rows = client.get(f"/v1/sessions/{parent_id}/child_sessions").json()["data"]
             return rows[0]["id"] if rows else None
 
-        child_id = _wait_for(find_child, description="worker child dispatch", deadline=deadline)
+        try:
+            child_id = _wait_for(
+                find_child, description="worker child dispatch", deadline=deadline
+            )
+        except AssertionError as failure:
+            with contextlib.suppress(Exception):
+                failure.add_note(
+                    mock_llm_failure_note(
+                        mock_url,
+                        expected_model=_PARENT_MODEL,
+                        user_text="Dispatch the worker and wait.",
+                        call_id="dispatch-worker",
+                    )
+                )
+            raise
 
         _wait_for(
             lambda: _CHILD_MARKER in _items_blob(client, child_id),

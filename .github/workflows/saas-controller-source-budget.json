@@ -24,19 +24,19 @@
   ],
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 267,
-    "max_upstream_net_added_loc": 12703,
+    "max_direct_upstream_files": 271,
+    "max_upstream_net_added_loc": 12931,
     "min_isolated_custom_code_ratio": 0.85
   },
   "controller_budget_scope": {
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "658865d7d4cfeed4f820ce7e67eef42381c8e3824cb9071dc70b2b9b51025200",
+    "current_controller_baseline_sha256": "737590b1b76ae8753fa37c2bfe886759cfd49d7adf4d472c5dc52782c53d4476",
     "frozen_product_file_ceiling": 226,
-    "current_controller_file_ceiling": 267,
+    "current_controller_file_ceiling": 271,
     "reason": "Retain the three existing asynchronous test observation boundaries and the reviewed Host readiness change. The measured controller budget increases by one file and 249 net lines.",
-    "authority": "Dream1216 direct human exact fixed57 approval, message01a1d2e9-43eb-71c1-94ca-1584acc8db89 in release Root. Candidate d82c5a52ea775fc3518f72ef12ae81cf92e7803be9b429ac64ef810866ed9fc4; approved267files/12703netLOC (+1/+102), with necessary mechanical wiring; exact approval record SHA256 46414200b2f03162a70780c0cf20b450a4fe3a72e22717bad7ea82c4aa353399. Preserve9patches,0.85floor and original90s/assertions/model/permissions/cleanup; no E2E or release qualification inferred.",
+    "authority": "Dream1216 direct human exact fixed61 approval, message01a1d35c-cd87-7311-9ef0-20271f09cb54 in release Root. Candidate 48508b3a80e194fdf8ede7237206757137cc70446083a4dc2b5777629d9c694b; approved271files/12931netLOC (+4/+228), with necessary mechanical wiring; exact approval record SHA256 eb8592d8a012a531170fdf640ece511b20971869fc270a01bf61778cb18710f8. Preserve9patches,0.85floor and original models/calls/success paths/shared240s/assertions/permissions/cleanup. Bounded failure-side evidence only; no causal repair, E2E or release qualification inferred. Prior fixed57 receipts remain historical evidence.",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,9 +47,9 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "d82c5a52ea775fc3518f72ef12ae81cf92e7803be9b429ac64ef810866ed9fc4",
+    "candidate_manifest_sha256": "48508b3a80e194fdf8ede7237206757137cc70446083a4dc2b5777629d9c694b",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "46414200b2f03162a70780c0cf20b450a4fe3a72e22717bad7ea82c4aa353399"
+    "authority_record_sha256": "eb8592d8a012a531170fdf640ece511b20971869fc270a01bf61778cb18710f8"
   }
 }

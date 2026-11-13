@@ -524,6 +524,101 @@ def get_mock_requests(
     return resp.json()["requests"]
 
 
+def mock_llm_failure_note(
+    mock_url: str | None,
+    *,
+    expected_model: str,
+    user_text: str,
+    call_id: str | None = None,
+    agent_display_name: str | None = None,
+) -> str:
+    """Summarize one failed test's existing ledger without exposing its payload."""
+    import json
+
+    from tests.server.integration.mock_llm_server import MockState
+
+    summary: dict[str, Any] = {
+        "capture": "unknown",
+        "selected_queue_and_index": "unknown",
+        "ledger_may_have_been_reset": True,
+    }
+    if mock_url is not None:
+        try:
+            body = bytearray()
+            deadline = time.monotonic() + 5
+            with httpx.stream(
+                "GET",
+                f"{mock_url}/mock/requests",
+                headers={"Accept-Encoding": "identity"},
+                timeout=2,
+                trust_env=False,
+            ) as response:
+                response.raise_for_status()
+                for chunk in response.iter_raw():
+                    if time.monotonic() >= deadline or len(body) + len(chunk) > 262144:
+                        raise ValueError("diagnostic collection bound")
+                    body.extend(chunk)
+            requests = json.loads(body)["requests"]
+            rows = []
+            for request in requests[-8:]:
+                tools = request.get("tools") or []
+                outputs = [
+                    entry
+                    for entry in request.get("input", [])
+                    if isinstance(entry, dict)
+                    and call_id is not None
+                    and entry.get("call_id") == call_id
+                    and entry.get("type") == "function_call_output"
+                ]
+                rows.append(
+                    {
+                        "expected_model": request.get("model") == expected_model,
+                        "known_auxiliary_model": request.get("model")
+                        in ("_policy_llm_", "codex-auto-review"),
+                        "model_is_agent_display": (
+                            None
+                            if agent_display_name is None
+                            else request.get("model") == agent_display_name
+                        ),
+                        "user_text_seen": user_text in MockState._user_input_text(request),
+                        "tool_count": len(tools),
+                        "tool_scan_truncated": len(tools) > 128,
+                        "known_tools": sorted(
+                            MockState.tool_names({"tools": tools[:128]})
+                            & {
+                                "mcp__omnigent",
+                                "mcp__omnigent__sys_session_send",
+                                "sys_session_send",
+                            }
+                        ),
+                        "call_output_seen": bool(outputs),
+                        "call_output_error_markers": [
+                            any(marker in json.dumps(entry.get("output")) for entry in outputs)
+                            for marker in ("Unknown tool", "not found", "Permission denied")
+                        ],
+                    }
+                )
+            summary.update(
+                capture="complete",
+                request_count=len(requests),
+                expected_model_requests=sum(
+                    request.get("model") == expected_model for request in requests
+                ),
+                request_scan_truncated=len(requests) > 8,
+                requests=rows,
+            )
+        except (
+            httpx.HTTPError,
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError,
+            RecursionError,
+        ) as error:
+            summary["collection_error"] = type(error).__name__
+    return "Mock ledger evidence: " + json.dumps(summary, ensure_ascii=True)[:4096]
+
+
 def get_mock_message_requests(mock_llm_server_url: str, *, key: str | None = None) -> list[dict]:
     """
     Retrieve captured Anthropic Messages requests with their beta flags.

@@ -501,3 +501,94 @@ async def test_chunk_delay_paces_messages_sse_event_by_event(clean_mock_state: N
     assert len(chunks) > 1
     for chunk in chunks:
         assert _count_events(chunk) == 1
+
+
+def test_failure_ledger_note_redacts_payload_and_preserves_unknown_queue(monkeypatch) -> None:
+    import httpx
+
+    from tests.e2e.conftest import mock_llm_failure_note
+
+    requests = [
+        {
+            "model": "expected",
+            "input": [
+                {"role": "user", "content": "dispatch SECRET_PAYLOAD"},
+                {
+                    "type": "function_call_output",
+                    "call_id": "dispatch-worker",
+                    "output": "Unknown tool SECRET_OUTPUT",
+                },
+            ],
+            "tools": [
+                {"name": "SECRET_TOOL", "function": {"name": "mcp__omnigent"}},
+            ],
+        }
+    ]
+    payload = json.dumps({"requests": requests}).encode()
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(200, stream=httpx.ByteStream(payload))
+    )
+    with httpx.Client(transport=transport) as client:
+
+        def stream(method, url, **kwargs):
+            assert kwargs.pop("trust_env") is False
+            return client.stream(method, url, **kwargs)
+
+        monkeypatch.setattr(httpx, "stream", stream)
+        note = mock_llm_failure_note(
+            "http://mock",
+            expected_model="expected",
+            user_text="dispatch",
+            call_id="dispatch-worker",
+        )
+    assert "SECRET" not in note
+    evidence = json.loads(note.split(": ", 1)[1])
+    assert evidence["capture"] == "complete"
+    assert evidence["selected_queue_and_index"] == "unknown"
+    assert evidence["requests"][0]["known_tools"] == ["mcp__omnigent"]
+    assert evidence["requests"][0]["call_output_seen"]
+    assert evidence["requests"][0]["call_output_error_markers"][0]
+
+
+def test_failure_ledger_note_bounds_body_and_http_errors(monkeypatch) -> None:
+    import httpx
+
+    from tests.e2e.conftest import mock_llm_failure_note
+
+    def reply(request):
+        if request.url.path.startswith("/oversize/"):
+            payload = json.dumps({"requests": [], "padding": "x" * 262145}).encode()
+            return httpx.Response(200, stream=httpx.ByteStream(payload))
+        if request.url.path.startswith("/late/"):
+            return httpx.Response(200, stream=httpx.ByteStream(b'{"requests": []}'))
+        raise httpx.ReadTimeout("SECRET_ERROR")
+
+    with httpx.Client(transport=httpx.MockTransport(reply)) as client:
+
+        def stream(method, url, **kwargs):
+            assert kwargs.pop("trust_env") is False
+            return client.stream(method, url, **kwargs)
+
+        monkeypatch.setattr(httpx, "stream", stream)
+        for url, error in [("http://mock/oversize", "ValueError"), ("http://mock", "ReadTimeout")]:
+            note = mock_llm_failure_note(url, expected_model="expected", user_text="dispatch")
+            assert "SECRET" not in note
+            assert len(note.encode("ascii")) <= 4118
+            evidence = json.loads(note.split(": ", 1)[1])
+            assert evidence["capture"] == "unknown"
+            assert evidence["selected_queue_and_index"] == "unknown"
+            assert evidence["collection_error"] == error
+
+        from types import SimpleNamespace
+
+        from tests.e2e import conftest as e2e_fixtures
+
+        ticks = iter([0, 6])
+        with monkeypatch.context() as clock_patch:
+            clock_patch.setattr(
+                e2e_fixtures, "time", SimpleNamespace(monotonic=lambda: next(ticks))
+            )
+            note = mock_llm_failure_note(
+                "http://mock/late", expected_model="expected", user_text="dispatch"
+            )
+        assert json.loads(note.split(": ", 1)[1])["collection_error"] == "ValueError"
