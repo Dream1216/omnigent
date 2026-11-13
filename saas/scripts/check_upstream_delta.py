@@ -28,10 +28,10 @@ def _is_under(path: str, prefixes: tuple[str, ...]) -> bool:
 
 
 _ORDINARY_M_APPROVAL = "ordinary_m_native_0142_finite_approval"
-_ORDINARY_M_CANDIDATE = "f2eab70932f74c3723cd518c89e20147b954d13942bb92562248ceb5b4fde3f8"
+_ORDINARY_M_CANDIDATE = "d82c5a52ea775fc3518f72ef12ae81cf92e7803be9b429ac64ef810866ed9fc4"
 _ORDINARY_M_PROTECTED_PATH = "omnigent/runner/native/orchestration.py"
 _ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.json"
-_ORDINARY_M_SCOPE_SHA256 = "c08a58773022e49fff1b6129a281c498aa477cdf334f24c810473a6b2fd0ab6c"
+_ORDINARY_M_SCOPE_SHA256 = "bac7d74ba0ee594b3757cc175475e63a64f8470038010cc99044a2029fcc3232"
 
 
 def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:
@@ -98,7 +98,7 @@ def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, 
         if _manifest_controls_sha256(manifest) != scope["manifest_controls_sha256"][kind]:
             return False
         if kind == "controller" and (
-            manifest["controller_budget_scope"]["current_controller_file_ceiling"] != 266
+            manifest["controller_budget_scope"]["current_controller_file_ceiling"] != 267
             or manifest["controller_budget_scope"].get("prior_approved_controller_authority")
             != scope["previous_controller_authority"]
         ):

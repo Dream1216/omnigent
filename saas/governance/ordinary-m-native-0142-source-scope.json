@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "f2eab70932f74c3723cd518c89e20147b954d13942bb92562248ceb5b4fde3f8",
+  "candidate_manifest_sha256": "d82c5a52ea775fc3518f72ef12ae81cf92e7803be9b429ac64ef810866ed9fc4",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 266,
-    "max_upstream_net_added_loc": 12601,
+    "max_direct_upstream_files": 267,
+    "max_upstream_net_added_loc": 12703,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -175,6 +175,11 @@
       "path": "saas/upstream-patches/README.md",
       "bytes": 35650,
       "sha256": "1224a9c2732698dd0fff9d4cee7ba3defe80e4d158ae54dc43dffd4c9a9c8fdc"
+    },
+    {
+      "path": "tests/e2e/test_private_session_orchestration.py",
+      "bytes": 29305,
+      "sha256": "54b5ce6157760668520c9e3ebc72528933daebaed66e74bdcf202f15e308588d"
     },
     {
       "path": "tests/harnesses/claude_native/test_claude_native_bridge.py",

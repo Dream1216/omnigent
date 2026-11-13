@@ -1,10 +1,12 @@
 """Real local host/server/SDK and Codex processes; scripted model, no cloud sandbox."""
 
 import ast
+import contextlib
 import json
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import httpx
@@ -111,7 +113,107 @@ def test_private_manager_launch_send_read_and_sharing(
                     return response.json()["data"]
 
                 def wait_text(session, text):
-                    return poll_until(lambda: text in json.dumps(items(session)), timeout_s=90)
+                    last_rendered = ""
+                    last_count = 0
+
+                    def received():
+                        nonlocal last_rendered, last_count
+                        rows = items(session)
+                        last_count = len(rows)
+                        last_rendered = json.dumps(rows)
+                        return text in last_rendered
+
+                    try:
+                        return poll_until(received, timeout_s=90)
+                    except AssertionError as failure:
+                        if (
+                            harness == "codex-native"
+                            and orchestration_enabled
+                            and text == "MANAGER_SENT"
+                        ):
+
+                            def diagnostic_note():
+                                from tests.server.integration.mock_llm_server import MockState
+
+                                summary = {
+                                    "last_item_count": last_count,
+                                    "item_markers": {
+                                        marker: marker in last_rendered
+                                        for marker in (
+                                            "MANAGER_SENT",
+                                            "Mock LLM response",
+                                            "sys_session_message",
+                                            "WORKER_TASK",
+                                        )
+                                    },
+                                }
+                                try:
+                                    body = bytearray()
+                                    deadline = time.monotonic() + 5
+                                    with httpx.stream(
+                                        "GET",
+                                        f"{mock}/mock/requests",
+                                        params={"key": "gpt-4o"},
+                                        headers={"Accept-Encoding": "identity"},
+                                        timeout=2,
+                                        trust_env=False,
+                                    ) as response:
+                                        response.raise_for_status()
+                                        for chunk in response.iter_raw():
+                                            if (
+                                                time.monotonic() >= deadline
+                                                or len(body) + len(chunk) > 262144
+                                            ):
+                                                raise ValueError("diagnostic collection bound")
+                                            body.extend(chunk)
+                                    requests = json.loads(body)["requests"]
+                                    summary["request_count"] = len(requests)
+                                    summary["requests"] = []
+                                    for request in requests[-8:]:
+                                        tools = request.get("tools") or []
+                                        names = MockState.tool_names({"tools": tools[:128]})
+                                        summary["requests"].append(
+                                            {
+                                                "tool_count": len(tools),
+                                                "tool_scan_truncated": len(tools) > 128,
+                                                "send_result_seen": any(
+                                                    entry.get("call_id") == "send"
+                                                    and entry.get("type") == "function_call_output"
+                                                    for entry in request.get("input", [])
+                                                    if isinstance(entry, dict)
+                                                ),
+                                                "user_marker_present": (
+                                                    "MANAGER_SEND"
+                                                    in MockState._user_input_text(request)
+                                                ),
+                                                "known_tools": sorted(
+                                                    names
+                                                    & {
+                                                        "mcp__omnigent",
+                                                        "mcp__omnigent__sys_session_message",
+                                                        "sys_session_message",
+                                                    }
+                                                ),
+                                            }
+                                        )
+                                except (
+                                    httpx.HTTPError,
+                                    ValueError,
+                                    TypeError,
+                                    KeyError,
+                                    AttributeError,
+                                ) as error:
+                                    summary["collection_error"] = type(error).__name__
+                                return (
+                                    "MANAGER_SEND diagnostic: "
+                                    + json.dumps(summary, ensure_ascii=True)[:4096]
+                                )
+
+                            with contextlib.suppress(Exception):
+                                failure.add_note(diagnostic_note())
+                        raise
+                    finally:
+                        last_rendered = ""
 
                 def send(session, text):
                     response = client.post(
