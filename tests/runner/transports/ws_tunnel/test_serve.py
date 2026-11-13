@@ -3799,11 +3799,21 @@ async def test_application_silence_preserves_connection_owned_requests(
     started = asyncio.Event()
     cancelled = asyncio.Event()
     finish = asyncio.Event()
-    checked = asyncio.Event()
+    checked = asyncio.get_running_loop().create_future()
     pong_started = asyncio.Event()
     pong_cancelled = asyncio.Event()
     release_pong = asyncio.Event()
+    transport_ready = asyncio.Event()
+    receive_ready = asyncio.Event()
+    original_send_hello = serve_module._send_hello
     original_send = ClientConnection.send
+
+    async def send_hello_after_transport_ready(*args, **kwargs):
+        await original_send_hello(*args, **kwargs)
+        await asyncio.wait_for(transport_ready.wait(), timeout=2)
+        receive_ready.set()
+
+    monkeypatch.setattr(serve_module, "_send_hello", send_hello_after_transport_ready)
 
     async def send_with_backpressure(self, data, *args, **kwargs):
         if isinstance(data, str) and json.loads(data).get("kind") == "pong":
@@ -3837,6 +3847,10 @@ async def test_application_silence_preserves_connection_owned_requests(
 
     async def peer(ws):
         await ws.recv()
+        # Finish protocol setup before the application-silence clock starts.
+        await asyncio.wait_for(await ws.ping(), timeout=2)
+        transport_ready.set()
+        await asyncio.wait_for(receive_ready.wait(), timeout=2)
         if late_request:
             await asyncio.sleep(0.075)
         frame = (
@@ -3855,7 +3869,7 @@ async def test_application_silence_preserves_connection_owned_requests(
             while json.loads(await ws.recv())["kind"] not in {"response.end", "ws.close"}:
                 pass
             await asyncio.wait_for(ws.wait_closed(), timeout=0.6)
-            checked.set()
+            checked.set_result(None)
             return
         await asyncio.sleep(0.3)
         if protected:
@@ -3869,10 +3883,18 @@ async def test_application_silence_preserves_connection_owned_requests(
                 pass
         else:
             await asyncio.wait_for(cancelled.wait(), timeout=2)
-        checked.set()
+        checked.set_result(None)
         await ws.close()
 
-    async with websockets.serve(peer, "127.0.0.1", 0, ping_interval=None) as server:
+    async def report_peer_errors(ws):
+        try:
+            await peer(ws)
+        except Exception as exc:
+            if not checked.done():
+                checked.set_exception(exc)
+            raise
+
+    async with websockets.serve(report_peer_errors, "127.0.0.1", 0, ping_interval=None) as server:
         port = server.sockets[0].getsockname()[1]
         task = asyncio.create_task(
             _serve_tunnel_once(
@@ -3885,7 +3907,7 @@ async def test_application_silence_preserves_connection_owned_requests(
             )
         )
         try:
-            await asyncio.wait_for(checked.wait(), timeout=3)
+            await asyncio.wait_for(checked, timeout=3)
             if finishes:
                 await asyncio.wait_for(task, timeout=2)
             else:

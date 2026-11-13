@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "8be6b49d7768982f8447bc87c8e43b62414eff333bce6109d3e98aa1bb1accf9",
+  "candidate_manifest_sha256": "cf5f16079af45bc5f041b86258a18bc1e05ba5c5511134432adaca902f577228",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 271,
-    "max_upstream_net_added_loc": 12931,
+    "max_upstream_net_added_loc": 12953,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -290,6 +290,11 @@
       "path": "tests/runner/test_resource_registry.py",
       "bytes": 130222,
       "sha256": "a921b09b48625552121391c77130dfab7d519fa35dd1ec437705dbd0e588a9d2"
+    },
+    {
+      "path": "tests/runner/transports/ws_tunnel/test_serve.py",
+      "bytes": 137327,
+      "sha256": "23d44315f3e296bd92783da77bf1ad16d0591e0deb83888e042132b8a46faff3"
     },
     {
       "path": "tests/saas/test_platform_model_gateway.py",
