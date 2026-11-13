@@ -29,6 +29,7 @@ Run locally (mock LLM, no real API key needed)::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import subprocess
 import sys
@@ -51,6 +52,7 @@ from tests._helpers.session import post_session_bundle
 from tests.e2e.conftest import (
     configure_mock_llm,
     find_free_port,
+    mock_llm_failure_note,
     poll_session_until_terminal,
     reset_mock_llm,
     send_user_message_to_session,
@@ -257,7 +259,19 @@ def test_repl_adapter_creates_session_without_bundle(
 
     session_id = asyncio.run(_drive())
     text = _assistant_text(server.base_url, session_id)
-    assert server.marker in text, f"Expected {server.marker!r} in transcript. Got: {text!r}"
+    try:
+        assert server.marker in text, f"Expected {server.marker!r} in transcript. Got: {text!r}"
+    except AssertionError as failure:
+        with contextlib.suppress(Exception):
+            failure.add_note(
+                mock_llm_failure_note(
+                    mock_llm_server_url,
+                    expected_model="mock-" + server.marker.removeprefix("REMOTE_FRESH_OK_"),
+                    user_text="Say hello briefly.",
+                    agent_display_name=server.agent_name,
+                )
+            )
+        raise
 
 
 def test_repl_adapter_unknown_agent_name_is_reported(
@@ -297,6 +311,7 @@ def test_repl_adapter_unknown_agent_name_is_reported(
 
 def test_server_creates_fresh_session_via_json_agent_id(
     registered_agent_server: _RegisteredAgentServer,
+    mock_llm_server_url: str | None,
 ) -> None:
     """``POST /v1/sessions`` with a JSON agent_id creates a working session.
 
@@ -336,7 +351,19 @@ def test_server_creates_fresh_session_via_json_agent_id(
         f"Status: {body['status']!r}. Output: {body.get('output', [])}"
     )
     text = final_assistant_text(body)
-    assert server.marker in text, f"Expected {server.marker!r} in output. Got: {text!r}"
+    try:
+        assert server.marker in text, f"Expected {server.marker!r} in output. Got: {text!r}"
+    except AssertionError as failure:
+        with contextlib.suppress(Exception):
+            failure.add_note(
+                mock_llm_failure_note(
+                    mock_llm_server_url,
+                    expected_model="mock-" + server.marker.removeprefix("REMOTE_FRESH_OK_"),
+                    user_text="Say hello briefly.",
+                    agent_display_name=server.agent_name,
+                )
+            )
+        raise
 
 
 # ---------------------------------------------------------------------------

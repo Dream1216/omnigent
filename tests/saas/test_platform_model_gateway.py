@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,6 +19,8 @@ from sqlalchemy.engine import make_url
 from omnigent.debug_logging import PRIMARY_SESSION_ID_ENV_VAR
 from omnigent.host.connect import HostProcess
 from omnigent.host.identity import HostIdentity
+from omnigent.runner.identity import RUNNER_ID_ENV_VAR, token_bound_runner_id
+from omnigent.runner.session_channels import SESSION_MODEL_CHANNEL_ENV
 from saas.control_plane.model_budget import ModelProviderBudgetReservationView
 from saas.control_plane.model_provider import PlatformManagedModelRuntimeConfiguration
 from saas.production.platform_model_gateway import (
@@ -1016,8 +1019,10 @@ def test_managed_host_injects_runner_only_session_channel(
             assert kwargs["authority"] is authority
             assert kwargs["session_id"] == SESSION_ID
 
-        def start(self):
-            return "http://127.0.0.1:12345/v1"
+        def start_session_channel(self, *, runner_id, session_id):
+            assert runner_id == token_bound_runner_id("host-test-binding")
+            assert session_id == str(SESSION_ID)
+            return "http://127.0.0.1:12345/v1", "host-owned-private-channel"
 
         def follow(self, _process):
             captured["followed"] = "yes"
@@ -1038,6 +1043,7 @@ def test_managed_host_injects_runner_only_session_channel(
         captured["token"] = environment[PLATFORM_MODEL_CREDENTIAL_ENV]
         captured["transport"] = environment[PLATFORM_MODEL_RELAY_BASE_URL_ENV]
         captured["required_start_sandbox"] = environment["OMNIGENT_RUNNER_REQUIRE_START_SANDBOX"]
+        captured["channel"] = environment[SESSION_MODEL_CHANNEL_ENV]
         if failure == "spawn":
             raise OSError("spawn failed")
         return cast(object, object()), tmp_path / "runner.log"
@@ -1056,6 +1062,7 @@ def test_managed_host_injects_runner_only_session_channel(
     )
     environment = {
         PRIMARY_SESSION_ID_ENV_VAR: str(SESSION_ID),
+        RUNNER_ID_ENV_VAR: token_bound_runner_id("host-test-binding"),
         "OMNIGENT_RUNNER_REQUIRE_START_SANDBOX": "0",
     }
 
@@ -1067,6 +1074,8 @@ def test_managed_host_injects_runner_only_session_channel(
 
     assert PLATFORM_MODEL_CREDENTIAL_ENV not in environment
     assert PLATFORM_MODEL_RELAY_BASE_URL_ENV not in environment
+    assert SESSION_MODEL_CHANNEL_ENV not in environment
+    assert captured["channel"] == "host-owned-private-channel"
     assert captured["token"] == Relay.capability
     assert captured["required_start_sandbox"] == "1"
     assert json.loads(captured["transport"]) == {
@@ -1075,6 +1084,67 @@ def test_managed_host_injects_runner_only_session_channel(
     assert ("followed" in captured) == (failure != "spawn")
     assert ("closed" in captured) == (failure is not None)
     assert ("stopped" in captured) == (failure == "follow")
+
+
+def test_original_hex_session_survives_host_channel_entry_and_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omnigent.runner._entry import _consume_session_model_channel
+    from omnigent.runner.resource_registry import SessionResourceRegistry
+
+    original = "754ae422b9b64b0cbd585d0a369a4f7f"
+    runner = token_bound_runner_id("original-session-shape")
+    captured = {}
+    relays = []
+
+    class ObservedRelay(PlatformModelRelay):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            relays.append(self)
+
+        def follow(self, process):
+            assert process is captured["process"]
+
+    def spawn(_self, environment, _slug, _workspace):
+        captured.update(environment)
+        process = object()
+        captured["process"] = process
+        return process, tmp_path / "runner.log"
+
+    monkeypatch.setattr("saas.production.platform_model_host.PlatformModelRelay", ObservedRelay)
+    monkeypatch.setattr(HostProcess, "_spawn_runner_proc", spawn)
+    host = PlatformModelHostProcess(
+        HostIdentity(host_id="0123456789abcdef0123456789abcdef", name="model-host"),
+        "https://control-plane.invalid",
+        token_authority=PlatformModelGatewayTokenAuthority(
+            signing_key=SIGNING_KEY, tenant_id=TENANT_ID
+        ),
+        token_ttl_seconds=3600,
+    )
+    try:
+        host._spawn_runner_proc(
+            {PRIMARY_SESSION_ID_ENV_VAR: original, RUNNER_ID_ENV_VAR: runner}, "session-", tmp_path
+        )
+        assert captured[PRIMARY_SESSION_ID_ENV_VAR] == original
+        raw = captured[SESSION_MODEL_CHANNEL_ENV]
+        assert json.loads(raw)["session_id"] == original
+        monkeypatch.setenv(PRIMARY_SESSION_ID_ENV_VAR, original)
+        monkeypatch.setenv(SESSION_MODEL_CHANNEL_ENV, raw)
+        channel = _consume_session_model_channel(runner)
+        assert channel is not None and channel.session_id == original
+        registry = SessionResourceRegistry(
+            runner_workspace=tmp_path, session_model_channel=channel
+        )
+        assert registry.model_channel_for(original) is channel
+        assert registry.model_channel_for(str(UUID(original))) is channel
+        with pytest.raises(ValueError, match="identity"):
+            registry.model_channel_for(str(uuid4()))
+        with pytest.raises(ValueError, match="identity"):
+            channel.verify(session_id=original, runner_id=token_bound_runner_id("another-runner"))
+        assert SESSION_MODEL_CHANNEL_ENV not in os.environ
+    finally:
+        for relay in relays:
+            relay.close()
 
 
 def test_pricing_policy_requires_canonical_read_only_file(tmp_path: Path) -> None:

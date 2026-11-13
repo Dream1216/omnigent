@@ -1035,7 +1035,9 @@ def _is_codex_family_harness(canonical: str) -> bool:
     )
 
 
-def configured_harness_map() -> dict[str, HarnessAvailability]:
+def configured_harness_map(
+    *, max_workers: int = _READINESS_PROBE_MAX_WORKERS
+) -> dict[str, HarnessAvailability]:
     """Return per-harness readiness for every accepted harness spelling.
 
     Built so the server/web UI can do a plain dict lookup with whatever
@@ -1046,6 +1048,7 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
     visible. Codex entries distinguish ``"binary-missing"`` from
     ``"needs-auth"``.
 
+    :param max_workers: Maximum number of concurrent readiness checks.
     :returns: Mapping of harness spelling to readiness, e.g.
         ``{"claude-native": False, "codex-native": "needs-auth",
         "claude-sdk": "needs-auth", "pi": True, "qwen": True}``.
@@ -1091,7 +1094,7 @@ def configured_harness_map() -> dict[str, HarnessAvailability]:
         cache_key_by_spelling[spelling] = cache_key
 
     with ThreadPoolExecutor(
-        max_workers=min(_READINESS_PROBE_MAX_WORKERS, len(canonical_by_cache_key)),
+        max_workers=min(max_workers, len(canonical_by_cache_key)),
         thread_name_prefix="harness-readiness",
     ) as executor:
         futures = {

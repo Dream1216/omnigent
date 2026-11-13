@@ -114,8 +114,8 @@
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 226,
-    "max_upstream_net_added_loc": 6841,
+    "max_direct_upstream_files": 271,
+    "max_upstream_net_added_loc": 12931,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -125,7 +125,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "recorded_at": "2026-11-09",
       "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -150,7 +150,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "recorded_at": "2026-11-09",
       "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -174,7 +174,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "max_direct_upstream_files": 223,
       "max_upstream_net_added_loc": 6561,
@@ -198,7 +198,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "max_direct_upstream_files": 220,
       "max_upstream_net_added_loc": 6529,
@@ -219,7 +219,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "max_direct_upstream_files": 220,
       "max_upstream_net_added_loc": 6528,
@@ -247,7 +247,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "max_direct_upstream_files": 218,
       "max_upstream_net_added_loc": 6244,
@@ -277,7 +277,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "max_direct_upstream_files": 196,
       "max_upstream_net_added_loc": 5353,
@@ -312,7 +312,7 @@
     "approved_at": "2026-10-07",
     "ci_transport_and_fixture_bind_failure_followup": {
       "approval_status": "AUTHORIZED_UNDER_DIRECT_HUMAN_BLANKET_SCOPE",
-      "human_authorization": "全面授权，预算不用重复批准。",
+      "human_authorization": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002",
       "human_authorization_thread": "01a17455-6f33-74c2-8216-f90ead19427c",
       "implementation_patch_sha256": "88382d9ac93e4d43b808a4d3be0fdda9bc5d95e33a7e295bc82f21d1fa50297d",
       "max_direct_upstream_files": 187,
@@ -402,7 +402,7 @@
     "modelpin_owned_cleanup_test_budget_followup": {
       "approval_status": "APPROVED_LIMITED_SCOPE",
       "approved_at": "2026-10-26",
-      "human_approval_reference": "call_b0ce9ae410504c16be0fbb9e463d28ce: 批准仅将 0.19 上限增至 175；其他限制不变",
+      "human_approval_reference": "call_b0ce9ae410504c16be0fbb9e463d28ce: \u6279\u51c6\u4ec5\u5c06 0.19 \u4e0a\u9650\u589e\u81f3 175\uff1b\u5176\u4ed6\u9650\u5236\u4e0d\u53d8",
       "max_direct_upstream_files": 175,
       "measured_upstream_net_added_loc": 4002,
       "previous_max_direct_upstream_files": 174,
@@ -422,7 +422,7 @@
         "omnigent/server/API.md",
         "tests/server/integration/test_managed_startup_inputs.py"
       ],
-      "human_approval_reference": "call_0a584b434c2d4a48bc9e0893c3825158: 批准仅将 0.19 上限增至 178；其他限制不变",
+      "human_approval_reference": "call_0a584b434c2d4a48bc9e0893c3825158: \u6279\u51c6\u4ec5\u5c06 0.19 \u4e0a\u9650\u589e\u81f3 178\uff1b\u5176\u4ed6\u9650\u5236\u4e0d\u53d8",
       "max_direct_upstream_files": 178,
       "measured_upstream_net_added_loc": 4273,
       "new_official_paths": [
@@ -1022,7 +1022,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "previous_max_direct_upstream_files": 196,
       "max_direct_upstream_files": 198,
@@ -1033,7 +1033,7 @@
     "trace_daemon_cleanup_followup": {
       "approval_status": "AUTHORIZED_UNDER_VERIFIED_DIRECT_HUMAN_BLANKET_BUDGET_SCOPE",
       "recorded_at": "2026-11-03",
-      "human_authorization": "全面授权，预算不用重复批准。",
+      "human_authorization": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002",
       "human_authorization_thread": "01a17455-6f33-74c2-8216-f90ead19427c",
       "native_human_record_sha256": "087b64d5d965ece49619161aa8efa6de8f0c133c4c187060d05d5f2122237f2e",
       "previous_max_direct_upstream_files": 187,
@@ -1047,7 +1047,7 @@
     "legacy_coverage_reference_followup": {
       "approval_status": "AUTHORIZED_UNDER_VERIFIED_DIRECT_HUMAN_BLANKET_BUDGET_SCOPE",
       "recorded_at": "2026-11-03",
-      "human_authorization": "全面授权，预算不用重复批准。",
+      "human_authorization": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002",
       "human_authorization_thread": "01a17455-6f33-74c2-8216-f90ead19427c",
       "native_human_record_sha256": "087b64d5d965ece49619161aa8efa6de8f0c133c4c187060d05d5f2122237f2e",
       "previous_max_direct_upstream_files": 188,
@@ -1145,7 +1145,7 @@
       "authorization_source": {
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "reason": "Exact approved consumer/governance integration; retain nine patches, .85 isolation and 4576 LOC ceiling. Normal tests, native provenance and all release/security/data gates remain."
     },
@@ -1178,7 +1178,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "previous_max_direct_upstream_files": 205,
       "max_direct_upstream_files": 205,
@@ -1209,7 +1209,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "reason": "Reconcile actual combined Main Preview authority/domain/governance and previously reviewed Aliyun implementation under the existing verified broad project/budget authority. Preserve both exact authorization histories, nine patches, .85 isolation, original policy refusal and every technical/security/signature/data/release requirement. The extra official file is the existing bounded Ubuntu integration caller; the final net difference includes the packaged Preview SQL resource. No per-patch approval or production acceptance is inferred.",
       "current_four_aliyun_inputs": {
@@ -1243,7 +1243,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "composition_parent": "8573e1d979fdbaef9ffa4c238ced3415bc4a9ff9",
       "max_direct_upstream_files": 210,
@@ -1278,7 +1278,7 @@
       "authorization_source": {
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "reason": "Adopt the independently reviewed exact four runtime/test postimages directly on accepted Main. Constrain only existing active linux_bwrap last-spawn helper/tmux locale after all overrides, preserve C.UTF-8 and other backends/inactive behavior. Extend existing0010 patch with no tenth patch and retain4576 LOC/.85 isolation/all original technical,raw High,signing,native business and release gates. No incoming Aliyun/Cloud implementation paths or High policy exception."
     },
@@ -1358,7 +1358,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "previous_max_direct_upstream_files": 221,
       "previous_max_upstream_net_added_loc": 6532,
@@ -1378,7 +1378,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "recorded_at": "2026-11-09",
       "previous_max_direct_upstream_files": 226,
@@ -1399,7 +1399,7 @@
       "authorization_source": {
         "human_message_id": "01a1987c-6779-7203-a89b-4dc7b5fb2f1e",
         "thread_id": "01a17455-6f33-74c2-8216-f90ead19427c",
-        "verbatim": "全面授权，预算不用重复批准。"
+        "verbatim": "\u5168\u9762\u6388\u6743\uff0c\u9884\u7b97\u4e0d\u7528\u91cd\u590d\u6279\u51c6\u3002"
       },
       "recorded_at": "2026-11-09",
       "previous_max_direct_upstream_files": 226,
@@ -1413,9 +1413,46 @@
         "omnigent/server/routes/sessions/routes_events.py",
         "tests/server/integration/test_managed_startup_inputs.py"
       ]
+    },
+    "ordinary_m_host_compat_20261111": {
+      "candidate_source": "b53109e57c45363ea2cfe213f9ab1e95e7c4e29c",
+      "observed_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
+      "parent_source": "33391cffdfc2395a737565ba096d2c808c79c64b",
+      "authorization_source": {
+        "state": "approved_repository_admin_decision",
+        "administrator": "Dream1216",
+        "approved_head": "3f19c0376366fdeea0a89da23c55d3f5741f3f5d"
+      },
+      "recorded_at": "2026-11-11",
+      "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
+      "previous_controller_max_direct_upstream_files": 229,
+      "previous_controller_max_upstream_net_added_loc": 6841,
+      "max_direct_upstream_files": 230,
+      "max_upstream_net_added_loc": 7090,
+      "measured_direct_upstream_files": 230,
+      "measured_upstream_net_added_loc": 7090,
+      "reason": "The repository administrator approved the measured Host readiness change and its required patch replay at 230 files and 7090 net lines, an increment of one file and 249 net lines over the previous controller budget.",
+      "scope_paths": [
+        ".github/workflows/saas-controller-source-budget.json",
+        "omnigent/host/connect.py",
+        "omnigent/onboarding/harness_readiness.py",
+        "saas/upstream-baseline.json",
+        "saas/upstream-patches/0005-external-host-runtime-bridge.patch",
+        "saas/upstream-patches/0010-next-agent-session-reliability.patch",
+        "saas/upstream-patches/README.md",
+        "tests/host/test_connect.py",
+        "tests/onboarding/test_harness_readiness.py",
+        "tests/saas/test_upstream_delta.py"
+      ]
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
-  "upstream_version": "0.21.0.dev20261031"
+  "upstream_version": "0.21.0.dev20261031",
+  "ordinary_m_native_0142_finite_approval": {
+    "candidate_manifest_sha256": "48508b3a80e194fdf8ede7237206757137cc70446083a4dc2b5777629d9c694b",
+    "decision": "approved",
+    "approver": "Dream1216",
+    "authority_record_sha256": "eb8592d8a012a531170fdf640ece511b20971869fc270a01bf61778cb18710f8"
+  }
 }

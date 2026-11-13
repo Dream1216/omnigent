@@ -1228,9 +1228,11 @@ def test_prune_orphaned_bridge_dirs_removes_expired_bridge(
     assert not dead_dir.exists()
 
 
+@pytest.mark.parametrize("history_home", ["codex-home", "required-history-" + "a" * 32])
 def test_prune_orphaned_bridge_dirs_uses_latest_rollout_activity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    history_home: str,
 ) -> None:
     """A recent rollout keeps a bridge whose launch and owner marker are old."""
     root = tmp_path / "codex-native"
@@ -1243,7 +1245,7 @@ def test_prune_orphaned_bridge_dirs_uses_latest_rollout_activity(
     dead_dir = root / "deadowner"
     rollout = (
         dead_dir
-        / "codex-home"
+        / history_home
         / "sessions"
         / "2026"
         / "09"

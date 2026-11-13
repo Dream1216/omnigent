@@ -78,6 +78,83 @@ async def test_already_trusted_hook_skips_batchwrite() -> None:
     assert _batchwrite_calls(client) == []  # nothing to trust → no write
 
 
+@pytest.mark.parametrize(
+    "change", ["removed", "command", "hash", "duplicate", "disabled", "missing_enabled"]
+)
+async def test_hook_identity_must_survive_trust_write(change: str) -> None:
+    class ChangingClient(_FakeCodexClient):
+        async def request(self, method, params):
+            result = await super().request(method, params)
+            if method == "config/batchWrite":
+                if change == "removed":
+                    self.hooks.clear()
+                elif change == "command":
+                    self.hooks[0]["command"] = _USER_COMMAND
+                elif change == "hash":
+                    self.hooks[0]["currentHash"] = "sha256:changed"
+                elif change == "disabled":
+                    self.hooks[0]["enabled"] = False
+                elif change == "missing_enabled":
+                    self.hooks[0].pop("enabled")
+                else:
+                    self.hooks.append(dict(self.hooks[0]))
+            return result
+
+    client = ChangingClient(hooks=[{**_hook("k1", _OUR_COMMAND, "untrusted"), "enabled": True}])
+    required = {"k1": _OUR_COMMAND} if change in ("disabled", "missing_enabled") else None
+    with pytest.raises(RuntimeError, match="changed or disappeared"):
+        await trust_native_policy_hooks(client, cwd=_CWD, required_hooks=required)
+
+
+@pytest.mark.parametrize(
+    "fault", ["missing", "command", "hash", "duplicate", "empty", "disabled", "missing_enabled"]
+)
+async def test_required_policy_hook_identity_is_checked_before_trusting(fault: str) -> None:
+    required = {"pre_tool_use": _OUR_COMMAND, "user_prompt_submit": _OUR_COMMAND}
+    hooks = [
+        {**_hook(key, command, "trusted"), "enabled": True} for key, command in required.items()
+    ]
+    if fault == "missing":
+        hooks.pop()
+    elif fault == "command":
+        hooks[0]["command"] += " --different-session"
+    elif fault == "hash":
+        hooks[0]["currentHash"] = ""
+    elif fault == "duplicate":
+        hooks.append(dict(hooks[0]))
+    elif fault == "disabled":
+        hooks[0]["enabled"] = False
+    elif fault == "missing_enabled":
+        hooks[0].pop("enabled")
+    else:
+        required = {}
+    client = _FakeCodexClient(hooks=hooks)
+    with pytest.raises(RuntimeError, match="Required Codex policy hook"):
+        await trust_native_policy_hooks(client, cwd=_CWD, required_hooks=required)
+    assert _batchwrite_calls(client) == []
+
+
+async def test_managed_trust_requires_all_generated_policy_events(tmp_path: Path) -> None:
+    server = _test_app_server(tmp_path, tmp_path / "home", tmp_path / "bridge", Path(_CWD))
+    server.require_policy_hooks = True
+    settings = _codex_policy_hooks_settings(server.bridge_dir, server.python_executable)
+    hooks = []
+    for event, name in (
+        ("PreToolUse", "pre_tool_use"),
+        ("PostToolUse", "post_tool_use"),
+        ("UserPromptSubmit", "user_prompt_submit"),
+    ):
+        for index, hook in enumerate(settings["hooks"][event][0]["hooks"]):
+            key = f"{server.codex_home / 'hooks.json'}:{name}:0:{index}"
+            hooks.append({**_hook(key, hook["command"], "untrusted"), "enabled": True})
+    client = _FakeCodexClient(hooks=hooks)
+    await server._trust_policy_hooks(client=client)
+    assert len(_batchwrite_calls(client)[0].params["edits"][0]["value"]) == 4
+    client.hooks = [hook for hook in hooks if ":user_prompt_submit:" not in hook["key"]]
+    with pytest.raises(RuntimeError, match="identity or event is missing"):
+        await server._trust_policy_hooks(client=client)
+
+
 def test_write_codex_policy_hooks_file_merges_user_hooks(tmp_path: Path) -> None:
     """User hooks symlinked into the private home are merged into hooks.json.
 
@@ -471,17 +548,12 @@ async def test_old_codex_with_routing_armed_keeps_user_hooks(
         await server.close()
 
 
-async def test_trust_failure_is_fail_open_with_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("required", [False, True])
+async def test_trust_failure_preserves_standalone_degrade_but_closes_managed_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, required: bool
 ) -> None:
     """
-    A trust handshake failure degrades the session instead of blocking it.
-
-    This is the core behavior change: a hook that can't be trusted (e.g.
-    "not discovered" on an otherwise-supported codex) must NOT raise out
-    of start() — the session runs, the reason is recorded for a web-UI
-    notice. Fails if start() re-raises (the old blocking behavior) or
-    leaves the reason unset.
+    Required policy trust fails startup; standalone sessions retain their notice.
     """
     real_codex_home = tmp_path / "real-codex-home"
     real_codex_home.mkdir()
@@ -503,6 +575,14 @@ async def test_trust_failure_is_fail_open_with_reason(
 
     server = _test_app_server(tmp_path, codex_home, bridge_dir, workspace)
     server.ap_server_url = "http://127.0.0.1:9999"
+    server.require_policy_hooks = required
+    if required:
+        with pytest.raises(RuntimeError, match="Required Codex policy hooks could not be trusted"):
+            await server.start()
+        assert server.proc is None
+        assert server.policy_hook_disabled_reason is None
+        assert server.policy_notice_pending is False
+        return
     await server.start()  # must NOT raise
     try:
         # Hook was registered (supported codex) but trust failed → degrade.

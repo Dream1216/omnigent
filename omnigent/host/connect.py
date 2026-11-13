@@ -153,6 +153,7 @@ from omnigent.host.identity import (
     load_host_tunnel_workspace_id,
     load_or_create_host_identity,
 )
+from omnigent.host.identity_env import in_managed_sandbox
 from omnigent.host.maintenance import HostMaintenanceJanitor
 from omnigent.host.runner_zygote import ZygoteManager, ZygoteRunnerProc, ZygoteUnavailable
 from omnigent.inner import _proc
@@ -307,6 +308,7 @@ def _coerce_int(value: object) -> int:
 HARNESS_READINESS_REFRESH_INTERVAL_S = 5.0
 # Auth changes and removals need the full, potentially expensive readiness map.
 HARNESS_READINESS_FULL_REFRESH_INTERVAL_S = 60.0
+_HOST_READINESS_REFRESH_TIMEOUT_S = 15.0
 HARNESS_ACCOUNT_PROBE_TIMEOUT_S = 7.0
 HARNESS_LOGIN_START_TIMEOUT_S = 20.0
 HARNESS_LOGIN_COMPLETION_TIMEOUT_S = 15 * 60.0
@@ -1354,6 +1356,12 @@ class HostProcess:
         # write has already produced a fresher snapshot. Capability state is
         # mutated only on the event loop, so no cross-thread lock is needed.
         self._capability_generation = 0
+        self._configured_harness_probe: (
+            tuple[int, asyncio.Task[dict[str, HarnessAvailability]]] | None
+        ) = None
+        self._readiness_probe_caches_stale = False
+        # A quick version check or post-install refresh can also spawn a CLI.
+        self._readiness_cli_lock = threading.Lock()
         # Account probes have their own generation so metadata refreshes neither
         # discard readiness nor overwrite a newer login/logout result.
         self._account_generation = 0
@@ -1570,6 +1578,9 @@ class HostProcess:
         Cancellation stops waiting for the result but cannot stop a worker
         thread. Keep the orphan reaper paused until the worker itself finishes.
         """
+        return await asyncio.shield(self._start_host_subprocess_in_thread(operation))
+
+    def _start_host_subprocess_in_thread(self, operation: Callable[[], _T]) -> asyncio.Task[_T]:
         self._owned_subprocess_ops += 1
         task = asyncio.create_task(asyncio.to_thread(operation))
         retained_task = cast("asyncio.Task[object]", task)
@@ -1583,7 +1594,7 @@ class HostProcess:
                 completed.exception()
 
         task.add_done_callback(_release)
-        return await asyncio.shield(task)
+        return task
 
     def _alive_runner_ids(self) -> list[str]:
         """Return IDs of runners that are still alive.
@@ -3254,6 +3265,7 @@ class HostProcess:
         account_generation = self._account_generation
         try:
             invalidate_harness_probe_caches()
+            self._capability_generation += 1
             configured, accounts, gateway = await asyncio.gather(
                 self._probe_configured_harnesses(startup=False),
                 self._probe_harness_accounts(explicit_refresh=True),
@@ -3427,6 +3439,8 @@ class HostProcess:
                 success, error = False, "login expired"
                 with contextlib.suppress(Exception):
                     await session.cancel(vendor_login_id)
+            if success:
+                self._invalidate_readiness_after_auth_change()
             configured = await self._probe_configured_harnesses(startup=False)
             accounts = await self._probe_harness_accounts(explicit_refresh=False)
             self._replace_capabilities(configured, self._gateway_inference, accounts)
@@ -3542,6 +3556,7 @@ class HostProcess:
             )
         finally:
             self._owned_subprocess_ops -= 1
+        self._invalidate_readiness_after_auth_change()
         configured = await self._probe_configured_harnesses(startup=False)
         accounts = await self._probe_harness_accounts(explicit_refresh=False)
         self._replace_capabilities(configured, self._gateway_inference, accounts)
@@ -3566,10 +3581,32 @@ class HostProcess:
                 await active.task
             await active.session.close()
 
-    @staticmethod
-    def _fresh_harness_state() -> tuple[dict[str, HarnessAvailability], None]:
+    def _fresh_harness_state(self) -> tuple[dict[str, HarnessAvailability], None]:
         """Return readiness immediately; account probes are async and bounded."""
-        return configured_harness_map(), None
+        return self._collect_configured_harnesses(), None
+
+    def _invalidate_readiness_after_auth_change(self) -> None:
+        self._capability_generation += 1
+        self._readiness_probe_caches_stale = True
+
+    def _collect_configured_harnesses(
+        self, *, invalidate_caches: bool = False
+    ) -> dict[str, HarnessAvailability]:
+        with self._readiness_cli_lock:
+            if invalidate_caches:
+                # A pre-change probe can populate the cache until it exits.
+                invalidate_harness_probe_caches()
+            if in_managed_sandbox():
+                return configured_harness_map(max_workers=1)
+            return configured_harness_map()
+
+    def _quick_harness_check(self, configured: Mapping[str, HarnessAvailability]) -> bool:
+        if not self._readiness_cli_lock.acquire(blocking=False):
+            return False
+        try:
+            return _unavailable_harness_became_ready(configured)
+        finally:
+            self._readiness_cli_lock.release()
 
     def _handle_store_secret(self, frame: HostStoreSecretFrame) -> HostStoreSecretResultFrame:
         """Handle a ``host.store_secret`` request from the server.
@@ -4598,9 +4635,32 @@ class HostProcess:
         *,
         startup: bool,
     ) -> dict[str, HarnessAvailability] | None:
-        """Collect harness readiness without letting a probe break the channel."""
+        """Share one full readiness worker until it has actually exited."""
         try:
-            return await self._run_host_subprocess_in_thread(configured_harness_map)
+            async with asyncio.timeout(_HOST_READINESS_REFRESH_TIMEOUT_S):
+                generation = self._capability_generation
+                while generation == self._capability_generation:
+                    flight = self._configured_harness_probe
+                    if flight is None or flight[1].done():
+                        worker = self._start_host_subprocess_in_thread(
+                            functools.partial(
+                                self._collect_configured_harnesses,
+                                invalidate_caches=self._readiness_probe_caches_stale,
+                            )
+                        )
+                        self._readiness_probe_caches_stale = False
+                        flight = self._configured_harness_probe = (generation, worker)
+                    probe_generation, worker = flight
+                    try:
+                        configured = await asyncio.shield(worker)
+                    except Exception:
+                        if probe_generation == generation:
+                            raise
+                    else:
+                        if probe_generation == generation == self._capability_generation:
+                            return configured
+        except TimeoutError:
+            _logger.warning("Host harness readiness probe timed out without a new result")
         except Exception as exc:
             _logger.exception("Host harness readiness probe failed")
             if startup:
@@ -4609,7 +4669,7 @@ class HostProcess:
                     f"connect with harness readiness unknown: {exc}",
                     stderr=True,
                 )
-            return None
+        return None
 
     async def _probe_harness_accounts(self, *, explicit_refresh: bool) -> HarnessAccounts | None:
         """Probe account families concurrently, with one timeout per CLI."""
@@ -5587,38 +5647,48 @@ class HostProcess:
         published_gateway = self._gateway_inference
         loop = asyncio.get_running_loop()
         next_quick = loop.time() + HARNESS_READINESS_REFRESH_INTERVAL_S
-        next_full = loop.time() + HARNESS_READINESS_FULL_REFRESH_INTERVAL_S
+        next_full = loop.time() + (
+            HARNESS_READINESS_REFRESH_INTERVAL_S
+            if published_configured is None
+            else HARNESS_READINESS_FULL_REFRESH_INTERVAL_S
+        )
         while True:
             await asyncio.sleep(max(0.0, min(next_quick, next_full) - loop.time()))
             now = loop.time()
             generation = self._capability_generation
             configured = self._configured_harnesses
             gateway = self._gateway_inference
-            refresh_full = configured is None or now >= next_full
+            refresh_full = now >= next_full
             if now >= next_quick:
                 next_quick = now + HARNESS_READINESS_REFRESH_INTERVAL_S
                 if not refresh_full and configured is not None:
                     try:
-                        refresh_full = await asyncio.to_thread(
-                            _unavailable_harness_became_ready, configured
+                        refresh_full = await self._run_host_subprocess_in_thread(
+                            functools.partial(self._quick_harness_check, configured)
                         )
                     except Exception:
                         _logger.exception("Host harness quick readiness probe failed")
             if refresh_full:
-                latest = await self._probe_configured_harnesses(startup=False)
-                latest_gateway = await self._probe_gateway_inference(startup=False)
                 next_full = now + HARNESS_READINESS_FULL_REFRESH_INTERVAL_S
-                new_configured = latest if latest is not None else configured
+                try:
+                    async with asyncio.timeout(_HOST_READINESS_REFRESH_TIMEOUT_S):
+                        latest = await self._probe_configured_harnesses(startup=False)
+                        latest_gateway = await self._probe_gateway_inference(startup=False)
+                except TimeoutError:
+                    _logger.warning("Host capability refresh timed out without a new result")
+                    continue
+                # The live frame requires a complete map. Keep the last
+                # snapshot without publishing it as the result of this refresh.
+                if not latest:
+                    continue
                 new_gateway = latest_gateway if latest_gateway is not None else gateway
                 if self._capability_generation == generation and (
-                    new_configured != configured or new_gateway != gateway
+                    latest != configured or new_gateway != gateway
                 ):
-                    self._replace_capabilities(new_configured, new_gateway)
+                    self._replace_capabilities(latest, latest_gateway)
             configured = self._configured_harnesses
             gateway = self._gateway_inference
-            if configured is not None and (
-                configured != published_configured or gateway != published_gateway
-            ):
+            if configured and (configured != published_configured or gateway != published_gateway):
                 await self._send_text(
                     ws,
                     encode_host_frame(

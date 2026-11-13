@@ -344,6 +344,10 @@ class BenchEnvironment:
         model: str = _DEFAULT_MODEL,
         network_delay_ms: float = 0.0,
         teardown_started: asyncio.Event | None = None,
+        fork_state_path: Path | None = None,
+        retained_root: Path | None = None,
+        fork_diagnostic_binding: dict[str, str] | None = None,
+        diagnostic_router: Path | None = None,
     ) -> None:
         # with_host is additive over with_runner: the boot runner still serves
         # the warm journeys, and the host daemon additionally lets the cold-start
@@ -363,7 +367,11 @@ class BenchEnvironment:
         # Set when __aexit__ begins, so a SIGTERM retry knows to stop cancelling.
         self._teardown_started = teardown_started
 
-        self._tmp = Path("/tmp") / f"omni-bench-{uuid.uuid4().hex[:8]}"
+        self._tmp = retained_root or Path("/tmp") / f"omni-bench-{uuid.uuid4().hex[:8]}"
+        self.fork_sources: list[str] = []
+        self.fork_state_path = fork_state_path
+        self._fork_diagnostic_binding = fork_diagnostic_binding
+        self._diagnostic_router = diagnostic_router
         # TMPDIR for bench subprocesses, so their terminal sockets can be swept.
         self._child_tmp = self._tmp / "tmp"
         # Spawning and teardown share this lock, so a start cancelled mid-spawn
@@ -459,7 +467,8 @@ class BenchEnvironment:
         # its harness, so an absent bundle would measure repeated failed reads.
         with self._lifecycle_lock:
             self._raise_if_stopping()
-            self._seed_agent_artifact(artifact_dir)
+            if self._fork_diagnostic_binding is None:
+                self._seed_agent_artifact(artifact_dir)
 
         port = _find_free_port()
         self.base_url = f"http://localhost:{port}"
@@ -512,7 +521,23 @@ class BenchEnvironment:
             handle.close()
         import shutil
 
-        shutil.rmtree(self._tmp, ignore_errors=True)
+        if self.fork_state_path is None:
+            shutil.rmtree(self._tmp, ignore_errors=True)
+        else:
+            self.fork_state_path.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "root": str(self._tmp),
+                        "database_uri": self.database_uri,
+                        "with_runner": self.with_runner,
+                        "with_host": self.with_host,
+                        "source_ids": self.fork_sources,
+                        "process_groups_stopped": not any(_group_members(p) for p in children),
+                    },
+                    indent=2,
+                )
+            )
 
     def _kill_session_terminals(self) -> None:
         """Kill the tmux servers of terminals created under the bench's TMPDIR.
@@ -680,6 +705,9 @@ class BenchEnvironment:
             str(artifact_dir),
         ]
         env = {**base_env}
+        env.pop("OMNIGENT_BENCH_FORK_DIAGNOSTICS", None)
+        if self._fork_diagnostic_binding is not None:
+            env["OMNIGENT_BENCH_FORK_DIAGNOSTICS"] = json.dumps(self._fork_diagnostic_binding)
         # The server always boots with a config that loads the CI-only debug
         # router (exposing its request counter over HTTP for per-journey network
         # counting). In runner mode it additionally routes the server-side
@@ -689,6 +717,23 @@ class BenchEnvironment:
             "debug_router_modules": [_DEBUG_ROUTER_MODULE],
             "policy_modules": ["dev.benchmarks.omnigent.journeys"],
         }
+        if self._fork_diagnostic_binding is not None:
+            import shutil
+
+            diagnostic_imports = self._tmp / "diagnostic-imports"
+            diagnostic_imports.mkdir()
+            shutil.copyfile(
+                _REPO_ROOT / "dev/benchmarks/omnigent/debug_router.py",
+                diagnostic_imports / "omnigent_benchmark_debug.py",
+            )
+            if self._diagnostic_router is None:
+                raise ValueError("explicit diagnostic router required")
+            shutil.copyfile(
+                self._diagnostic_router,
+                diagnostic_imports / "omnigent_benchmark_fork_diagnostics.py",
+            )
+            env["PYTHONPATH"] = str(diagnostic_imports)
+            server_config["debug_router_modules"] = ["omnigent_benchmark_fork_diagnostics"]
         if self.with_runner:
             server_config["llm"] = {
                 "model": _POLICY_LLM_KEY,

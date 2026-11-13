@@ -16,6 +16,42 @@ from tests.harnesses.codex_native.session._support import _write_source_rollout
 _THREAD_ID = "019e96aa-0be2-7343-8d3b-6f914d60936b"
 
 
+async def test_private_generation_cold_resume_copies_only_legacy_rollout(
+    tmp_path: Path,
+    retry_sleeps: list[float],
+) -> None:
+    legacy_home = tmp_path / "original-bridge" / "codex-home"
+    legacy = _write_source_rollout(
+        codex_home=legacy_home, thread_id=_THREAD_ID, source_cwd="/same-session/workspace"
+    )
+    (legacy_home / "auth.json").write_text('{"old_credential":"must-not-copy"}')
+    current_home = tmp_path / "new-generation" / "home"
+
+    def unavailable(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/sessions/conv_codex/items"
+        return httpx.Response(429, headers={"Retry-After": "3600"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(unavailable), base_url="https://original.test"
+    ) as client:
+        restored = await codex_native._ensure_local_codex_resume_rollout(
+            client,
+            session_id="conv_codex",
+            external_session_id=_THREAD_ID,
+            codex_home=current_home,
+            fallback_codex_home=legacy_home,
+            bridge_dir=legacy_home.parent,
+            workspace=tmp_path / "workspace",
+            model_provider="same-session-provider",
+            codex_path=None,
+        )
+    assert restored.is_relative_to(current_home)
+    assert restored.read_bytes() == legacy.read_bytes()
+    assert not (current_home / "auth.json").exists()
+    assert not list(restored.parent.glob(".resume-*"))
+    assert retry_sleeps == []
+
+
 @pytest.fixture
 def retry_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     slept: list[float] = []

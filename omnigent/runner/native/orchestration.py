@@ -4872,6 +4872,8 @@ async def _launch_codex_native_tui(
     assert codex_ws_url is not None
     workspace = str(launch_config.workspace)
     agent_os_env = _agent_os_env_from_spec(agent_spec)
+    if app_server.execution is not None:
+        agent_os_env = app_server.execution.required_spec
     codex_remote_args = build_codex_remote_args(
         codex_args=tuple(launch_config.terminal_launch_args or ()),
         thread_id=thread_id,
@@ -4909,6 +4911,8 @@ async def _launch_codex_native_tui(
         else None
     )
     codex_command = configured_codex_command or app_server.codex_path
+    if app_server.execution is not None and codex_command != app_server.codex_path:
+        raise ValueError("Managed native TUI requires the pinned official executable")
     thread_start_timeout_seconds = (
         CODEX_NATIVE_CONFIGURED_COMMAND_STARTUP_TIMEOUT_SECONDS
         if configured_codex_command is not None and not login_required
@@ -4958,6 +4962,11 @@ async def _launch_codex_native_tui(
             args=loggable_launch_args,
         ),
     )
+    terminal_env = codex_terminal_env(app_server)
+    if app_server.execution is not None:
+        from omnigent.inner.os_env import build_helper_env
+
+        terminal_env = build_helper_env(terminal_env, app_server.execution.environment.sandbox)
     terminal_view = await resource_registry.launch_auxiliary_terminal(
         session_id=session_id,
         terminal_name="codex",
@@ -4965,14 +4974,17 @@ async def _launch_codex_native_tui(
         resource_role=CODEX_NATIVE_TERMINAL_ROLE,
         parent_os_env=agent_os_env,
         spec=TerminalEnvSpec(
-            os_env=OSEnvSpec(
+            os_env="inherit"
+            if app_server.execution is not None
+            else OSEnvSpec(
                 type="caller_process",
                 cwd=workspace,
                 sandbox=(agent_os_env.sandbox if agent_os_env is not None else None),
             ),
             command=codex_command,
             args=codex_launch_args,
-            env=codex_terminal_env(app_server),
+            env=terminal_env,
+            inherit_env=app_server.execution is None,
             # Match the local ``omnigent codex`` terminal scrollback.
             scrollback=100_000,
             # Preserve the final frame and exit status until lifecycle cleanup.
@@ -5102,7 +5114,6 @@ async def _auto_create_codex_terminal(
     import omnigent.harnesses.codex_native.main as _codex_native_main  # noqa: F401
     import omnigent.harnesses.codex_native.process_registry as _process_registry  # noqa: F401
     from omnigent.harnesses.codex_native.app_server import (
-        CodexAppServerClient,
         CodexAppServerResponseError,
         apply_codex_thread_effort,
         build_codex_native_server,
@@ -5125,6 +5136,7 @@ async def _auto_create_codex_terminal(
         write_bridge_startup_timeout,
         write_bridge_state,
     )
+    from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
     from omnigent.inner.codex_executor import codex_extended_catalog_env
 
     launch_config = await _codex_native_launch_config(
@@ -5137,6 +5149,15 @@ async def _auto_create_codex_terminal(
     bridge_dir = prepare_bridge_dir(launch_config.bridge_id or session_id)
     socket_path = socket_path_for_bridge_dir(bridge_dir)
     codex_home = codex_home_for_bridge_dir(bridge_dir)
+    fallback_codex_home = codex_home
+    required_native = resource_registry.required_os_env(session_id)
+    native_runtime = (
+        resource_registry.native_runtime_for(session_id) if required_native is not None else None
+    )
+    if native_runtime is not None:
+        if launch_config.bypass_sandbox:
+            raise ValueError("Required native sandbox cannot be bypassed")
+        socket_path, codex_home = native_runtime.control, native_runtime.home
     app_server = _AUTO_CODEX_APP_SERVERS.get(session_id)
     forwarder = _AUTO_FORWARDER_TASKS.get(session_id)
     bridge_state = read_bridge_state(bridge_dir)
@@ -5193,7 +5214,11 @@ async def _auto_create_codex_terminal(
     codex_binding = binding_for_harness(load_runtime_inference_config(), "codex-native")
     from omnigent.inner.codex_executor import _find_codex_cli
 
-    _codex_cli_path = _find_codex_cli()
+    _codex_cli_path = (
+        str(native_runtime.codex_binary)
+        if native_runtime is not None and native_runtime.codex_binary is not None
+        else _find_codex_cli()
+    )
     _catalog_launch = None
     _fresh_codex_catalog: list[_JsonObject] | None = None
     try:
@@ -5536,6 +5561,8 @@ async def _auto_create_codex_terminal(
             external_session_id=launch_config.external_session_id,
             codex_home=codex_home,
             workspace=Path(workspace).resolve(),
+            bridge_dir=bridge_dir,
+            fallback_codex_home=fallback_codex_home if native_runtime is not None else None,
             model_provider=_session_meta_provider,
             codex_path=_codex_cli_path,
             terminal_launch_args=launch_config.terminal_launch_args,
@@ -5568,10 +5595,13 @@ async def _auto_create_codex_terminal(
             exc_info=True,
         )
 
-    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        codex_ws_port = s.getsockname()[1]
-    codex_ws_url = f"ws://127.0.0.1:{codex_ws_port}"
+    if native_runtime is not None:
+        codex_ws_url = f"unix://{socket_path}"
+    else:
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            codex_ws_port = s.getsockname()[1]
+        codex_ws_url = f"ws://127.0.0.1:{codex_ws_port}"
 
     # Write the minimal MCP bridge config so serve-mcp can boot, and
     # start the tool relay so tool_relay.json is on disk before codex
@@ -5587,7 +5617,12 @@ async def _auto_create_codex_terminal(
     )
 
     write_mcp_bridge_config(bridge_dir)
-    mcp_overrides = codex_mcp_config_overrides(bridge_dir)
+    if native_runtime is not None:
+        if native_runtime.mcp_overrides is None:
+            raise ValueError("Required native MCP role is not bound")
+        mcp_overrides = list(native_runtime.mcp_overrides)
+    else:
+        mcp_overrides = codex_mcp_config_overrides(bridge_dir)
 
     # Omnigent coordinates for the codex-native policy hook. The hook runs as a
     # separate subprocess that POSTs tool calls to /policies/evaluate, so
@@ -5633,8 +5668,24 @@ async def _auto_create_codex_terminal(
     )
     # SDK initialization can block on DNS/auth before model discovery times out.
     # Keep it off the runner loop so heartbeats and other sessions can progress.
+    native_execution = None
+    if native_runtime is not None:
+        assert required_native is not None
+        from omnigent.entities import DEFAULT_ENVIRONMENT_ID
+        from omnigent.inner.os_env import CallerProcessOSEnvironment
+
+        environment = resource_registry.resolve_environment(session_id, DEFAULT_ENVIRONMENT_ID)
+        if not isinstance(environment, CallerProcessOSEnvironment):
+            raise ValueError("Required native execution has no caller-process OSEnv")
+        model_channel, policy_channel = resource_registry.native_channels_for(session_id)
+        native_execution = CodexSandboxLaunch(
+            session_id, required_native, environment, model_channel, policy_channel, native_runtime
+        )
+        if native_runtime.codex_binary is None:
+            raise ValueError("Required native Codex artifact is not bound")
     app_server = await asyncio.to_thread(
         build_codex_native_server,
+        codex_path=str(native_runtime.codex_binary) if native_runtime is not None else None,
         session_id=session_id,
         socket_path=socket_path,
         codex_home=codex_home,
@@ -5646,6 +5697,11 @@ async def _auto_create_codex_terminal(
         ap_server_url=launch_config.policy_server_url,
         ap_auth_headers=policy_headers,
         bypass_sandbox=launch_config.bypass_sandbox,
+        require_policy_hooks=native_execution is not None,
+        required_policy_generation=native_runtime.generation
+        if native_runtime is not None
+        else None,
+        execution=native_execution,
         developer_instructions=_codex_developer_instructions,
         terminal_launch_args=launch_config.terminal_launch_args or (),
         reasoning_effort=launch_config.reasoning_effort,
@@ -5705,10 +5761,9 @@ async def _auto_create_codex_terminal(
     _AUTO_CODEX_APP_SERVERS[session_id] = app_server
     _AUTO_CODEX_BRIDGE_DIRS[session_id] = bridge_dir
 
-    event_client = CodexAppServerClient(
-        ws_url=codex_ws_url,
-        client_name="omnigent-codex-native-auto",
-    )
+    from omnigent.harnesses.codex_native.app_server import client_for_transport
+
+    event_client = client_for_transport(codex_ws_url, client_name="omnigent-codex-native-auto")
     retained_resume_client: CodexAppServerClient | None = None
     if launch_config.external_session_id is not None:
         try:
@@ -5726,9 +5781,8 @@ async def _auto_create_codex_terminal(
                             if native_codex_launch_pins_model_provider(_codex_launch)
                             else None
                         ),
-                        retain_client=codex_remote_resume_omits_permission_args(
-                            app_server.codex_cli_version
-                        ),
+                        retain_client=native_execution is not None
+                        or codex_remote_resume_omits_permission_args(app_server.codex_cli_version),
                     )
                     break
                 except Exception as exc:
@@ -5853,6 +5907,10 @@ async def _auto_create_codex_terminal(
                     cwd=workspace,
                 ),
             )
+            if native_execution is not None and native_runtime is not None:
+                native_runtime.refresh_projection(
+                    native_execution.policy_channel, publish_state=True
+                )
         launched = await _launch_codex_native_tui(
             session_id,
             resource_registry,
@@ -6502,6 +6560,14 @@ async def _codex_discover_thread_and_forward(
             ),
         )
 
+        if (
+            app_server is not None
+            and app_server.execution is not None
+            and app_server.execution.runtime is not None
+        ):
+            app_server.execution.runtime.refresh_projection(
+                app_server.execution.policy_channel, publish_state=True
+            )
         server_url = _required_runner_env("RUNNER_SERVER_URL")
         auth_factory = await asyncio.to_thread(_make_auth_token_factory)
         auth_token = await asyncio.to_thread(auth_factory) if auth_factory is not None else None

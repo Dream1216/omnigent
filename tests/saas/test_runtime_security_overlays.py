@@ -31,6 +31,13 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
     assert runtime["runtime_contract"]["common_packages"]["libexpat1"] == "2.10.0-r0"
     assert runtime["runtime_contract"]["common_packages"]["libseccomp"] == "2.6.1-r4"
     assert runtime["runtime_contract"]["common_packages"]["zlib"] == ("1.3.2.1_rc20260917-r0")
+    for package in (
+        "glibc-2.44",
+        "glibc-2.44-locale-posix",
+        "ld-linux-2.44",
+        "libcrypt1-2.44",
+    ):
+        assert runtime["runtime_contract"]["common_packages"][package] == "2.44-r16"
     assert runtime["runtime_contract"]["server_packages"] == {
         "bubblewrap": "0.13.0-r0",
         "cyrus-sasl-heimdal-libs": "2.1.28-r58",
@@ -60,7 +67,7 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
     assert runtime["runtime_contract"]["transient_host_packages"] == {
         "binutils": "2.47-r2",
         "gcc": "16.2.0-r1",
-        "glibc-2.44-dev": "2.44-r8",
+        "glibc-2.44-dev": "2.44-r16",
         "isl": "0.28-r5",
         "libatomic": "16.2.0-r1",
         "libgomp": "16.2.0-r1",
@@ -85,7 +92,7 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
         hashlib.sha256(
             json.dumps(host_packages, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
-        == "a7c804cdc84cf76eebf5bd9368566af20abf888c96634fa654fd948f608e9c7d"
+        == "8620bf9eb7a4014046bf86e305d43e7d23d6066d73dc8fcc776e8f3e4276bec2"
     )
 
 
@@ -211,6 +218,12 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
 @pytest.mark.parametrize(
     ("stage", "target", "replacement", "expected"),
     [
+        (
+            "rootfs",
+            "libcrypt1-2.44=2.44-r16",
+            "libcrypt1-2.44=2.44-r8",
+            "Wolfi common_packages pins must be installed exactly",
+        ),
         (
             "rootfs",
             "libseccomp=2.6.1-r4",

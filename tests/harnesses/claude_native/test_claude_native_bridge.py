@@ -7756,6 +7756,74 @@ async def test_start_tool_relay_accepts_codex_native_bridge_root(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("replace_socket", [False, True])
+async def test_private_policy_relay_uses_original_session_and_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_socket: bool
+) -> None:
+    from omnigent.harnesses.codex_native import bridge as codex_bridge
+
+    monkeypatch.setattr(codex_bridge, "_BRIDGE_ROOT", tmp_path / "codex-native")
+    bridge_dir = codex_bridge.prepare_bridge_dir("conv_private")
+    requests: list[str] = []
+
+    def policy(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(200, json={"result": "POLICY_ACTION_DENY", "reason": "original"})
+
+    async def execute(name: str, arguments: dict[str, object]) -> dict[str, object]:
+        raise AssertionError("policy evaluation must not execute a tool")
+
+    with tempfile.TemporaryDirectory(prefix="omni-policy-", dir="/tmp") as directory:
+        path = Path(directory).resolve() / "policy.sock"
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(policy), base_url="http://server"
+        ) as client:
+            relay = start_tool_relay(
+                bridge_dir=bridge_dir,
+                tools=[],
+                tool_executor=execute,
+                loop=asyncio.get_running_loop(),
+                policy_client=client,
+                session_id="conv_private",
+                private_socket_path=path,
+                private_socket_generation="a" * 32,
+            )
+            try:
+                info = json.loads((bridge_dir / claude_native_bridge._TOOL_RELAY_FILE).read_text())
+                assert info["socket_path"] == str(path)
+                assert info["session_id"] == "conv_private"
+                assert info["generation"] == "a" * 32
+                assert path.stat().st_mode & 0o777 == 0o600
+                async with httpx.AsyncClient(
+                    transport=httpx.AsyncHTTPTransport(uds=str(path)), base_url="http://relay"
+                ) as connection:
+                    assert (
+                        await connection.post("/policies/evaluate", json={})
+                    ).status_code == 401
+                    response = await connection.post(
+                        "/policies/evaluate",
+                        headers={"Authorization": f"Bearer {info['token']}"},
+                        json={"event": {"type": "PHASE_TOOL_CALL", "data": {}}},
+                    )
+                    assert response.json()["result"] == "POLICY_ACTION_DENY"
+                assert requests == ["/v1/sessions/conv_private/policies/evaluate"]
+                relay.start_private_socket(path, generation="a" * 32)
+                with pytest.raises(RuntimeError, match="already bound"):
+                    relay.start_private_socket(path, generation="b" * 32)
+                if replace_socket:
+                    path.unlink()
+                    path.write_text("replacement")
+            finally:
+                relay.close()
+            if replace_socket:
+                assert path.read_text() == "replacement"
+            else:
+                assert not path.exists()
+            with pytest.raises(RuntimeError, match="closed"):
+                relay.start_private_socket(path)
+
+
+@pytest.mark.asyncio
 async def test_observe_tool_relay_refuses_bodies_over_one_mib(tmp_path: Path) -> None:
     """The relay is the only size limit on the curl observer hook."""
     observed: list[object] = []

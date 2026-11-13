@@ -238,7 +238,8 @@ async def test_ensure_local_codex_resume_rollout_replays_before_history_fetch(
 ) -> None:
     """A successful dead-letter replay is included in the rebuilt snapshot."""
     thread_id = "019e96aa-0be2-7343-8d3b-6f914d60936b"
-    codex_home = tmp_path / "codex-home"
+    codex_home = tmp_path / "new-generation" / "codex-home"
+    original_bridge = tmp_path / "original-bridge"
     replay_data = {
         "item_type": "message",
         "item_data": {
@@ -249,7 +250,7 @@ async def test_ensure_local_codex_resume_rollout_replays_before_history_fetch(
         "source_id": "codex:item:recovered",
     }
     codex_native_forwarder.append_dead_letter(
-        tmp_path,
+        original_bridge,
         session_id="conv_codex",
         event_type="external_conversation_item",
         payload=replay_data,
@@ -284,6 +285,7 @@ async def test_ensure_local_codex_resume_rollout_replays_before_history_fetch(
             session_id="conv_codex",
             external_session_id=thread_id,
             codex_home=codex_home,
+            bridge_dir=original_bridge,
             workspace=tmp_path.resolve(),
             model_provider="omnigent_databricks",
             codex_path=None,
@@ -291,7 +293,7 @@ async def test_ensure_local_codex_resume_rollout_replays_before_history_fetch(
 
     records = [json.loads(line) for line in rollout.read_text().splitlines()]
     assert request_order == ["POST", "GET"]
-    assert not (tmp_path / "dead_letter.jsonl").exists()
+    assert not (original_bridge / "dead_letter.jsonl").exists()
     assert any(
         record["type"] == "response_item" and record["payload"].get("id") == "msg_recovered"
         for record in records

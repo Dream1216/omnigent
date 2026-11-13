@@ -327,7 +327,25 @@ def _codex_orphan_retention_expired(bridge_dir: Path) -> bool:
 
 def _codex_rollouts_inactive_since(bridge_dir: Path, activity_cutoff: float) -> bool:
     """Return whether no rollout under *bridge_dir* was written after the cutoff."""
-    sessions_dir = bridge_dir / "codex-home" / "sessions"
+    sessions = [bridge_dir / "codex-home" / "sessions"]
+    try:
+        for child in bridge_dir.iterdir():
+            suffix = child.name.removeprefix("required-history-")
+            if (
+                child.name.startswith("required-history-")
+                and len(suffix) == 32
+                and all(character in "0123456789abcdef" for character in suffix)
+            ):
+                if child.is_symlink() or not child.is_dir():
+                    return False
+                sessions.append(child / "sessions")
+    except OSError:
+        return False
+    return all(_codex_sessions_inactive_since(path, activity_cutoff) for path in sessions)
+
+
+def _codex_sessions_inactive_since(sessions_dir: Path, activity_cutoff: float) -> bool:
+    """Preserve history if any rollout is recent or its activity cannot be read."""
     try:
         sessions_mode = sessions_dir.stat().st_mode
     except FileNotFoundError:

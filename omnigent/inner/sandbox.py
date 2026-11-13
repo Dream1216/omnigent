@@ -141,6 +141,10 @@ class SandboxPolicy:
     :param egress_socket_path: Absolute path (inside the namespace) to
         the Unix socket connecting to the parent's egress proxy. The
         relay forwards all traffic through this socket.
+    :param model_relay_port: Session-bound model listener on isolated loopback.
+    :param model_relay_socket_path: Private model relay socket owned by the Host.
+    :param policy_relay_port: Session-bound policy listener on isolated loopback.
+    :param policy_relay_socket_path: Private policy socket owned by the Runner.
     :param deny_unix_socket_paths: Absolute paths to AF_UNIX (pathname)
         sockets the helper must NOT be able to ``connect(2)`` to, even
         when ``allow_network`` is true. Keeps a sandboxed pane from
@@ -192,6 +196,12 @@ class SandboxPolicy:
     bind_host_proc: bool | None = None
     egress_relay_port: int | None = None
     egress_socket_path: str | None = None
+    model_relay_port: int | None = None
+    model_relay_socket_path: str | None = None
+    policy_relay_port: int | None = None
+    policy_relay_socket_path: str | None = None
+    codex_requirements_path: str | None = None
+    codex_environments_path: str | None = None
     git_ssh_socket_path: str | None = None
     deny_unix_socket_paths: list[Path] | None = None
     credential_source_paths: list[Path] | None = None
@@ -217,7 +227,43 @@ class SandboxPolicy:
     # like ``credential_proxy`` it is intentionally NOT serialised.
     mask_scan_skip_roots: list[Path] | None = None
 
+    def session_relay_pairs(self) -> list[tuple[int, str]]:
+        """Validate the two trusted session channels without changing egress rules."""
+        pairs: list[tuple[int, str]] = []
+        for port, path in (
+            (self.model_relay_port, self.model_relay_socket_path),
+            (self.policy_relay_port, self.policy_relay_socket_path),
+        ):
+            if port is None and path is None:
+                continue
+            if (
+                type(port) is not int
+                or not 1 <= port <= 65535
+                or not isinstance(path, str)
+                or not path
+                or not Path(path).is_absolute()
+                or str(Path(path).resolve()) != path
+            ):
+                raise ValueError("Invalid session relay pair")
+            if any(port == other_port or path == other_path for other_port, other_path in pairs):
+                raise ValueError("Session relay roles must have distinct endpoints")
+            if port == self.egress_relay_port:
+                raise ValueError("Session relay cannot replace the egress listener")
+            if path in (self.egress_socket_path, self.git_ssh_socket_path):
+                raise ValueError("Session relay cannot replace another broker endpoint")
+            if any(Path(path).is_relative_to(root.resolve()) for root in self.write_roots):
+                raise ValueError("Session relay socket cannot be inside a writable root")
+            if any(Path(path) == root.resolve() for root in self.write_files):
+                raise ValueError("Session relay socket cannot be writable")
+            pairs.append((port, path))
+        if pairs and (not self.active or self.backend_type != "linux_bwrap" or self.allow_network):
+            raise ValueError(
+                "Session relays require an active network-isolated linux_bwrap policy"
+            )
+        return pairs
+
     def to_jsonable(self) -> dict[str, JsonValue]:
+        self.session_relay_pairs()
         result: dict[str, JsonValue] = {
             "backend_type": self.backend_type,
             "active": self.active,
@@ -257,6 +303,12 @@ class SandboxPolicy:
             "bind_host_proc": self.bind_host_proc,
             "egress_relay_port": self.egress_relay_port,
             "egress_socket_path": self.egress_socket_path,
+            "model_relay_port": self.model_relay_port,
+            "model_relay_socket_path": self.model_relay_socket_path,
+            "policy_relay_port": self.policy_relay_port,
+            "policy_relay_socket_path": self.policy_relay_socket_path,
+            "codex_requirements_path": self.codex_requirements_path,
+            "codex_environments_path": self.codex_environments_path,
             "git_ssh_socket_path": self.git_ssh_socket_path,
             "deny_unix_socket_paths": (
                 _json_string_list(self.deny_unix_socket_paths)
@@ -343,7 +395,7 @@ class SandboxPolicy:
             from omnigent.sandbox.copy_on_write import parse_namespace
 
             namespace = parse_namespace(cow_namespace)
-        return cls(
+        policy = cls(
             copy_on_write_roots=[Path(str(p)) for p in cow_roots] or None,
             copy_on_write_namespace=namespace,
             backend_type=str(data.get("backend_type", "none")),
@@ -366,6 +418,27 @@ class SandboxPolicy:
             deny_unix_socket_paths=deny_unix_socket_paths,
             credential_source_paths=credential_source_paths,
         )
+        requirements_path = data.get("codex_requirements_path")
+        if requirements_path is not None:
+            if not isinstance(requirements_path, str):
+                raise ValueError("Invalid Codex requirements path")
+            policy.codex_requirements_path = requirements_path
+        environments_path = data.get("codex_environments_path")
+        if environments_path is not None:
+            if not isinstance(environments_path, str):
+                raise ValueError("Invalid Codex environment configuration path")
+            policy.codex_environments_path = environments_path
+        for role in ("model", "policy"):
+            port = data.get(f"{role}_relay_port")
+            path = data.get(f"{role}_relay_socket_path")
+            if port is None and path is None:
+                continue
+            if type(port) is not int or not isinstance(path, str):
+                raise ValueError("Invalid session relay pair")
+            setattr(policy, f"{role}_relay_port", port)
+            setattr(policy, f"{role}_relay_socket_path", path)
+        policy.session_relay_pairs()
+        return policy
 
 
 class ContainmentHandle(Protocol):
@@ -862,6 +935,12 @@ def _clone_policy_with(
         bind_host_proc=policy.bind_host_proc,
         egress_relay_port=policy.egress_relay_port,
         egress_socket_path=policy.egress_socket_path,
+        model_relay_port=policy.model_relay_port,
+        model_relay_socket_path=policy.model_relay_socket_path,
+        policy_relay_port=policy.policy_relay_port,
+        policy_relay_socket_path=policy.policy_relay_socket_path,
+        codex_requirements_path=policy.codex_requirements_path,
+        codex_environments_path=policy.codex_environments_path,
         git_ssh_socket_path=policy.git_ssh_socket_path,
         deny_unix_socket_paths=(
             list(policy.deny_unix_socket_paths)
@@ -929,7 +1008,9 @@ def _restore_broker_socket_roots(policy: SandboxPolicy) -> SandboxPolicy:
         for path in (policy.egress_socket_path, policy.git_ssh_socket_path)
         if path is not None
     ]
-    return with_additional_write_roots(policy, roots) if roots else policy
+    policy = with_additional_write_roots(policy, roots) if roots else policy
+    session_roots = [Path(path).parent for _, path in policy.session_relay_pairs()]
+    return with_additional_read_roots(policy, session_roots) if session_roots else policy
 
 
 def with_additional_read_roots(

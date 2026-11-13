@@ -1,0 +1,332 @@
+{
+  "schema": 1,
+  "candidate_manifest_sha256": "48508b3a80e194fdf8ede7237206757137cc70446083a4dc2b5777629d9c694b",
+  "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
+  "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
+  "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
+  "budgets": {
+    "max_active_patches": 9,
+    "max_direct_upstream_files": 271,
+    "max_upstream_net_added_loc": 12931,
+    "min_isolated_custom_code_ratio": 0.85
+  },
+  "files": [
+    {
+      "path": ".github/workflows/saas-upgrade-benchmark.yml",
+      "bytes": 6551,
+      "sha256": "e02569df2582a36a3f469f8d92df09297f38ebd6af264ff54512da302da3d66d"
+    },
+    {
+      "path": "deploy/docker/Dockerfile",
+      "bytes": 53528,
+      "sha256": "2f7b7b04ae26053b0c74b91a24642278cd9fb4d0e6a80994fac9bbad05431add"
+    },
+    {
+      "path": "dev/benchmarks/omnigent/environment.py",
+      "bytes": 71097,
+      "sha256": "ce943c2dfb666fafc9372f5daf3eff403005975c3f36daff490df49efdb4e111"
+    },
+    {
+      "path": "dev/benchmarks/omnigent/journeys.py",
+      "bytes": 53693,
+      "sha256": "8f711ba5bec92aa175a3c20a23cbc2ffe0b7230395d479701a442162b6aaddef"
+    },
+    {
+      "path": "dev/benchmarks/omnigent/run.py",
+      "bytes": 14701,
+      "sha256": "d450ae0bef6bfc8ca56054b109a942349a7f58d3eacf15ff5835d36fe6adf3d5"
+    },
+    {
+      "path": "omnigent/harnesses/claude_native/bridge.py",
+      "bytes": 466788,
+      "sha256": "a4a94d92969e532063fba431742b92b8c905a10cc3b447efec6d935fb7ac257b"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/app_server.py",
+      "bytes": 248203,
+      "sha256": "f944eaf64dea63c4d636582cbaa07db2f6443050b3db89c0fd16abfc0f8a58f3"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/bridge.py",
+      "bytes": 75888,
+      "sha256": "df4dea7fe3b78b449ff80260c31bcde095cbd15b6a8a89bedcc686f3b0a25015"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/execution.py",
+      "bytes": 14311,
+      "sha256": "19d0c6ed7dc57391968c2a98779b1a80d46879a9cf39f2c9a0a2866dfa22acbb"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/executor_artifact.py",
+      "bytes": 6944,
+      "sha256": "655147e6c4e29fec79ac388d37b363c4c82d5096c092e7d3e4a00626c00b5952"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/executor_backend.py",
+      "bytes": 38490,
+      "sha256": "bcaf114db87e86e8199b0d0eaa7e1e4b11e3f6660913f93468eb61384e09669c"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/executor_bwrap.py",
+      "bytes": 1149,
+      "sha256": "3548418e8ba8fabe9d58d372d5caa8c2e7598b72319a6000cd064e9e08a47c19"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/executor_policy.py",
+      "bytes": 13453,
+      "sha256": "bfd3f9798fb47f366334f682af1cff68f8367a11491f916127aaeac1ece72ee7"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/executor_transport.py",
+      "bytes": 3739,
+      "sha256": "0bf10a1aaa03cb713c042bfd9953436e0a8f415d36a97dffa950464130b27b64"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/executor_worker.py",
+      "bytes": 5913,
+      "sha256": "2d2c8be6fae28fb786caeedc5cc2fa5cf2839b65746e5c2456cf57d368346baa"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/hook.py",
+      "bytes": 27959,
+      "sha256": "b456a1ec196dc9e55a8896de2f727bbd8efa9fdb028255ada6c8c193630a876a"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/main.py",
+      "bytes": 131167,
+      "sha256": "7439501f790e5accb618335b793afa8edbbbf9bdf6e90012c3787fef39987d18"
+    },
+    {
+      "path": "omnigent/inner/bwrap_sandbox.py",
+      "bytes": 63475,
+      "sha256": "dc22eae3f94df2eebb3f895c78910b8ddc253555a4c56f5ca6990bf6a5e2d2e2"
+    },
+    {
+      "path": "omnigent/inner/sandbox.py",
+      "bytes": 72443,
+      "sha256": "bcb79066869dd7b83e9c1c41a49414401d051d6cc8e186c4853aa948ee3af356"
+    },
+    {
+      "path": "omnigent/runner/_entry.py",
+      "bytes": 102259,
+      "sha256": "40da335ad8e0261d0c5ee21a33c44b4bef881157d12fa08c9afa6282280a3461"
+    },
+    {
+      "path": "omnigent/runner/app.py",
+      "bytes": 414452,
+      "sha256": "7771ff9c3cc58f3b2619278bd3d0260d966da04d2ffc1ddd743e9259a2d6dc26"
+    },
+    {
+      "path": "omnigent/runner/app_support.py",
+      "bytes": 7202,
+      "sha256": "284b04839dba99d707d5b8445fd36e43785886e460b9c75edce7fa63f933cc1a"
+    },
+    {
+      "path": "omnigent/runner/native/orchestration.py",
+      "bytes": 515481,
+      "sha256": "d059cf58570a388f2f895b03c6bc9090dbb4a08593ad05dc036e5b6cfa380bc6"
+    },
+    {
+      "path": "omnigent/runner/resource_registry.py",
+      "bytes": 114178,
+      "sha256": "6abf21c1fc5663aa861eda81025cdd60d2ce67f3b9d413d54abc866d2a8a60c5"
+    },
+    {
+      "path": "omnigent/runner/session_channels.py",
+      "bytes": 4354,
+      "sha256": "85e9844e822339b73fb56f5c33f6f161621b8b2484c7447e634eefc59105a1b5"
+    },
+    {
+      "path": "saas/deployment/aliyun/Dockerfile.host",
+      "bytes": 10702,
+      "sha256": "23bcc36a686d083381a15c0f45f5de32d6ae5a62fc43f4b1a5a2a469a72b3cdc"
+    },
+    {
+      "path": "saas/production/platform_model_host.py",
+      "bytes": 11439,
+      "sha256": "d8f83fc2136a6c50805d0702e096079b22736a06aae0a3134cf3538a5f507c96"
+    },
+    {
+      "path": "saas/production/platform_model_relay.py",
+      "bytes": 15369,
+      "sha256": "2d29ff04d17b11b56b7ea91af681e46c0777ce2c8f23309aba57568fa1330639"
+    },
+    {
+      "path": "saas/runner_adapter/platform_models.py",
+      "bytes": 23208,
+      "sha256": "05904c734b950f3143196807311d7823319581539429e21c5a3e580fc2e088bb"
+    },
+    {
+      "path": "saas/scripts/benchmark_fork_diagnostics.py",
+      "bytes": 17151,
+      "sha256": "002f99cf1cc843c30257e878eff3eee3dd885628f07d64aaca784cb9978ddff6"
+    },
+    {
+      "path": "saas/supply_chain/wolfi-runtime-lock.json",
+      "bytes": 4464,
+      "sha256": "42ba9063969a9474d54220b06e5cdc772f0ea866330d42c45fb2fbf7a7f0081f"
+    },
+    {
+      "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
+      "bytes": 260451,
+      "sha256": "3e8477014b17afbe80c37f3e20e7bb0231b33ab4cf77628c5a39b92316daacf6"
+    },
+    {
+      "path": "saas/upstream-patches/README.md",
+      "bytes": 35650,
+      "sha256": "1224a9c2732698dd0fff9d4cee7ba3defe80e4d158ae54dc43dffd4c9a9c8fdc"
+    },
+    {
+      "path": "tests/e2e/conftest.py",
+      "bytes": 81538,
+      "sha256": "e736ff8c5ad08d3e08a2afe17429f3595e0599c2ea00e917b80b4c789bb8f971"
+    },
+    {
+      "path": "tests/e2e/test_codex_native_parent_independent_child_wake_e2e.py",
+      "bytes": 11048,
+      "sha256": "fa6dc0658dd016e9013b697a63cef57b5da219db2f6e812224f064c20277f894"
+    },
+    {
+      "path": "tests/e2e/test_private_session_orchestration.py",
+      "bytes": 29305,
+      "sha256": "54b5ce6157760668520c9e3ebc72528933daebaed66e74bdcf202f15e308588d"
+    },
+    {
+      "path": "tests/e2e/test_remote_url_chat_fresh_session_2437.py",
+      "bytes": 31507,
+      "sha256": "c9b5a8f371827efe82cee89af5584c2c943ba669662df0c2b90be4fbc5e5a2ae"
+    },
+    {
+      "path": "tests/harnesses/claude_native/test_claude_native_bridge.py",
+      "bytes": 607906,
+      "sha256": "3bafc5b01b6337dcc6cc8eccac65853a9b3c688d09bfcffa731126ec34453d1c"
+    },
+    {
+      "path": "tests/harnesses/codex_native/app_server/test_client.py",
+      "bytes": 9060,
+      "sha256": "a95880cd12e8a6eea18dd53f3ef6b01f6ec2a731c729bdcc31ad9d4961916dc4"
+    },
+    {
+      "path": "tests/harnesses/codex_native/app_server/test_policy_hooks.py",
+      "bytes": 26707,
+      "sha256": "5646fe56b72eaefbbdc87bd0a29c5e9513c4068844e5ff88d7fa4a75d88f4d76"
+    },
+    {
+      "path": "tests/harnesses/codex_native/app_server/test_startup.py",
+      "bytes": 49921,
+      "sha256": "0eebf845539c836f7145273c2c1298a6f235ff39f0aeaa941b091f64b338526d"
+    },
+    {
+      "path": "tests/harnesses/codex_native/session/test_history_retry.py",
+      "bytes": 7338,
+      "sha256": "309ec600dd9c9e24aba78ceefd61c26052a8d328d5546a7a2c84a5a1db180427"
+    },
+    {
+      "path": "tests/harnesses/codex_native/session/test_resume_rollouts.py",
+      "bytes": 47094,
+      "sha256": "4cb5a1af5f581935b886a3d177fb7b7e560ed048888fb395a6515aa843dbf169"
+    },
+    {
+      "path": "tests/harnesses/codex_native/test_codex_native_bridge.py",
+      "bytes": 63669,
+      "sha256": "fac185d2ab6d619fc76a11a25eb2cd5fcaa5306d0fc8512a8da2525f7887c6b1"
+    },
+    {
+      "path": "tests/harnesses/codex_native/test_codex_native_hook.py",
+      "bytes": 66293,
+      "sha256": "ac8fa9ece68b3b3e2250fb56a75cdd088fb91720159a6b9b09eeaafe2580929c"
+    },
+    {
+      "path": "tests/harnesses/codex_native/test_executor_artifact.py",
+      "bytes": 3929,
+      "sha256": "57bca692574e5512b1fe2332f1c3b2d9acb2311c6ec7de504462cbbc1cdf53b1"
+    },
+    {
+      "path": "tests/harnesses/codex_native/test_executor_backend.py",
+      "bytes": 34090,
+      "sha256": "85a4691bf1a47b450ac4c32701df2e706250421695c3b3d161622f14d070367f"
+    },
+    {
+      "path": "tests/harnesses/codex_native/test_executor_transport.py",
+      "bytes": 8413,
+      "sha256": "e11cf0e408a0cf01c55f14ebc6872ef16078dec2b564e575686e14a3936d0b0c"
+    },
+    {
+      "path": "tests/inner/test_bwrap_sandbox.py",
+      "bytes": 94539,
+      "sha256": "3c4899d068e85156c80dbb7d748e5924150670b6ac379990dcc1a0be6316f2f8"
+    },
+    {
+      "path": "tests/inner/test_sandbox.py",
+      "bytes": 30340,
+      "sha256": "4c5ad48f42f49af565b0521570c2d9b9ef5cd8ecdc583d194dff95fb5420b480"
+    },
+    {
+      "path": "tests/runner/test_app_sessions_native_terminals_autocreate.py",
+      "bytes": 261347,
+      "sha256": "bca0e2a16f123731fdc500d6ddbde6f7936b3f3f343c3259184ec2a0e512a214"
+    },
+    {
+      "path": "tests/runner/test_app_sessions_native_terminals_runtime.py",
+      "bytes": 227728,
+      "sha256": "61076b4f49ec23cc88d596ff9465ecb49be5efc264a177b1ab62b5aed542fd6b"
+    },
+    {
+      "path": "tests/runner/test_app_sessions_native_wake_forwarders.py",
+      "bytes": 76703,
+      "sha256": "35d573964b4a09da99d2cf88eff40e09f950da7ff73a8a23793c5305cace8fed"
+    },
+    {
+      "path": "tests/runner/test_codex_model_pick_fallback.py",
+      "bytes": 33174,
+      "sha256": "f2c74d0f900ec2031d5640b1187528a912ba8aba9a74f5e954e1e7c2aa8fa2be"
+    },
+    {
+      "path": "tests/runner/test_comment_relay.py",
+      "bytes": 70483,
+      "sha256": "262bcf0896dfe8b171822ba2716a775063232cbada608a853031cd16b653f8fe"
+    },
+    {
+      "path": "tests/runner/test_resource_registry.py",
+      "bytes": 130222,
+      "sha256": "a921b09b48625552121391c77130dfab7d519fa35dd1ec437705dbd0e588a9d2"
+    },
+    {
+      "path": "tests/saas/test_platform_model_gateway.py",
+      "bytes": 58200,
+      "sha256": "e3fdaeeeb79abdc2eebe2db1a2f0e7f32e068f2c9aaa5b808fe36a63faa7a119"
+    },
+    {
+      "path": "tests/saas/test_platform_model_relay.py",
+      "bytes": 16399,
+      "sha256": "c8643101093c3a6b37927de51dad0b8b135f0716ef5323b7572ef1db81166a8c"
+    },
+    {
+      "path": "tests/saas/test_runtime_security_overlays.py",
+      "bytes": 12415,
+      "sha256": "3119a33b4a1f4d9920d4cd3d2cb3f70ac32b4e7196d46cb3f9cb67521e44346b"
+    },
+    {
+      "path": "tests/saas/test_upgrade_benchmark_fixture.py",
+      "bytes": 9217,
+      "sha256": "d5badd325cedca1b7da380a5c5feebea14e346cc2de800d3b828f226d3462791"
+    },
+    {
+      "path": "tests/server/integration/test_mock_llm_server.py",
+      "bytes": 23179,
+      "sha256": "941d548c3e18e37fb310039e8136d966e7a33a08d33d49ff461cee2f94d75e85"
+    }
+  ],
+  "governance_paths": [
+    "saas/scripts/check_upstream_delta.py",
+    "tests/saas/test_upstream_delta.py",
+    "saas/governance/ordinary-m-native-0142-source-scope.json",
+    "saas/upstream-baseline.json",
+    ".github/workflows/saas-controller-source-budget.json"
+  ],
+  "manifest_controls_sha256": {
+    "baseline": "7c3d86f306a1cb89bdaa728a2698267b9da98961d9c1b993b8c1f49ac708cf91",
+    "controller": "b3242eeb5a09e6da7027c345e65814ede25f4ae0bcee8339c3ff926e32835569"
+  },
+  "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
+}

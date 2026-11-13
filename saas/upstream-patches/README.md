@@ -8,9 +8,16 @@ revision, keeping existing ownership and removal conditions. The previous
 0.19 patch bytes and replay failures remain in BuildArtifacts. Existing private
 main changes and approved cold-input fixes are preserved. The historical scope
 records below remain audit history; the active limits are those in
-`saas/upstream-baseline.json` (226 files, 6,772 net lines, nine patches, .85).
+`saas/upstream-baseline.json` and the controller manifest used by CI.
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
+
+## Ordinary-M host-compat extension (2026-11-11)
+
+Patches 0005 and 0010 replay the reviewed Host readiness changes.
+Sharing in-flight probes and limiting managed Host workers reduces concurrent
+CLI work. The repository administrator approved the measured footprint of
+230 files and 7,090 net lines.
 
 Patch 0010 also bounds repeated list-display harness resolution with a 1,024-entry
 cache keyed by workspace, current Agent identity/revision/bundle/provenance,
@@ -472,3 +479,16 @@ stable-id conflict and data assertions and checks caller cancellation cleanup;
 the complete host-launch and startup-input suites retain their old assertions.
 The original 6c44 CI timeout cause remains unproven. The separately reproduced
 9f46 fast-handshake regression is corrected without extending any timeout.
+
+
+## Ordinary M native 0.142 Session isolation candidate
+
+Existing patch 0010-next-agent-session-reliability.patch also carries ordinary
+M required native execution: Session model/policy channels, contained app-server
+and interactive TUI, fixed executor-backed tool/MCP roles, and private rollout
+and dead-letter recovery mappings. The patch count remains nine; existing Host
+readiness bytes remain intact. This is a review candidate under unchanged
+budget/protected-path rules. Its final commit still requires its own existing
+source-budget, full patch replay and Linux qualification before adoption.
+Local unit contracts and prior-head receipts do not grant release or QA business
+qualification.

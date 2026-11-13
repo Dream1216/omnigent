@@ -99,6 +99,36 @@ def _make_backend() -> BwrapSandboxBackend:
     return BwrapSandboxBackend()
 
 
+@pytest.mark.parametrize("bind_failure", [False, True])
+def test_activate_starts_session_channels_after_hardening(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bind_failure: bool
+) -> None:
+    policy = _make_policy(tmp_path, allow_network=False)
+    policy.model_relay_port = 31401
+    policy.model_relay_socket_path = str(tmp_path.resolve() / "model.sock")
+    policy.policy_relay_port = 31402
+    policy.policy_relay_socket_path = str(tmp_path.resolve() / "policy.sock")
+    calls: list[object] = []
+    monkeypatch.setattr(bwrap_sandbox, "_set_no_new_privs", lambda: calls.append("no_new_privs"))
+    monkeypatch.setattr(bwrap_sandbox, "apply_baseline_denylist", lambda: calls.append("baseline"))
+    monkeypatch.setattr(
+        bwrap_sandbox, "apply_seccomp_filter", lambda _rules: calls.append("seccomp")
+    )
+
+    def start_relay(port: int, path: str) -> None:
+        calls.append((port, path))
+        if bind_failure and port == 31402:
+            raise OSError("listener already bound")
+
+    monkeypatch.setattr("omnigent.inner.egress.relay.start_relay", start_relay)
+    if bind_failure:
+        with pytest.raises(OSError, match="already bound"):
+            _make_backend().activate(policy)
+    else:
+        _make_backend().activate(policy)
+    assert calls == ["no_new_privs", "baseline", "seccomp", *policy.session_relay_pairs()]
+
+
 def _make_policy(
     cwd: Path,
     *,

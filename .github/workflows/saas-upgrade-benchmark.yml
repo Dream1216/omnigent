@@ -94,7 +94,8 @@ jobs:
               setsid --wait uv run --no-sync dev/benchmarks/omnigent/run.py \
                 --database-uri "sqlite:///$GITHUB_WORKSPACE/$side/bench.db" \
                 --journeys "$JOURNEYS" --iterations 100 --runs 3 \
-                --output "$GITHUB_WORKSPACE/artifacts/$side.json") \
+                --output "$GITHUB_WORKSPACE/artifacts/$side.json" \
+                --fork-state "$GITHUB_WORKSPACE/artifacts/$side-fork-state.json") \
               2>&1 | tee "artifacts/$side.log"
           done
       - name: Require measured journeys and enforce upstream thresholds
@@ -105,6 +106,26 @@ jobs:
             --threshold 0.30 --threshold-p95 0.50 --require "$JOURNEYS" \
             --output-json ../artifacts/comparison.json \
             --output-markdown ../artifacts/comparison.md
+      - name: Diagnose retained fork targets after both formal measurements and comparison
+        if: ${{ always() && !cancelled() }}
+        working-directory: candidate
+        run: |
+          for report in baseline.json candidate.json comparison.json; do
+            if ! test -f "$GITHUB_WORKSPACE/artifacts/$report"; then
+              echo "Fork diagnostics unavailable: complete formal pair/comparison absent"
+              exit 0
+            fi
+          done
+          for side in baseline candidate; do
+            state="$GITHUB_WORKSPACE/artifacts/$side-fork-state.json"
+            if test -f "$state"; then
+              OMNIGENT_COMPAT_SERVER_PYTHON="$GITHUB_WORKSPACE/$side/.venv/bin/python" \
+              OMNIGENT_COMPAT_RUNNER_PYTHON="$GITHUB_WORKSPACE/$side/.venv/bin/python" \
+              setsid --wait uv run --no-sync saas/scripts/benchmark_fork_diagnostics.py \
+                --state "$state" \
+                --output "$GITHUB_WORKSPACE/artifacts/$side-fork-diagnostics.json"
+            fi
+          done
       - name: Upload performance evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -6,12 +6,16 @@ import asyncio
 import contextlib
 import hmac
 import json
+import os
 import secrets
 import socket
+import stat
+import tempfile
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -54,6 +58,9 @@ class PlatformModelRelay:
     ) -> None:
         self._gateway_base_url = validated_model_gateway_url(gateway_base_url)
         self.capability = secrets.token_urlsafe(32)
+        self.generation = secrets.token_hex(16)
+        self.session_id = session_id
+        self._closed = False
         self._last_token = ""
         self._client_factory = client_factory or (
             lambda: httpx.AsyncClient(
@@ -86,6 +93,10 @@ class PlatformModelRelay:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
         self._socket: socket.socket | None = None
+        self._private_socket: socket.socket | None = None
+        self._private_socket_path: Path | None = None
+        self._private_socket_identity: tuple[int, int] | None = None
+        self._owned_private_directory: tuple[Path, int, int] | None = None
 
     def _create_app(self) -> FastAPI:
         @asynccontextmanager
@@ -108,7 +119,7 @@ class PlatformModelRelay:
         return app
 
     async def _proxy(self, request: Request) -> Response:
-        if not hmac.compare_digest(
+        if self._closed or not hmac.compare_digest(
             request.headers.get("authorization", "").encode(),
             f"Bearer {self.capability}".encode(),
         ):
@@ -210,12 +221,39 @@ class PlatformModelRelay:
             headers={"Cache-Control": "no-store"},
         )
 
-    def start(self) -> str:
-        """Bind only loopback before starting the Runner; fail closed on startup."""
+    def start(self, *, private_socket_path: Path | None = None) -> str:
+        """Serve the same authenticated app over loopback and an optional owned UDS."""
+        if self._closed or self._server is not None:
+            raise RuntimeError("Platform model relay cannot be restarted")
         listener = socket.socket()
         self._socket = listener
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
+        sockets = [listener]
+        if private_socket_path is not None:
+            try:
+                parent = private_socket_path.parent
+                owner = parent.lstat()
+                if (
+                    not private_socket_path.is_absolute()
+                    or parent.resolve() != parent
+                    or not stat.S_ISDIR(owner.st_mode)
+                    or owner.st_uid != os.getuid()
+                    or stat.S_IMODE(owner.st_mode) != 0o700
+                    or len(os.fsencode(private_socket_path)) >= 104
+                ):
+                    raise OSError("Platform model socket requires a private owned directory")
+                private = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self._private_socket = private
+                private.bind(str(private_socket_path))
+                self._private_socket_path = private_socket_path
+                identity = private_socket_path.lstat()
+                self._private_socket_identity = (identity.st_dev, identity.st_ino)
+                private_socket_path.chmod(0o600)
+                sockets.append(private)
+            except BaseException:
+                self.close()
+                raise
         config = uvicorn.Config(
             self.app,
             access_log=False,
@@ -225,7 +263,7 @@ class PlatformModelRelay:
         server = uvicorn.Server(config)
         self._server = server
         self._thread = threading.Thread(
-            target=lambda: asyncio.run(server.serve(sockets=[listener])),
+            target=lambda: asyncio.run(server.serve(sockets=sockets)),
             daemon=True,
             name="platform-model-relay",
         )
@@ -237,6 +275,44 @@ class PlatformModelRelay:
                 raise OSError("Platform model authentication channel failed to start")
             time.sleep(0.01)
         return f"http://127.0.0.1:{port}/v1"
+
+    def start_session_channel(
+        self, *, runner_id: str, session_id: str | None = None
+    ) -> tuple[str, str]:
+        """Create the Host's private transport before the bound Runner is spawned."""
+        from omnigent.runner.session_channels import SessionRelayChannel
+
+        original_session_id = session_id if session_id is not None else str(self.session_id)
+        if UUID(original_session_id) != self.session_id:
+            raise ValueError("Model channel belongs to another Session")
+
+        if self._server is not None or self._owned_private_directory is not None or self._closed:
+            raise RuntimeError("Session model channel cannot be restarted")
+        if not runner_id or runner_id.strip() != runner_id or "\x00" in runner_id:
+            raise ValueError("Invalid model channel Runner identity")
+        root = Path(tempfile.mkdtemp(prefix="omnigent-model-", dir="/tmp")).resolve()
+        identity = root.lstat()
+        self._owned_private_directory = (root, identity.st_dev, identity.st_ino)
+        try:
+            path = root / "model.sock"
+            url = self.start(private_socket_path=path)
+            port = urlsplit(url).port
+            if port is None:
+                raise RuntimeError("Model channel has no loopback listener")
+            endpoint = path.lstat()
+            channel = SessionRelayChannel(
+                session_id=original_session_id,
+                runner_id=runner_id,
+                generation=self.generation,
+                socket_path=str(path),
+                relay_port=port,
+                device=endpoint.st_dev,
+                inode=endpoint.st_ino,
+            )
+            return url, channel.to_json()
+        except BaseException:
+            self.close()
+            raise
 
     def follow(self, process: RunnerProcess) -> None:
         """Revoke the channel when this Runner exits, including abandoned spawns."""
@@ -250,6 +326,7 @@ class PlatformModelRelay:
         threading.Thread(target=watch, daemon=True, name="platform-model-relay-owner").start()
 
     def close(self) -> None:
+        self._closed = True
         if self._server is not None:
             self._server.should_exit = True
         if self._thread is not None and self._thread is not threading.current_thread():
@@ -257,6 +334,20 @@ class PlatformModelRelay:
         if self._socket is not None:
             with contextlib.suppress(OSError):
                 self._socket.close()
+        if self._private_socket is not None:
+            with contextlib.suppress(OSError):
+                self._private_socket.close()
+        if self._private_socket_path is not None:
+            with contextlib.suppress(OSError):
+                current = self._private_socket_path.lstat()
+                if (current.st_dev, current.st_ino) == self._private_socket_identity:
+                    self._private_socket_path.unlink()
+        if self._owned_private_directory is not None:
+            root, device, inode = self._owned_private_directory
+            with contextlib.suppress(OSError):
+                current = root.lstat()
+                if (current.st_dev, current.st_ino) == (device, inode):
+                    root.rmdir()
 
 
 def validated_model_gateway_url(value: str) -> str:

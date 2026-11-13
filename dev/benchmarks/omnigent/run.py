@@ -169,6 +169,7 @@ async def run_benchmark(
         database_uri=args.database_uri,
         network_delay_ms=args.network_delay_ms,
         teardown_started=teardown_started,
+        fork_state_path=getattr(args, "fork_state", None),
     ) as env:
         for journey in journeys:
             console.print(f"\n[bold]Benchmarking[/bold] {journey.name} [dim]({backend})[/dim]")
@@ -326,10 +327,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         metavar="N",
         help="Exit 1 if any journey's avg P99 latency exceeds N ms.",
     )
+    parser.add_argument("--fork-state", type=Path, default=None)
     return parser.parse_args(argv)
 
 
-async def _run_until_terminated(args: argparse.Namespace) -> tuple[dict[str, object], bool]:
+async def _run_until_terminated(
+    args: argparse.Namespace, *, operation=None
+) -> tuple[dict[str, object], bool]:
     """Run the benchmark, turning SIGTERM into cancellation so teardown still runs.
 
     Without this, SIGTERM (``timeout``, ``kill``) ends the process before
@@ -357,6 +361,8 @@ async def _run_until_terminated(args: argparse.Namespace) -> tuple[dict[str, obj
 
     with contextlib.suppress(NotImplementedError):  # no loop signal handlers on Windows
         loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+    if operation is not None:
+        return await operation(teardown_started)
     return await run_benchmark(args, teardown_started=teardown_started)
 
 
