@@ -28,10 +28,10 @@ def _is_under(path: str, prefixes: tuple[str, ...]) -> bool:
 
 
 _ORDINARY_M_APPROVAL = "ordinary_m_native_0142_finite_approval"
-_ORDINARY_M_CANDIDATE = "48508b3a80e194fdf8ede7237206757137cc70446083a4dc2b5777629d9c694b"
+_ORDINARY_M_CANDIDATE = "8be6b49d7768982f8447bc87c8e43b62414eff333bce6109d3e98aa1bb1accf9"
 _ORDINARY_M_PROTECTED_PATH = "omnigent/runner/native/orchestration.py"
 _ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.json"
-_ORDINARY_M_SCOPE_SHA256 = "7e8976e0518f45787eede5e750c8c5eba55aba261384402011043e0c5365a90c"
+_ORDINARY_M_SCOPE_SHA256 = "31de54344d9a6edfd2794b24c0a815868b2e56ca7f6131d17c642ded10c8d753"
 
 
 def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:
@@ -76,6 +76,7 @@ def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, 
             "7eccc6a1d1b7ca911fefe925a7172252380ee504e1fb8fbd71c77cb428f7c480",
             "0c954b1d83804bafaf78142c42a27eef16f63e7be1dbe2cce3eed6a69e14d025",
             "7ce353d6a58ea9083be29c081b9c093052f2ddae1c075ab46f1451dd5c92c5a3",
+            "eb8592d8a012a531170fdf640ece511b20971869fc270a01bf61778cb18710f8",
         }
     ):
         return False

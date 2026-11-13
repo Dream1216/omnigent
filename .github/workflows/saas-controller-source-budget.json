@@ -32,11 +32,11 @@
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "737590b1b76ae8753fa37c2bfe886759cfd49d7adf4d472c5dc52782c53d4476",
+    "current_controller_baseline_sha256": "0d43ddeab5b188ee212566c199ce7d635a357c56b7866856b508bf0329364947",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 271,
     "reason": "Retain the three existing asynchronous test observation boundaries and the reviewed Host readiness change. The measured controller budget increases by one file and 249 net lines.",
-    "authority": "Dream1216 direct human exact fixed61 approval, message01a1d35c-cd87-7311-9ef0-20271f09cb54 in release Root. Candidate 48508b3a80e194fdf8ede7237206757137cc70446083a4dc2b5777629d9c694b; approved271files/12931netLOC (+4/+228), with necessary mechanical wiring; exact approval record SHA256 eb8592d8a012a531170fdf640ece511b20971869fc270a01bf61778cb18710f8. Preserve9patches,0.85floor and original models/calls/success paths/shared240s/assertions/permissions/cleanup. Bounded failure-side evidence only; no causal repair, E2E or release qualification inferred. Prior fixed57 receipts remain historical evidence.",
+    "authority": "Dream1216 direct human exact fixed62 approval, message01a1d531-7c5d-74f1-b81c-2aa1ffe4ade1 in release Root, original answer: approve fixed62 and necessary mechanical wiring. Candidate 8be6b49d7768982f8447bc87c8e43b62414eff333bce6109d3e98aa1bb1accf9; complete reviewed six-file scope, official budget271files/12931netLOC/9patches/0.85floor unchanged (delta0/0). Exact approval record SHA256 dd31812e65300988d62f8e9ea1bbb6abbfaf3e5f129e43277ae58f950a32a56d. Test-only dependency isolation/teardown with real runtime/authenticator negative SELECT1 and billing-enabled six-role positive startup retained. Production readiness/authentication/deadline/pool/assertions unchanged. Original Main failure and unknown RCA preserved; no CI, signature, currentq, QA or release qualification inferred. Prior fixed61 authorization does not authorize these new bytes.",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,9 +47,9 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "48508b3a80e194fdf8ede7237206757137cc70446083a4dc2b5777629d9c694b",
+    "candidate_manifest_sha256": "8be6b49d7768982f8447bc87c8e43b62414eff333bce6109d3e98aa1bb1accf9",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "eb8592d8a012a531170fdf640ece511b20971869fc270a01bf61778cb18710f8"
+    "authority_record_sha256": "dd31812e65300988d62f8e9ea1bbb6abbfaf3e5f129e43277ae58f950a32a56d"
   }
 }

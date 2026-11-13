@@ -1450,9 +1450,9 @@
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "upstream_version": "0.21.0.dev20261031",
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "48508b3a80e194fdf8ede7237206757137cc70446083a4dc2b5777629d9c694b",
+    "candidate_manifest_sha256": "8be6b49d7768982f8447bc87c8e43b62414eff333bce6109d3e98aa1bb1accf9",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "eb8592d8a012a531170fdf640ece511b20971869fc270a01bf61778cb18710f8"
+    "authority_record_sha256": "dd31812e65300988d62f8e9ea1bbb6abbfaf3e5f129e43277ae58f950a32a56d"
   }
 }
