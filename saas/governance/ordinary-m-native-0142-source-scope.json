@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "8a4dd6922fa7d26faeeeac93622bddcca5caf5e4cd7970ae667c429b939f041f",
+  "candidate_manifest_sha256": "d30b2f92d437f640406a0cf23e6d3f08df4ce8dbebfce968a2cc3319c87af717",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 271,
-    "max_upstream_net_added_loc": 12953,
+    "max_direct_upstream_files": 272,
+    "max_upstream_net_added_loc": 13261,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -345,6 +345,21 @@
       "path": ".github/workflows/saas-m2c-evidence-renewal.yml",
       "bytes": 6715,
       "sha256": "fe76ec364ebb6789a640874ccf2b1b6d766dd4a2b9b7ac8b2fefd94764645574"
+    },
+    {
+      "path": ".github/actions/e2e-run/action.yml",
+      "bytes": 13478,
+      "sha256": "19b575961bb7b74ceca4305cadfdc39030162929b4e7b1b528c70a5d825d17e0"
+    },
+    {
+      "path": ".github/workflows/e2e.yml",
+      "bytes": 7377,
+      "sha256": "b64ea7d37f43c9331a1e2f0e77b24fce660f1c63fa18ff1289e3425b0546fb20"
+    },
+    {
+      "path": "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py",
+      "bytes": 18563,
+      "sha256": "26a63dbb2f1f620803fabd2d897ee49b4a6ae4e6545fa45382571da5ecd80010"
     }
   ],
   "governance_paths": [
@@ -369,5 +384,16 @@
       "authority_record_sha256": "26fbf2125c81ba56b3335d2d0d1a226501b417cb616d19d2b975aeaddbfbdb57"
     },
     "retained_runtime_protected_bytes_unchanged": true
+  },
+  "previous_evidence_renewal_approved_scope": {
+    "candidate_manifest_sha256": "8a4dd6922fa7d26faeeeac93622bddcca5caf5e4cd7970ae667c429b939f041f",
+    "scope_sha256": "3aeae43922bc92891388040785c6eaf949e56cb4fdfbc9570728313ef3544b4c",
+    "approval": {
+      "candidate_manifest_sha256": "8a4dd6922fa7d26faeeeac93622bddcca5caf5e4cd7970ae667c429b939f041f",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "044d8d955a63d66daf8f8d32698dc1fd2633f474605ab26add66aa7b57ddc69d"
+    },
+    "retained_product_runtime_and_controller_functional_bytes_unchanged": true
   }
 }

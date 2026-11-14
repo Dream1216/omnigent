@@ -9,18 +9,27 @@ retry. It is never silently dropped or applied twice.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
 
+from omnigent.process_logging import redact_log_text
 from tests.e2e.resilience.lab.driver import SessionDriver
+from tests.e2e.resilience.lab.events import EventLog
 from tests.e2e.resilience.lab.lab import Harness, Lab
+from tests.e2e.resilience.lab.observe import Observation, SessionWatcher
 from tests.e2e.resilience.lab.proxy import Fault
-from tests.e2e.resilience.lab.report import ScenarioReport
+from tests.e2e.resilience.lab.report import ScenarioReport, report_dir
 from tests.e2e.resilience.scenarios import _contract as contract
 
 _ACTIONS = {
@@ -111,8 +120,11 @@ def test_s5_host_offline_user_acts(
         )
         ended = time.time()
         _check_outcome(report, lab, driver, entered, action, accepted)
+        idle_started = time.time()
         contract.check_settled_idle(report, lab, session_id)
+        idle_ended = time.time()
         next_turn = contract.eventually_round_trip(driver)
+        next_turn_ended = time.time()
         report.check(
             "next_turn_round_trips",
             next_turn is not None,
@@ -122,6 +134,32 @@ def test_s5_host_offline_user_acts(
             contract.check_no_failure(
                 report, watcher, started, max(time.time(), ended + contract.SETTLE_S)
             )
+    if (harness, action, outage_s) == ("codex", "send", 20):
+        try:
+            assert lab.model is not None and entered.turn is not None
+            markers = [entered.turn.marker]
+            if next_turn is not None:
+                markers.append(next_turn.marker)
+            payload = _observation_summary(
+                session_id,
+                report=report,
+                watcher=watcher,
+                events=lab.events,
+                requests=lab.model.requests(),
+                items=lab.items(session_id),
+                markers=markers,
+                phase_times={
+                    "idle_started": idle_started,
+                    "idle_ended": idle_ended,
+                    "next_turn_ended": next_turn_ended,
+                },
+            )
+            payload["process_logs"] = _redacted_process_logs(lab.logs)
+            path = report_dir() / f"{report.file_stem()}.diagnostic.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, indent=2) + "\n")
+        except Exception as error:
+            print(f"S5 observation collection failed: {type(error).__name__}")
     report.require()
 
 
@@ -206,3 +244,229 @@ def _check_outcome(
         report.check("refused_message_not_delivered", copies == 0, f"{copies} copies")
         return
     contract.check_turn_completes(report, driver, turn)
+
+
+def _observation_summary(
+    session_id: str,
+    *,
+    report: ScenarioReport,
+    watcher: SessionWatcher,
+    events: EventLog,
+    requests: list[dict[str, Any]],
+    items: list[dict[str, Any]],
+    markers: list[str],
+    phase_times: dict[str, float],
+) -> dict[str, Any]:
+    """Retain public correlation and timing without prompts, headers or environment."""
+    event_fields = {
+        "process",
+        "pid",
+        "graceful",
+        "session_id",
+        "harness",
+        "conn",
+        "tag",
+        "reason",
+        "age_s",
+        "c2s_bytes",
+        "s2c_bytes",
+        "fault",
+        "tags",
+        "connections",
+    }
+
+    def marker_matches(value: object) -> list[str]:
+        text = json.dumps(value, sort_keys=True)
+        return [marker for marker in markers if marker in text]
+
+    return {
+        "schema_version": 1,
+        "session_id": session_id,
+        "phase_times": phase_times,
+        "markers": markers,
+        "checks": [{"name": check.name, "passed": check.passed} for check in report.checks],
+        "observations": [asdict(row) for row in watcher.between(report.started, float("inf"))],
+        "events": [
+            {
+                "wall": row.wall,
+                "mono": row.mono,
+                "source": row.source,
+                "kind": row.kind,
+                **{key: value for key, value in row.fields.items() if key in event_fields},
+            }
+            for row in events.events()
+        ],
+        "mock_requests": [
+            {
+                "index": index,
+                "input_sha256": hashlib.sha256(
+                    json.dumps(request, sort_keys=True).encode()
+                ).hexdigest(),
+                "markers": marker_matches(request.get("messages") or request.get("input")),
+                "tool_count": len(request.get("tools") or []),
+            }
+            for index, request in enumerate(requests)
+        ],
+        "items": [
+            {
+                **{
+                    key: item[key]
+                    for key in ("id", "type", "role", "turn_id", "call_id", "created_at")
+                    if key in item
+                },
+                "markers": marker_matches(item),
+            }
+            for item in items
+        ],
+    }
+
+
+@pytest.mark.parametrize("settled", [False, True])
+def test_s5_observation_keeps_outcome_and_ids_without_raw_payloads(settled: bool) -> None:
+    report = ScenarioReport("S5", {}, started=0)
+    report.check("status_settles_idle", settled, "private detail must not be retained")
+    watcher = SessionWatcher("", "session")
+    watcher._record(Observation(15.5, "snapshot", status="running"))
+    events = EventLog()
+    events.emit("lab", "process_start", process="runner", pid=42, environment="private env")
+    payload = _observation_summary(
+        "session",
+        report=report,
+        watcher=watcher,
+        events=events,
+        requests=[
+            {
+                "messages": [{"content": "MARKER private prompt"}],
+                "headers": {"Authorization": "private credential"},
+                "tools": [{"name": "exec_command"}],
+            }
+        ],
+        items=[
+            {
+                "id": "item",
+                "turn_id": "turn",
+                "type": "message",
+                "role": "assistant",
+                "content": "MARKER private reply",
+            }
+        ],
+        markers=["MARKER"],
+        phase_times={"idle_started": 0, "idle_ended": 15, "next_turn_ended": 16},
+    )
+    assert payload["checks"] == [{"name": "status_settles_idle", "passed": settled}]
+    assert payload["observations"][0]["status"] == "running"
+    assert payload["events"][0]["pid"] == 42
+    assert payload["items"][0]["turn_id"] == "turn"
+    assert payload["mock_requests"][0]["markers"] == ["MARKER"]
+    assert len(payload["mock_requests"][0]["input_sha256"]) == 64
+    assert "private" not in json.dumps(payload)
+
+
+def _redacted_process_logs(directory: Path) -> dict[str, list[dict[str, str | int]]]:
+    """Project bounded owned-log tails to operational fields; never copy messages."""
+    prefix = re.compile(
+        r"^(?:DEBUG|INFO|WARN(?:ING)?|ERROR|CRIT(?:ICAL)?)[ \t]+"
+        r"(?P<time>\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) [^|\n]+ \| (?P<message>.*)$"
+    )
+    identifier = r"(?:[0-9a-f-]{1,64}|turn_[0-9a-f]{1,64}|None)"
+    source = (
+        r"(?:turn/(?:started|completed|failed)(?::turn-(?:error|failed))?"
+        r"|thread/resume(?::turn-error)?|delta:recovered|error(?::certificate)?)"
+    )
+    lifecycle = re.compile(
+        rf"Codex forwarder publishing turn status: source=(?P<source>{source}) "
+        rf"turn_id=(?P<turn_id>{identifier}) status=(?P<status>running|idle|failed)"
+    )
+    rejected = re.compile(
+        r"failed to post Codex session event: type=external_session_status "
+        r"status=(?P<http_status>[1-5]\d{2}) body="
+    )
+    retry = re.compile(
+        r"retrying idempotent Codex session event until delivery: "
+        rf"session=(?P<session_id>{identifier}) type=external_session_status "
+        r"attempt=(?P<attempt>\d{1,8}) http_status=(?P<http_status>[1-5]\d{2}|None) error="
+    )
+    result: dict[str, list[dict[str, str | int]]] = {}
+    for name in ("host", "host-process", "runner", "runner-process", "server"):
+        path = directory / f"{name}.log"
+        if not path.is_file() or path.is_symlink():
+            continue
+        with path.open("rb") as stream:
+            stream.seek(max(0, path.stat().st_size - 65536))
+            text = redact_log_text(
+                stream.read(65536).decode(errors="replace"), include_whitespace_credentials=True
+            )
+        rows: list[dict[str, str | int]] = []
+        for line_number, line in enumerate(text.splitlines()):
+            record = prefix.fullmatch(line)
+            if record is None:
+                continue
+            message = record["message"]
+            match = lifecycle.fullmatch(message)
+            event = "turn_status"
+            if match is None:
+                match = rejected.match(message)
+                event = "status_post_rejected"
+            if match is None:
+                match = retry.match(message)
+                event = "status_post_retry"
+            if match is not None:
+                rows.append(
+                    {
+                        "time": record["time"],
+                        "line": line_number,
+                        "event": event,
+                        **match.groupdict(),
+                    }
+                )
+        result[name] = rows[-256:]
+    return result
+
+
+def test_s5_owned_log_tails_are_bounded_and_redacted(tmp_path: Path) -> None:
+    prefix = "INFO  11-14 12:34:56.789 codex_native.forwarder _post_turn_status_edge | "
+    warning = prefix.replace("INFO  ", "WARN  ")
+    completed = (
+        "Codex forwarder publishing turn status: "
+        "source=turn/completed turn_id=turn_abc123 status=idle"
+    )
+    (tmp_path / "host.log").write_text(
+        prefix + completed + "\n" + "x" * 70000 + "\n"
+        "Authorization: Bearer sample-private-key\n"
+        + prefix
+        + completed
+        + "\n"
+        + warning
+        + "failed to post Codex session event: type=external_session_status "
+        "status=503 body=private-prompt Authorization=private-header env=private-env "
+        "turn_id=turn_dead status=running\n"
+        + prefix
+        + "Codex elicitation hook returned non-object result: "
+        "method=turn/completed result={'prompt': 'private-result'}\n"
+        + prefix
+        + completed
+        + " body=private-tail\n"
+    )
+    (tmp_path / "host-process.log").write_text(
+        prefix + "Codex forwarder publishing turn status: "
+        "source=turn/started turn_id=turn_def456 status=running\n"
+        + warning
+        + "retrying idempotent Codex session event until delivery: "
+        "session=19d62c1e77c7496fb197eade75852432 type=external_session_status "
+        "attempt=2 http_status=503 error=private-error\n"
+    )
+    (tmp_path / "other.log").write_text("unrelated private log")
+    (tmp_path / "server.log").symlink_to(tmp_path / "other.log")
+    logs = _redacted_process_logs(tmp_path)
+    assert set(logs) == {"host", "host-process"}
+    assert [row["event"] for row in logs["host"]] == ["turn_status", "status_post_rejected"]
+    assert logs["host"][0]["turn_id"] == "turn_abc123"
+    assert logs["host"][0]["status"] == "idle"
+    assert logs["host"][0]["time"] == "11-14 12:34:56.789"
+    assert logs["host"][1]["http_status"] == "503"
+    assert logs["host-process"][0]["source"] == "turn/started"
+    assert logs["host-process"][1]["session_id"] == "19d62c1e77c7496fb197eade75852432"
+    assert logs["host-process"][1]["attempt"] == "2"
+    encoded = json.dumps(logs)
+    assert len(encoded.encode()) <= 65536
+    assert "private" not in encoded and "turn_dead" not in encoded
