@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "8a9f4c591854e04d0a5b29d86292c0589c9fae6d8bc4190060153cca40154689",
+  "candidate_manifest_sha256": "3cab4a491f9d6213af881e1dca4c5cc260a3a52979077936daf08c4c9a59146a",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -168,8 +168,8 @@
     },
     {
       "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
-      "bytes": 262086,
-      "sha256": "6b1b06838ea32e53bc1ce12a93550068c5b49bddd2ffb684156c75dbc527515d"
+      "bytes": 262376,
+      "sha256": "b0dcbdcfc3a5e8286e6b0e6fd2eda8c2a2531285d1c00017fd5605f3322c4d13"
     },
     {
       "path": "saas/upstream-patches/README.md",
@@ -488,5 +488,18 @@
     ],
     "unchanged_runtime_S5_status_forwarder_policy_relay_queue_and_Dockerfile": true,
     "original_R3_OCI_result": "FAIL: random build-time Codex arg0 paths; raw full scan skipped; never release-qualified"
+  },
+  "previous_R4_private_probe_scope": {
+    "candidate_manifest_sha256": "8a9f4c591854e04d0a5b29d86292c0589c9fae6d8bc4190060153cca40154689",
+    "scope_sha256": "4ddc3ea7a993378c5b9e76125084016a6c46366057ca3e994a1de3461f05b602",
+    "approval": {
+      "candidate_manifest_sha256": "8a9f4c591854e04d0a5b29d86292c0589c9fae6d8bc4190060153cca40154689",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "b5249e1a9afd8a2ed96fe3f5f14b66c1a6a88cd63354e5acd9894a976f70ba97"
+    },
+    "source_head": "6bfde86690e976163791a7b397f4e3fc5efa22f6",
+    "retained_runtime_and_test_bytes_unchanged": true,
+    "original_OCI_result": "FAIL before build: replay patch omitted current executor_artifact.py; not a Host reproducibility result"
   }
 }

@@ -2656,7 +2656,7 @@ diff --git a/omnigent/harnesses/codex_native/executor_artifact.py b/omnigent/har
 new file mode 100644
 --- /dev/null
 +++ b/omnigent/harnesses/codex_native/executor_artifact.py
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,197 @@
 +"""Build-time Codex artifact receipt, consumed only inside a qualified Host image."""
 +
 +from __future__ import annotations
@@ -2669,6 +2669,7 @@ new file mode 100644
 +import re
 +import shutil
 +import subprocess
++import tempfile
 +from dataclasses import dataclass
 +from pathlib import Path
 +from typing import TYPE_CHECKING
@@ -2751,14 +2752,19 @@ new file mode 100644
 +    """Run during the normal image build; this receipt is not a release PASS."""
 +    binary = native_binary(command)
 +    revision = installed_revision()
-+    response = subprocess.run(
-+        [str(binary), "--version"],
-+        capture_output=True,
-+        check=True,
-+        timeout=10,
-+        env={"PATH": os.defpath},
-+        text=True,
-+    )
++    destination.parent.mkdir(parents=True, exist_ok=True)
++    # Release Codex requires its helper home outside the system temporary directory.
++    with tempfile.TemporaryDirectory(
++        prefix=".omnigent-codex-artifact-", dir=destination.parent
++    ) as probe_home:
++        response = subprocess.run(
++            [str(binary), "--version"],
++            capture_output=True,
++            check=True,
++            timeout=10,
++            env={"PATH": os.defpath, "CODEX_HOME": probe_home},
++            text=True,
++        )
 +    if response.stdout.strip() != "codex-cli " + CODEX_VERSION:
 +        raise ValueError("Installed native Codex version does not match the pin")
 +    with binary.open("rb") as source:
@@ -2775,7 +2781,6 @@ new file mode 100644
 +        "lock_path": str(HOST_LOCK_PATH),
 +        "lock_sha256": lock_digest,
 +    }
-+    destination.parent.mkdir(parents=True, exist_ok=True)
 +    with destination.open("x") as target:
 +        json.dump(payload, target, sort_keys=True)
 +        target.write("\n")
