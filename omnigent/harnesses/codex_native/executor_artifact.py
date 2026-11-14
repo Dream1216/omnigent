@@ -10,6 +10,7 @@ import platform
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -92,14 +93,19 @@ def record_installed_artifact(command: Path, destination: Path = ARTIFACT_PATH) 
     """Run during the normal image build; this receipt is not a release PASS."""
     binary = native_binary(command)
     revision = installed_revision()
-    response = subprocess.run(
-        [str(binary), "--version"],
-        capture_output=True,
-        check=True,
-        timeout=10,
-        env={"PATH": os.defpath},
-        text=True,
-    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Release Codex requires its helper home outside the system temporary directory.
+    with tempfile.TemporaryDirectory(
+        prefix=".omnigent-codex-artifact-", dir=destination.parent
+    ) as probe_home:
+        response = subprocess.run(
+            [str(binary), "--version"],
+            capture_output=True,
+            check=True,
+            timeout=10,
+            env={"PATH": os.defpath, "CODEX_HOME": probe_home},
+            text=True,
+        )
     if response.stdout.strip() != "codex-cli " + CODEX_VERSION:
         raise ValueError("Installed native Codex version does not match the pin")
     with binary.open("rb") as source:
@@ -116,7 +122,6 @@ def record_installed_artifact(command: Path, destination: Path = ARTIFACT_PATH) 
         "lock_path": str(HOST_LOCK_PATH),
         "lock_sha256": lock_digest,
     }
-    destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("x") as target:
         json.dump(payload, target, sort_keys=True)
         target.write("\n")

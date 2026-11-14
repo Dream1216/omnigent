@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "b6ef18f61097b8275a5a1aaf911dc7d84cfe40d9713f8e3bfa942791b8ee47db",
+  "candidate_manifest_sha256": "8a9f4c591854e04d0a5b29d86292c0589c9fae6d8bc4190060153cca40154689",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 275,
-    "max_upstream_net_added_loc": 13526,
+    "max_upstream_net_added_loc": 13550,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -58,8 +58,8 @@
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_artifact.py",
-      "bytes": 6944,
-      "sha256": "655147e6c4e29fec79ac388d37b363c4c82d5096c092e7d3e4a00626c00b5952"
+      "bytes": 7229,
+      "sha256": "6d56a42fe6cbc982809e806e6b5c282e575692a759e9da4cb6d935b800a8a40a"
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_backend.py",
@@ -238,8 +238,8 @@
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_artifact.py",
-      "bytes": 3929,
-      "sha256": "57bca692574e5512b1fe2332f1c3b2d9acb2311c6ec7de504462cbbc1cdf53b1"
+      "bytes": 4839,
+      "sha256": "8279ecbcada561ac2482bc5b3f41533ff26ddd5cd3ff9887ec719625a7f4913e"
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_backend.py",
@@ -471,5 +471,22 @@
     },
     "source_head": "87c67515ed280e98db6641e946fbc713e35147ee",
     "all_production_Host_recipe_artifact_queue_and_typed_observer_bytes_unchanged": true
+  },
+  "previous_consolidated_R3_approved_scope": {
+    "candidate_manifest_sha256": "b6ef18f61097b8275a5a1aaf911dc7d84cfe40d9713f8e3bfa942791b8ee47db",
+    "scope_sha256": "617db39afa3fa0a24e7497df615e1fc14eb9957d37a67d59b8c4767573d9a836",
+    "approval": {
+      "candidate_manifest_sha256": "b6ef18f61097b8275a5a1aaf911dc7d84cfe40d9713f8e3bfa942791b8ee47db",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "91dca11f50965c182c493a1fac5ad8307a2a4e6b6f3285182d798a1f4e2425a8"
+    },
+    "source_head": "52b2d0ef146735753b7e7315867b6fcb0b7ffa4c",
+    "current_changed_functional_paths": [
+      "omnigent/harnesses/codex_native/executor_artifact.py",
+      "tests/harnesses/codex_native/test_executor_artifact.py"
+    ],
+    "unchanged_runtime_S5_status_forwarder_policy_relay_queue_and_Dockerfile": true,
+    "original_R3_OCI_result": "FAIL: random build-time Codex arg0 paths; raw full scan skipped; never release-qualified"
   }
 }
