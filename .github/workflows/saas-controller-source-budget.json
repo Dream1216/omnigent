@@ -25,14 +25,14 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 272,
-    "max_upstream_net_added_loc": 13261,
+    "max_upstream_net_added_loc": 13389,
     "min_isolated_custom_code_ratio": 0.85
   },
   "controller_budget_scope": {
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "3aa75eb48a5938fe8a3a5d76cd77fe94f57814d9421b7736ef718a0629e9a0db",
+    "current_controller_baseline_sha256": "b08240a9c6f897b13b383427ead27b8c90fed70e5cb7024b81d30f096bd7a7c1",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 272,
     "reason": "Retain the three existing asynchronous test observation boundaries and the reviewed Host readiness change. The measured controller budget increases by one file and 249 net lines.",
@@ -47,9 +47,9 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "d30b2f92d437f640406a0cf23e6d3f08df4ce8dbebfce968a2cc3319c87af717",
+    "candidate_manifest_sha256": "996c3690c5fe165d081c9baa6f13e8d68e6496a6433f349fca3c28989375c283",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "529795415a0acf3c985b4a461ab50be62a5d6e92e1fc77e787ba7182196ae7ef"
+    "authority_record_sha256": "03262224c6ca692c1a04c3d69cb6c53b0b27ac4cf34766a0a509657928e36533"
   }
 }
