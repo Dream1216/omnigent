@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "cf5f16079af45bc5f041b86258a18bc1e05ba5c5511134432adaca902f577228",
+  "candidate_manifest_sha256": "8a4dd6922fa7d26faeeeac93622bddcca5caf5e4cd7970ae667c429b939f041f",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -325,6 +325,26 @@
       "path": "tests/server/integration/test_mock_llm_server.py",
       "bytes": 23179,
       "sha256": "941d548c3e18e37fb310039e8136d966e7a33a08d33d49ff461cee2f94d75e85"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/origin.json",
+      "bytes": 2176,
+      "sha256": "ede48e984113d0b14c2f4e621cb393594cc9639cbc4c3af07c3a849581577a59"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/renewal.py",
+      "bytes": 15889,
+      "sha256": "6209896356a35bdfd489e46b288796cdbe370c9c7f9c5a29b7961df54a2b4289"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py",
+      "bytes": 7702,
+      "sha256": "f5c9f69022ac25d188275288e040332dcfd3aecfde41b1a2bd69e60dbf622269"
+    },
+    {
+      "path": ".github/workflows/saas-m2c-evidence-renewal.yml",
+      "bytes": 6715,
+      "sha256": "fe76ec364ebb6789a640874ccf2b1b6d766dd4a2b9b7ac8b2fefd94764645574"
     }
   ],
   "governance_paths": [
@@ -338,5 +358,16 @@
     "baseline": "7c3d86f306a1cb89bdaa728a2698267b9da98961d9c1b993b8c1f49ac708cf91",
     "controller": "b3242eeb5a09e6da7027c345e65814ede25f4ae0bcee8339c3ff926e32835569"
   },
-  "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
+  "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
+  "previous_fixed63_approved_scope": {
+    "candidate_manifest_sha256": "cf5f16079af45bc5f041b86258a18bc1e05ba5c5511134432adaca902f577228",
+    "scope_sha256": "e1a419567a781e228a6525fefd85bc4334efeb24b09e8c1e65177db325698500",
+    "approval": {
+      "candidate_manifest_sha256": "cf5f16079af45bc5f041b86258a18bc1e05ba5c5511134432adaca902f577228",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "26fbf2125c81ba56b3335d2d0d1a226501b417cb616d19d2b975aeaddbfbdb57"
+    },
+    "retained_runtime_protected_bytes_unchanged": true
+  }
 }
