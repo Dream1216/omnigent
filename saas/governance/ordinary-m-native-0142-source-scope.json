@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "996c3690c5fe165d081c9baa6f13e8d68e6496a6433f349fca3c28989375c283",
+  "candidate_manifest_sha256": "47d0d3eb579ca864d93b0b918ccb5bdad663632ee92c989facb0449fd968976e",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 272,
-    "max_upstream_net_added_loc": 13389,
+    "max_direct_upstream_files": 273,
+    "max_upstream_net_added_loc": 13446,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -360,6 +360,16 @@
       "path": "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py",
       "bytes": 23757,
       "sha256": "3e1958f646f20fae97d9166ec9aa53672fd78728092c80a6f5258cf5b8c3c4d2"
+    },
+    {
+      "path": "omnigent/server/routes/_sessions/orchestration.py",
+      "bytes": 653240,
+      "sha256": "c02b1b2f1ed11a44db39c45005bc4eefccd4147ecb49d0644b6f264eb5ef7da4"
+    },
+    {
+      "path": "tests/server/routes/test_sessions_runner_relay.py",
+      "bytes": 175440,
+      "sha256": "499b569e6245a2fc59a19ff929e50e8cbe4c722023c6d3df2ce9d3f999b61780"
     }
   ],
   "governance_paths": [
@@ -410,5 +420,20 @@
     "attempt": 1,
     "result": "strict15s1F_3pureP_native_causal_log_incomplete_no_rerun",
     "retained_other69_scope_records_unchanged": true
+  },
+  "previous_session_runner_capture_approved_scope": {
+    "candidate_manifest_sha256": "996c3690c5fe165d081c9baa6f13e8d68e6496a6433f349fca3c28989375c283",
+    "scope_sha256": "2fc06692055c3c18938f4d64dd97205c7ac909de4047a6eb2daf57f8f3da6cb9",
+    "approval": {
+      "candidate_manifest_sha256": "996c3690c5fe165d081c9baa6f13e8d68e6496a6433f349fca3c28989375c283",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "03262224c6ca692c1a04c3d69cb6c53b0b27ac4cf34766a0a509657928e36533"
+    },
+    "source_head": "9a8d34102cf23a76457e11673805c00a25afeb70",
+    "actual_capture_run": 43620907030,
+    "attempt": 1,
+    "actual": "4P/6nativeRows; producerpathgapclosed notoriginalfailureRCA",
+    "retained_all70_scope_records_unchanged": true
   }
 }

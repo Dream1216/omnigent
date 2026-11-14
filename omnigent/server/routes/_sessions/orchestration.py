@@ -9460,11 +9460,6 @@ async def _relay_runner_stream_once(
                                 )
                             elif status == "running":
                                 failure_agent_name = None
-                                await _persist_session_status_error_labels(
-                                    session_id,
-                                    None,
-                                    conversation_store,
-                                )
                             # PTY-activity status is a UI signal only. Terminal
                             # sub-agent delivery rides the Stop/StopFailure hook
                             # via external_session_status (the codex-shared path)
@@ -9531,6 +9526,13 @@ async def _relay_runner_stream_once(
                                     else None
                                 ),
                             )
+                            if status == "running":
+                                # Label IO must not delay this edge past a newer native status.
+                                await _persist_session_status_error_labels(
+                                    session_id,
+                                    None,
+                                    conversation_store,
+                                )
                         if status == "running":
                             text_acc.clear()
                             # A new turn invalidates any deny marker a prior

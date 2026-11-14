@@ -888,6 +888,61 @@ class _RecordingLabelStore:
 
 
 @pytest.mark.asyncio
+async def test_relay_running_label_io_cannot_reopen_newer_native_idle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A newer native completion survives an older relay's blocked label write."""
+    from omnigent.runtime import session_stream
+    from omnigent.server.routes import sessions as sessions_module
+    from omnigent.server.routes._sessions import orchestration
+
+    session_id = "03b63cce2bec4ba4abe1196a1df780fb"
+    entered_label_clear = asyncio.Event()
+    release_label_clear = asyncio.Event()
+    persist_labels = orchestration._persist_session_status_error_labels
+
+    async def blocked_clear(
+        conversation_id: str, error: Any, conversation_store: Any, **kwargs: Any
+    ) -> None:
+        if conversation_id == session_id and error is None:
+            entered_label_clear.set()
+            await release_label_clear.wait()
+        await persist_labels(conversation_id, error, conversation_store, **kwargs)
+
+    monkeypatch.setattr(orchestration, "_persist_session_status_error_labels", blocked_clear)
+    stream_gate = asyncio.Event()
+    stream_gate.set()
+    store = _RecordingLabelStore()
+    relay = asyncio.create_task(
+        orchestration._relay_runner_stream_once(
+            session_id,
+            _ScriptedRunnerClient(stream_gate, [{"type": "session.status", "status": "running"}]),  # type: ignore[arg-type]
+            store,  # type: ignore[arg-type]
+        )
+    )
+    try:
+        await asyncio.wait_for(entered_label_clear.wait(), timeout=_TASK_TIMEOUT_S)
+        # The independent native HTTP path has completed while label IO is held.
+        sessions_module._publish_status(
+            session_id, "idle", response_id="codex_turn_done", persist_live_status=False
+        )
+        assert sessions_module._session_status_cache[session_id] == "idle"
+        release_label_clear.set()
+        await asyncio.wait_for(relay, timeout=_TASK_TIMEOUT_S)
+        assert sessions_module._session_status_cache[session_id] == "idle"
+        assert sessions_module._last_task_error_from_labels(store.labels[session_id]) is None
+    finally:
+        release_label_clear.set()
+        if not relay.done():
+            relay.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await relay
+        sessions_module._session_status_cache.pop(session_id, None)
+        sessions_module._session_active_response_cache.pop(session_id, None)
+        session_stream.close(session_id)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("new_turn_without_identity", [False, True])
 async def test_relay_captures_failure_agent_without_reusing_prior_turn_identity(
     new_turn_without_identity: bool,
