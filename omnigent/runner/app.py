@@ -3776,11 +3776,13 @@ def create_runner_app(
         source_error: Mapping[str, object] | None = None,
         response_id: str | None = None,
     ) -> None:
+        harness = _session_harness_name(conv_id)
+        if harness == "codex-native" and status in {"running", "idle"}:
+            return
         if status == "waiting" and not (
             _server_version is not None and _version_supports_waiting_status(_server_version)
         ):
             status = "running"
-        harness = _session_harness_name(conv_id)
         if status != "failed" and harness in {
             "claude-native",
             "pi-native",
@@ -3792,7 +3794,7 @@ def create_runner_app(
             "hermes-native",
         }:
             return
-        if status == "idle" and harness in {"codex-native", "antigravity-native"}:
+        if status == "idle" and harness == "antigravity-native":
             return
         event: _JsonObject = {"type": "session.status", "status": status}
         if error is not None:

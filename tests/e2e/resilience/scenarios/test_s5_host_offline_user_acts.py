@@ -331,6 +331,20 @@ def test_s5_observation_keeps_outcome_and_ids_without_raw_payloads(settled: bool
     report.check("status_settles_idle", settled, "private detail must not be retained")
     watcher = SessionWatcher("", "session")
     watcher._record(Observation(15.5, "snapshot", status="running"))
+    response_id = "codex_turn_01a1db42-b89b-7702-8492-49aa3586d946"
+    for value in (response_id, ["private"], "private " + "x" * 160, "private"):
+        watcher._consume(
+            "data: "
+            + json.dumps(
+                {
+                    "type": "session.status",
+                    "status": "idle",
+                    "response_id": value,
+                    "source": "private producer",
+                    "content": "private payload",
+                }
+            )
+        )
     events = EventLog()
     events.emit("lab", "process_start", process="runner", pid=42, environment="private env")
     payload = _observation_summary(
@@ -359,6 +373,14 @@ def test_s5_observation_keeps_outcome_and_ids_without_raw_payloads(settled: bool
     )
     assert payload["checks"] == [{"name": "status_settles_idle", "passed": settled}]
     assert payload["observations"][0]["status"] == "running"
+    assert [row["response_id"] for row in payload["observations"]] == [
+        None,
+        response_id,
+        None,
+        None,
+        None,
+    ]
+    assert payload["observations"][1]["source"] == "stream"
     assert payload["events"][0]["pid"] == 42
     assert payload["items"][0]["turn_id"] == "turn"
     assert payload["mock_requests"][0]["markers"] == ["MARKER"]

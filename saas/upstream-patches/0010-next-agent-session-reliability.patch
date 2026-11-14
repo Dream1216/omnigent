@@ -5799,3 +5799,33 @@ index 80bc624ebbd..e3800e702c3 100644
 +    from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
 @@ -5674 +5674,0 @@ async def _auto_create_codex_terminal(
 -        from omnigent.harnesses.codex_native.execution import CodexSandboxLaunch
+diff --git a/omnigent/server/routes/_sessions/orchestration.py b/omnigent/server/routes/_sessions/orchestration.py
+index e00311a0ffcc51e4db2ff3a776072c5d390aeeb9..8dbf05c09f238363ae667843b701fe22f436f351 100644
+--- a/omnigent/server/routes/_sessions/orchestration.py
++++ b/omnigent/server/routes/_sessions/orchestration.py
+@@ -9463,5 +9462,0 @@ async def _relay_runner_stream_once(
+-                                await _persist_session_status_error_labels(
+-                                    session_id,
+-                                    None,
+-                                    conversation_store,
+-                                )
+@@ -9533,0 +9529,7 @@ async def _relay_runner_stream_once(
++                            if status == "running":
++                                # Label IO must not delay this edge past a newer native status.
++                                await _persist_session_status_error_labels(
++                                    session_id,
++                                    None,
++                                    conversation_store,
++                                )
+diff --git a/omnigent/runner/app.py b/omnigent/runner/app.py
+--- a/omnigent/runner/app.py
++++ b/omnigent/runner/app.py
+@@ -3778,0 +3779,3 @@
++        harness = _session_harness_name(conv_id)
++        if harness == "codex-native" and status in {"running", "idle"}:
++            return
+@@ -3783 +3785,0 @@
+-        harness = _session_harness_name(conv_id)
+@@ -3795 +3797 @@
+-        if status == "idle" and harness in {"codex-native", "antigravity-native"}:
++        if status == "idle" and harness == "antigravity-native":

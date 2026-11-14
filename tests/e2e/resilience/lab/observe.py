@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ class Observation:
     :param host_online: Snapshot host liveness, ``None`` for stream events.
     :param pending_approvals: Snapshot count of pending approval prompts.
     :param event_type: Stream event type, e.g. ``"session.status"``.
+    :param response_id: Bounded public response id carried by a status edge.
     """
 
     wall: float
@@ -43,6 +45,7 @@ class Observation:
     host_online: bool | None = None
     pending_approvals: int | None = None
     event_type: str | None = None
+    response_id: str | None = None
 
 
 @dataclass
@@ -145,6 +148,18 @@ class SessionWatcher:
             if not isinstance(event, dict) or event.get("type") != "session.status":
                 return
             error = event.get("error") if isinstance(event.get("error"), dict) else {}
+            response_id = event.get("response_id")
+            if not (
+                isinstance(response_id, str)
+                and 0 < len(response_id) <= 160
+                and re.fullmatch(
+                    r"(?:codex_turn_|cancel_)?"
+                    r"(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+                    r"|turn_[0-9a-f]{1,64})",
+                    response_id,
+                )
+            ):
+                response_id = None
             self._record(
                 Observation(
                     wall=time.time(),
@@ -152,6 +167,7 @@ class SessionWatcher:
                     status=event.get("status"),
                     error_code=error.get("code"),
                     event_type="session.status",
+                    response_id=response_id,
                 )
             )
 

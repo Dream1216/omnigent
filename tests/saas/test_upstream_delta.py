@@ -791,6 +791,7 @@ def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
         "previous-8a-authority",
         "previous-d30-authority",
         "previous-996-authority",
+        "previous-47d0-authority",
         "scope-bytes",
         "protected-bytes",
         "other-source-bytes",
@@ -849,6 +850,10 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
     elif fault == "previous-996-authority":
         decision["authority_record_sha256"] = (
             "03262224c6ca692c1a04c3d69cb6c53b0b27ac4cf34766a0a509657928e36533"
+        )
+    elif fault == "previous-47d0-authority":
+        decision["authority_record_sha256"] = (
+            "b1614596b3a789a55531f89369759f9ddfda19a7358938016017983de1d9a864"
         )
     target = {
         "scope-bytes": root / guard._ORDINARY_M_SCOPE_PATH,

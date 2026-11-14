@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "47d0d3eb579ca864d93b0b918ccb5bdad663632ee92c989facb0449fd968976e",
+  "candidate_manifest_sha256": "04b94b9a43470dbeccf35c7735dbc5497528a677f0dd28f3ba9d3abbce63979c",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 273,
-    "max_upstream_net_added_loc": 13446,
+    "max_direct_upstream_files": 275,
+    "max_upstream_net_added_loc": 13524,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -18,8 +18,8 @@
     },
     {
       "path": "deploy/docker/Dockerfile",
-      "bytes": 53528,
-      "sha256": "2f7b7b04ae26053b0c74b91a24642278cd9fb4d0e6a80994fac9bbad05431add"
+      "bytes": 53923,
+      "sha256": "98fddfea8f6b02db45beb2e93bc1d00932f36b677f57ca4bfdfb944e5a7037fe"
     },
     {
       "path": "dev/benchmarks/omnigent/environment.py",
@@ -113,8 +113,8 @@
     },
     {
       "path": "omnigent/runner/app.py",
-      "bytes": 414452,
-      "sha256": "7771ff9c3cc58f3b2619278bd3d0260d966da04d2ffc1ddd743e9259a2d6dc26"
+      "bytes": 414525,
+      "sha256": "71a8bf5bce70e8062bd3a53b77c6661ffb7d53a40b7a248712644694279bf999"
     },
     {
       "path": "omnigent/runner/app_support.py",
@@ -168,8 +168,8 @@
     },
     {
       "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
-      "bytes": 260451,
-      "sha256": "3e8477014b17afbe80c37f3e20e7bb0231b33ab4cf77628c5a39b92316daacf6"
+      "bytes": 262086,
+      "sha256": "6b1b06838ea32e53bc1ce12a93550068c5b49bddd2ffb684156c75dbc527515d"
     },
     {
       "path": "saas/upstream-patches/README.md",
@@ -313,8 +313,8 @@
     },
     {
       "path": "tests/saas/test_runtime_security_overlays.py",
-      "bytes": 12415,
-      "sha256": "3119a33b4a1f4d9920d4cd3d2cb3f70ac32b4e7196d46cb3f9cb67521e44346b"
+      "bytes": 13352,
+      "sha256": "80606c1efee8531bdfb01283330a9dc2836d216babd766ea922d7c55a55bfccc"
     },
     {
       "path": "tests/saas/test_upgrade_benchmark_fixture.py",
@@ -358,8 +358,8 @@
     },
     {
       "path": "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py",
-      "bytes": 23757,
-      "sha256": "3e1958f646f20fae97d9166ec9aa53672fd78728092c80a6f5258cf5b8c3c4d2"
+      "bytes": 24479,
+      "sha256": "70d2fb5970e3782a6ceda69aadb919626ef5016e1a58be7b22aa61be186c3f2b"
     },
     {
       "path": "omnigent/server/routes/_sessions/orchestration.py",
@@ -370,6 +370,16 @@
       "path": "tests/server/routes/test_sessions_runner_relay.py",
       "bytes": 175440,
       "sha256": "499b569e6245a2fc59a19ff929e50e8cbe4c722023c6d3df2ce9d3f999b61780"
+    },
+    {
+      "path": "tests/runner/test_app_sessions_native_supervision.py",
+      "bytes": 127337,
+      "sha256": "9478f51867acbc1eafbb6cce0e82ebdd70963791c0512d4cebd31e1b8ff503c7"
+    },
+    {
+      "path": "tests/e2e/resilience/lab/observe.py",
+      "bytes": 7560,
+      "sha256": "4f51470933fcd18f7f617f3978e428a3850607fc4741bebaf07bb5fd55ca2037"
     }
   ],
   "governance_paths": [
@@ -435,5 +445,19 @@
     "attempt": 1,
     "actual": "4P/6nativeRows; producerpathgapclosed notoriginalfailureRCA",
     "retained_all70_scope_records_unchanged": true
+  },
+  "previous_relay_order_approved_scope": {
+    "candidate_manifest_sha256": "47d0d3eb579ca864d93b0b918ccb5bdad663632ee92c989facb0449fd968976e",
+    "scope_sha256": "6ce551b110951ef7d69ca6b93b18b690f3a9eb3d1d1087d61cba5dc9386101f6",
+    "approval": {
+      "candidate_manifest_sha256": "47d0d3eb579ca864d93b0b918ccb5bdad663632ee92c989facb0449fd968976e",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "b1614596b3a789a55531f89369759f9ddfda19a7358938016017983de1d9a864"
+    },
+    "source_head": "b9622b2ad33bad6c148e486ede0e1ccd6d50cde5",
+    "actual_server_rest": "8430P/8skip/new55lineP",
+    "actual_S5": "43624833777a1 strict15sF/116P/24skip/shard6; never reclassified fixed",
+    "retained_original_runtime_relay_fix_and55line_test": true
   }
 }

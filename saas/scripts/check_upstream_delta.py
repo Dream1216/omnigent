@@ -28,10 +28,10 @@ def _is_under(path: str, prefixes: tuple[str, ...]) -> bool:
 
 
 _ORDINARY_M_APPROVAL = "ordinary_m_native_0142_finite_approval"
-_ORDINARY_M_CANDIDATE = "47d0d3eb579ca864d93b0b918ccb5bdad663632ee92c989facb0449fd968976e"
+_ORDINARY_M_CANDIDATE = "04b94b9a43470dbeccf35c7735dbc5497528a677f0dd28f3ba9d3abbce63979c"
 _ORDINARY_M_PROTECTED_PATH = "omnigent/runner/native/orchestration.py"
 _ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.json"
-_ORDINARY_M_SCOPE_SHA256 = "6ce551b110951ef7d69ca6b93b18b690f3a9eb3d1d1087d61cba5dc9386101f6"
+_ORDINARY_M_SCOPE_SHA256 = "6d0fe3c51aa8dd39aeb69c4e9a9b06167a9c20c58f88e6d79aa98cab05edd963"
 
 
 def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:
@@ -82,6 +82,7 @@ def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, 
             "044d8d955a63d66daf8f8d32698dc1fd2633f474605ab26add66aa7b57ddc69d",
             "529795415a0acf3c985b4a461ab50be62a5d6e92e1fc77e787ba7182196ae7ef",
             "03262224c6ca692c1a04c3d69cb6c53b0b27ac4cf34766a0a509657928e36533",
+            "b1614596b3a789a55531f89369759f9ddfda19a7358938016017983de1d9a864",
         }
     ):
         return False
@@ -104,7 +105,7 @@ def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, 
         if _manifest_controls_sha256(manifest) != scope["manifest_controls_sha256"][kind]:
             return False
         if kind == "controller" and (
-            manifest["controller_budget_scope"]["current_controller_file_ceiling"] != 273
+            manifest["controller_budget_scope"]["current_controller_file_ceiling"] != 275
             or manifest["controller_budget_scope"].get("prior_approved_controller_authority")
             != scope["previous_controller_authority"]
         ):
