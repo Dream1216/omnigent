@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "04b94b9a43470dbeccf35c7735dbc5497528a677f0dd28f3ba9d3abbce63979c",
+  "candidate_manifest_sha256": "b6ef18f61097b8275a5a1aaf911dc7d84cfe40d9713f8e3bfa942791b8ee47db",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 275,
-    "max_upstream_net_added_loc": 13524,
+    "max_upstream_net_added_loc": 13526,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -373,8 +373,8 @@
     },
     {
       "path": "tests/runner/test_app_sessions_native_supervision.py",
-      "bytes": 127337,
-      "sha256": "9478f51867acbc1eafbb6cce0e82ebdd70963791c0512d4cebd31e1b8ff503c7"
+      "bytes": 127451,
+      "sha256": "e6aa0e105e8b37cbd266b7b6a16544c7c638c7ea380cf43d3b6664e82ed846e2"
     },
     {
       "path": "tests/e2e/resilience/lab/observe.py",
@@ -459,5 +459,17 @@
     "actual_server_rest": "8430P/8skip/new55lineP",
     "actual_S5": "43624833777a1 strict15sF/116P/24skip/shard6; never reclassified fixed",
     "retained_original_runtime_relay_fix_and55line_test": true
+  },
+  "previous_consolidated_R2_approved_scope": {
+    "candidate_manifest_sha256": "04b94b9a43470dbeccf35c7735dbc5497528a677f0dd28f3ba9d3abbce63979c",
+    "scope_sha256": "6d0fe3c51aa8dd39aeb69c4e9a9b06167a9c20c58f88e6d79aa98cab05edd963",
+    "approval": {
+      "candidate_manifest_sha256": "04b94b9a43470dbeccf35c7735dbc5497528a677f0dd28f3ba9d3abbce63979c",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "c11ac074e42cf643f2e303f17fc5129f24c0eb116cf4a6a4c84ac365ec92c1f7"
+    },
+    "source_head": "87c67515ed280e98db6641e946fbc713e35147ee",
+    "all_production_Host_recipe_artifact_queue_and_typed_observer_bytes_unchanged": true
   }
 }

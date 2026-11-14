@@ -2686,6 +2686,7 @@ async def test_events_interrupt_on_native_session_injects_escape_without_marker(
 )
 @pytest.mark.asyncio
 async def test_message_turn_lifecycle_status_suppressed_for_terminal_backed_harnesses(
+    monkeypatch: pytest.MonkeyPatch,
     harness: str,
     expected_statuses: list[str],
 ) -> None:
@@ -2795,6 +2796,7 @@ async def test_message_turn_lifecycle_status_suppressed_for_terminal_backed_harn
                 sessions_module._session_active_response_cache.pop(session_id, None)
                 session_stream.close(session_id)
 
+            monkeypatch.setattr("omnigent.runner.app._server_version", None)
             child_id = uuid.uuid4().hex
             subagent_work.register_subagent_work(
                 parent_session_id=session_id,
