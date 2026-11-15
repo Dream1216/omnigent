@@ -558,7 +558,7 @@ async def test_terminal_resource_role_is_private_and_cleared_on_close(
         if resource_role == CODEX_NATIVE_TERMINAL_ROLE and managed_runtime:
             assert kwargs["parent_environment"] is environment
         else:
-            assert kwargs["parent_environment"] is None
+            assert "parent_environment" not in kwargs
         assert spec.env == {"OMNIGENT_CLIENT_SURFACE": "desktop", "KEEP_ME": "present"}
         terminal_registry._by_conversation.setdefault(conversation_id, {})[
             (terminal_name, session_key)

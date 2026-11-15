@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "13f3b6b04af32492a59c55bc2755b15f0e6a04ae329ba91203b820156efa9dd6",
+  "candidate_manifest_sha256": "b8d781ee4f48ac46362a7a5e53c1e8188a1395dd365d211e7085b753a1798bdd",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -128,8 +128,8 @@
     },
     {
       "path": "omnigent/runner/resource_registry.py",
-      "bytes": 114502,
-      "sha256": "7f3fe33cd552236950c244dadae7210ee5757d638dd34ede8adab52bbbefc13f"
+      "bytes": 114463,
+      "sha256": "1911f0abdb703112037e4c7d8f681294a2d43cf62fb5dfc186ef265eba0f8b34"
     },
     {
       "path": "omnigent/runner/session_channels.py",
@@ -168,8 +168,8 @@
     },
     {
       "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
-      "bytes": 264076,
-      "sha256": "88710b99adba920b67313e21951cefaecdf0a7d4c5731c5b0ee0f7a1c8449c7e"
+      "bytes": 264463,
+      "sha256": "bfd1ceaf6592850c518133ac143396c5a2ceaa37d449099e002e6ce85f987870"
     },
     {
       "path": "saas/upstream-patches/README.md",
@@ -288,8 +288,8 @@
     },
     {
       "path": "tests/runner/test_resource_registry.py",
-      "bytes": 131205,
-      "sha256": "c6420808a0eaa0daba5c85e084243b9482bc819e4921c64af07eff240f2e497d"
+      "bytes": 131203,
+      "sha256": "3b3c5c6fa26dd77f7e9754728792b0a4bd82265d05a3233226343f812de8742d"
     },
     {
       "path": "tests/runner/transports/ws_tunnel/test_serve.py",
@@ -400,7 +400,7 @@
     ".github/workflows/saas-controller-source-budget.json"
   ],
   "manifest_controls_sha256": {
-    "baseline": "fb1ac5558cdd668a26b398739af2c14a06a3ab4b6802a9544500f4eed4988acc",
+    "baseline": "4aec901d89ee7b6e458d4d4192e66b5f1ab47856547c7351c3d094c5987683c6",
     "controller": "b3242eeb5a09e6da7027c345e65814ede25f4ae0bcee8339c3ff926e32835569"
   },
   "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
@@ -531,5 +531,10 @@
   "approved_repair_base": "79c0d5bbfe82ff028ccfd6ceed2573d220bc5f7e",
   "approved_repair_authority_record_sha256": "bf810a8af0cef1129ba707c1e59bc377ce2fdd6943c93ed8c2a792de6223096e",
   "approved_fixed_candidate_sha256": "9b54677f18a352fe4645a1d1ac9f78a9a8859f5a8d41d3446c01e9a1c466121d",
-  "normal_hook_format_derivation_manifest_sha256": "a38c4cf2a662f5ef6a2b03c0d9cac8b4f0e4f69ac18419f2c7893103c91a1e64"
+  "normal_hook_format_derivation_manifest_sha256": "a38c4cf2a662f5ef6a2b03c0d9cac8b4f0e4f69ac18419f2c7893103c91a1e64",
+  "ci_private_argument_compatibility_delta": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main79-host-seccomp-NS02-20261115/connected-native-startup/PR282-PRIVATE-ENV-ABI.FIXED-PROPOSAL.PUBLIC.json",
+    "bytes": 5042,
+    "sha256": "74bc96abb48087593bcc51356a0a321219d67722b3a6e61eaf337b5a2d300c84"
+  }
 }

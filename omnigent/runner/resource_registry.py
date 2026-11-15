@@ -24,7 +24,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from cachetools import TTLCache
 
@@ -1564,16 +1564,17 @@ class SessionResourceRegistry:
         from omnigent.terminals.registry import TerminalExitedDuringLaunch
 
         spec = replace(spec, env={**spec.env, **self.client_surface_env(session_id)})
-        program_status_args = (
+        launch_args: dict[str, Any] = (
             {"program_status_app": "claude-code"}
             if resource_role == CLAUDE_NATIVE_TERMINAL_ROLE
             and self._feature_flags.enabled(Feature.CLAUDE_OSC_STATUS)
             else {}
         )
-        native_environment = None
         if resource_role == CODEX_NATIVE_TERMINAL_ROLE and self._native_runtime is not None:
             self.native_runtime_for(session_id)
-            native_environment = self.resolve_environment(session_id, DEFAULT_ENVIRONMENT_ID)
+            launch_args["parent_environment"] = self.resolve_environment(
+                session_id, DEFAULT_ENVIRONMENT_ID
+            )
         try:
             instance = await self._terminal_registry.launch(
                 conversation_id=session_id,
@@ -1581,10 +1582,9 @@ class SessionResourceRegistry:
                 session_key=session_key,
                 spec=spec,
                 parent_os_env=parent_os_env,
-                parent_environment=native_environment,
                 cwd_override=cwd_override,
                 sandbox_override=sandbox_override,
-                **program_status_args,
+                **launch_args,
             )
         except TerminalExitedDuringLaunch as exc:
             await self._finalize_terminal_exit(

@@ -1478,13 +1478,27 @@
       "scope": "Required normal ruff call-layout formatting and exact 0010 mirror only. AST unchanged. Original fixed approval retained as original, no claim that human separately approved derived bytes.",
       "actual_upstream_net_added_loc": 13648,
       "max_upstream_net_added_loc": 13650
+    },
+    "codex_home_private_role_call_compatibility_20261116": {
+      "human_approved_ancestor_candidate_sha256": "9b54677f18a352fe4645a1d1ac9f78a9a8859f5a8d41d3446c01e9a1c466121d",
+      "previous_normal_hook_derived_candidate_sha256": "13f3b6b04af32492a59c55bc2755b15f0e6a04ae329ba91203b820156efa9dd6",
+      "actual_ci_compatibility_repair_candidate_sha256": "b8d781ee4f48ac46362a7a5e53c1e8188a1395dd365d211e7085b753a1798bdd",
+      "proposal": {
+        "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main79-host-seccomp-NS02-20261115/connected-native-startup/PR282-PRIVATE-ENV-ABI.FIXED-PROPOSAL.PUBLIC.json",
+        "bytes": 5042,
+        "sha256": "74bc96abb48087593bcc51356a0a321219d67722b3a6e61eaf337b5a2d300c84"
+      },
+      "authority_record_sha256": "bf810a8af0cef1129ba707c1e59bc377ce2fdd6943c93ed8c2a792de6223096e",
+      "scope": "Same five-file CODEX_HOME repair scope. Current CI exposed old generic/Claude call compatibility; preserve absence of the private argument for those roles. No budget, permissions, assertions, source counting, required sandbox or other gate weakened. Current continuing implementation authorization applies; no claim of separate literal human approval of this hash.",
+      "max_upstream_net_added_loc": 13650,
+      "actual_upstream_net_added_loc": 13648
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "upstream_version": "0.21.0.dev20261031",
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "13f3b6b04af32492a59c55bc2755b15f0e6a04ae329ba91203b820156efa9dd6",
+    "candidate_manifest_sha256": "b8d781ee4f48ac46362a7a5e53c1e8188a1395dd365d211e7085b753a1798bdd",
     "decision": "approved",
     "approver": "Dream1216",
     "authority_record_sha256": "bf810a8af0cef1129ba707c1e59bc377ce2fdd6943c93ed8c2a792de6223096e"

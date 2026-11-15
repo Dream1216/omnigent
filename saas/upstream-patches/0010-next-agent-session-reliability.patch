@@ -5835,17 +5835,26 @@ diff --git a/omnigent/runner/app.py b/omnigent/runner/app.py
 -        if status == "idle" and harness in {"codex-native", "antigravity-native"}:
 +        if status == "idle" and harness == "antigravity-native":
 diff --git a/omnigent/runner/resource_registry.py b/omnigent/runner/resource_registry.py
+index a9f9cddff33..a1d3a87ebdc 100644
 --- a/omnigent/runner/resource_registry.py
 +++ b/omnigent/runner/resource_registry.py
-@@ -1572,0 +1573,4 @@
-+        native_environment = None
+@@ -27 +27 @@ from pathlib import Path
+-from typing import TYPE_CHECKING, Literal
++from typing import TYPE_CHECKING, Any, Literal
+@@ -1567 +1567 @@ class SessionResourceRegistry:
+-        program_status_args = (
++        launch_args: dict[str, Any] = (
+@@ -1572,0 +1573,5 @@ class SessionResourceRegistry:
 +        if resource_role == CODEX_NATIVE_TERMINAL_ROLE and self._native_runtime is not None:
 +            self.native_runtime_for(session_id)
-+            native_environment = self.resolve_environment(session_id, DEFAULT_ENVIRONMENT_ID)
-@@ -1579,0 +1584 @@
-+                parent_environment=native_environment,
++            launch_args["parent_environment"] = self.resolve_environment(
++                session_id, DEFAULT_ENVIRONMENT_ID
++            )
+@@ -1582 +1587 @@ class SessionResourceRegistry:
+-                **program_status_args,
++                **launch_args,
 diff --git a/omnigent/terminals/registry.py b/omnigent/terminals/registry.py
-index 6a0d588..e0e3f31 100644
+index 6a0d588c31c..e0e3f31c159 100644
 --- a/omnigent/terminals/registry.py
 +++ b/omnigent/terminals/registry.py
 @@ -271,0 +272 @@ class TerminalRegistry:
