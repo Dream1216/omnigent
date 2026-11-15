@@ -32,11 +32,11 @@
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "45a2cc5af55873ea8f1157a9a76e90614e496e83524076395672eb4aa9329387",
+    "current_controller_baseline_sha256": "7ad7809c74dae52ee9b3c5264f4fc93fb94c7e8e4f4c04b3fbe3cd0deb976b6d",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 275,
     "reason": "Retain the three existing asynchronous test observation boundaries and the reviewed Host readiness change. The measured controller budget increases by one file and 249 net lines.",
-    "authority": "Verified direct human11/16 implementation authority, exact independently closed Main4cb same-digest current-security controller increment; product/q821f/CI cap unchanged, numeric275/13650/9/.85 preserved; authority 30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0",
+    "authority": "Verified direct human11/16 implementation authority, independently closed one legacy diagnostic exact-condition assertion alignment; product/q821f/runtime and numeric275/13650/9/.85 unchanged; authority 6fca6f621dbd839a3a448e192611391c8af5861bcfe64d1e16e7a786c3df315d",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,9 +47,9 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "d51959f12336e7469b7a88d5d689d8e8d04021f1da42f3dbc74ac017cab7c0fc",
+    "candidate_manifest_sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0"
+    "authority_record_sha256": "6fca6f621dbd839a3a448e192611391c8af5861bcfe64d1e16e7a786c3df315d"
   }
 }

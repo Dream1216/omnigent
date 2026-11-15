@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "d51959f12336e7469b7a88d5d689d8e8d04021f1da42f3dbc74ac017cab7c0fc",
+  "candidate_manifest_sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -420,6 +420,11 @@
       "path": ".github/workflows/saas-m-current-evidence-renewal.yml",
       "bytes": 6837,
       "sha256": "e5c10dd45525bad0eaa7ce8693f8f6251ac6bb08874bd2f0c4622ca15cfa52b4"
+    },
+    {
+      "path": "tests/saas/test_scan_oci_candidates.py",
+      "bytes": 21918,
+      "sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011"
     }
   ],
   "governance_paths": [
@@ -602,5 +607,21 @@
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-M4cb-normal-current-security-renewal-20261116/NORMAL-CURRENT-RENEWAL.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
     "bytes": 2630,
     "sha256": "30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0"
+  },
+  "previous_current_security_renewal_exact_scope": {
+    "candidate_manifest_sha256": "d51959f12336e7469b7a88d5d689d8e8d04021f1da42f3dbc74ac017cab7c0fc",
+    "scope_sha256": "d05bfcef68046aa08426a88fbc8fc2234baf63e437b5a3a8219d9424f31298c1",
+    "approval": {
+      "candidate_manifest_sha256": "d51959f12336e7469b7a88d5d689d8e8d04021f1da42f3dbc74ac017cab7c0fc",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0"
+    },
+    "all_P1_and_current_security_functional_bytes_unchanged": true
+  },
+  "diagnostic_guard_contract_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-M4cb-normal-current-security-renewal-20261116/PR283-DIAGNOSTIC-GUARD.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
+    "bytes": 2027,
+    "sha256": "6fca6f621dbd839a3a448e192611391c8af5861bcfe64d1e16e7a786c3df315d"
   }
 }
