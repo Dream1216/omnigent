@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "44447411cd1cb5e20abe0dbc007cf8464e2086fc6ae1ff39c4c605d249037060",
+  "candidate_manifest_sha256": "6f9f86e1b2589b1aa6d19c6662ce00c62dc67ad196577af82a233ab8b2b0bb00",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -393,13 +393,23 @@
     },
     {
       "path": "saas/scripts/oci_promotion.py",
-      "bytes": 26912,
-      "sha256": "e8fd79efe42e8606314a2b38ee3bd0d3aed2f1450f18f9577fb07c9cd0142efd"
+      "bytes": 28102,
+      "sha256": "d8b541095eaaaa0c027b0e3cd3f92e69c60d258cb363b79fda5024e245feff75"
     },
     {
       "path": "tests/saas/test_oci_promotion.py",
-      "bytes": 33122,
-      "sha256": "fbedd61062169a20784292d3508cb6fcd6291ead39717cd3c0624db7705cb0a8"
+      "bytes": 37634,
+      "sha256": "dbaf8b36b132ed49a0aa0eb36fb6035268784152ac50bb925ffd07b8c2ca4dc7"
+    },
+    {
+      "path": ".github/workflows/saas-image-candidate.yml",
+      "bytes": 68982,
+      "sha256": "74184d3780556ebd3be74e4b7083dc6961c14acb7ef83e92c5859e501017ef44"
+    },
+    {
+      "path": "saas/scripts/check_image_supply_chain.py",
+      "bytes": 118577,
+      "sha256": "920af2729cc8cb265d4a301831d451b3f73ca12d86fbdfc564c910ba94c1dd9e"
     }
   ],
   "governance_paths": [
@@ -410,7 +420,7 @@
     ".github/workflows/saas-controller-source-budget.json"
   ],
   "manifest_controls_sha256": {
-    "baseline": "4ff879fc486eeb84ad3f1dd4838a7a3b5b6504f501ba0951c80702a12293da0e",
+    "baseline": "5bfa71403c79219635c98449c44179019e248bf8a3d07d86954e8dc0938ca70f",
     "controller": "b3242eeb5a09e6da7027c345e65814ede25f4ae0bcee8339c3ff926e32835569"
   },
   "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
@@ -556,5 +566,15 @@
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-P1-trusted-main-crossrun-20261116/P1-FIRST-BATCH.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
     "bytes": 3580,
     "sha256": "40f8e2457341de609044b9a0768c9c61a15fb0ced4870d81bc20f110386827a6"
+  },
+  "previous_p1_first_exact_scope": {
+    "candidate_manifest_sha256": "44447411cd1cb5e20abe0dbc007cf8464e2086fc6ae1ff39c4c605d249037060",
+    "scope_sha256": "35a36dbd158c677e25f32e49fafcb4d115a4412e33ae37c051c77e8fd91e9a8d",
+    "authority_record_sha256": "40f8e2457341de609044b9a0768c9c61a15fb0ced4870d81bc20f110386827a6"
+  },
+  "p1_second_wiring_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-P1-trusted-main-crossrun-20261116/P1-SECOND-BATCH.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
+    "bytes": 4263,
+    "sha256": "599a8951dbc9030b53c450d3f670f5a34b042395967c4982b47bd62c1c68ee53"
   }
 }

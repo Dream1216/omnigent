@@ -671,6 +671,51 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         violations.append(
             "protected release must promote the admitted OCI bytes without rebuilding"
         )
+    independent = workflow.partition("  verify-published-source:")[2]
+    cross_run_publication = {
+        "!cancelled() &&",
+        "inputs.promotion_source_run_id == '' && needs.build-candidate.result == 'success'",
+        "inputs.promotion_source_run_id != '' && needs.build-candidate.result == 'skipped'",
+        "needs: build-candidate",
+        "candidate-manifest-sha256: ${{ steps.admitted.outputs.manifest-sha256 }}",
+        "python -m saas.scripts.oci_promotion download-trusted-main",
+        '--run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT"',
+        '[[ "$PROMOTION_SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]',
+        '[[ "$PROMOTION_SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]',
+        '[[ "$PROMOTION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]',
+        '[[ "$PROMOTION_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]]',
+        '[[ "$PROMOTION_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]',
+        '[[ -z "$PROMOTION_RUNTIME_EVIDENCE_REVISION" ]] || exit 1',
+        (
+            '[[ -z "$PROMOTION_SOURCE_RUN_ATTEMPT$PROMOTION_ARTIFACT_ID'
+            '$PROMOTION_ARTIFACT_SHA256$PROMOTION_MANIFEST_SHA256" ]]'
+        ),
+        "source_proof_sha256=$(sha256sum artifacts/promotion-source.json",
+    }
+    cross_run_readback = {
+        "!cancelled() && needs.publish-signed.result == 'success'",
+        "needs: [publish-signed]",
+        "actions: read",
+        "CANDIDATE_MANIFEST_SHA256: ${{ needs.publish-signed.outputs.candidate-manifest-sha256 }}",
+        "name: Independently verify cross-run producer origin",
+        "if: inputs.promotion_source_run_id != ''",
+        "python -m saas.scripts.oci_promotion verify-trusted-main",
+        "source_proof_sha256=$(sha256sum release-facts/promotion-source.json",
+        ".[0] == (.[1] | del(.state, .candidate_manifest_sha256))",
+        ".promotion.source_proof_sha256 == $proof",
+        "release-facts/independent-promotion-source.json",
+    }
+    if (
+        workflow.count(
+            "if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}"
+        )
+        != 3
+        or any(fragment not in publication for fragment in cross_run_publication)
+        or any(fragment not in independent for fragment in cross_run_readback)
+    ):
+        violations.append(
+            "cross-run promotion must independently bind a qualified trusted Main producer"
+        )
     runtime_verification = _named_workflow_step(
         workflow, "Verify published image runtime revision"
     )

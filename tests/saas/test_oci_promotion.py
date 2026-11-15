@@ -394,7 +394,8 @@ def main_producer() -> dict[str, Any]:
             "conclusion": "success",
             "started_at": (now - timedelta(minutes=3)).isoformat(),
             "completed_at": (now - timedelta(minutes=1)).isoformat(),
-        }
+        },
+        {"name": "Prepare immutable runtime evidence data for candidate", "conclusion": "skipped"},
     ]
     return {
         "controller": {
@@ -486,6 +487,7 @@ def test_cross_run_requires_the_exact_main_controller(main_producer, field: str)
         "artifact-repository",
         "producer-attempt",
         "producer-failed",
+        "source-runtime-context",
         "preflight-failed",
         "missing-migration",
         "duplicate-job",
@@ -521,6 +523,8 @@ def test_cross_run_binds_the_actual_producer_and_upload_attempt(main_producer, f
         jobs[1]["run_attempt"] = 1
     elif fault in {"producer-failed", "preflight-failed"}:
         jobs[1 if fault == "producer-failed" else 0]["conclusion"] = "failure"
+    elif fault == "source-runtime-context":
+        jobs[1]["steps"][-1]["conclusion"] = "success"
     elif fault == "missing-migration":
         jobs.pop()
     elif fault == "duplicate-job":
@@ -554,10 +558,15 @@ def test_cross_run_binds_the_actual_producer_and_upload_attempt(main_producer, f
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "wrong-attempt", "tampered-zip", "missing-platform", "expired-scans"]
+    ("command", "fault"),
+    [
+        ("download-trusted-main", fault)
+        for fault in [None, "wrong-attempt", "tampered-zip", "missing-platform", "expired-scans"]
+    ]
+    + [("verify-trusted-main", None), ("verify-trusted-main", "wrong-attempt")],
 )
 def test_cross_run_download_reuses_original_oci_and_security_checks(
-    tmp_path, monkeypatch, main_producer, fault
+    tmp_path, monkeypatch, capsys, main_producer, command, fault
 ) -> None:
     source = tmp_path / "source"
     labels, now = candidate(source)
@@ -586,7 +595,8 @@ def test_cross_run_download_reuses_original_oci_and_security_checks(
     def metadata(args, **kwargs):
         endpoint = args[-1]
         if endpoint.endswith("/jobs?per_page=100"):
-            return json.dumps([{"jobs": main_producer["jobs"]}])
+            jobs = main_producer["jobs"]
+            return json.dumps([{"jobs": jobs[:2]}, {"jobs": jobs[2:]}])
         return json.dumps(
             main_producer["artifact"] if "/artifacts/" in endpoint else main_producer["run"]
         )
@@ -604,7 +614,7 @@ def test_cross_run_download_reuses_original_oci_and_security_checks(
         "argv",
         [
             "oci_promotion",
-            "download-trusted-main",
+            command,
             "--root",
             str(destination),
             "--revision",
@@ -632,6 +642,12 @@ def test_cross_run_download_reuses_original_oci_and_security_checks(
         assert bool(downloads) == (fault != "wrong-attempt")
         return
     assert oci_promotion.main() == 0
+    if command == "verify-trusted-main":
+        receipt = json.loads(capsys.readouterr().out)
+        assert receipt["source_run_id"] == 23 and receipt["source_run_attempt"] == 2
+        assert receipt["artifact_sha256"] == zip_sha
+        assert downloads == [] and not destination.exists()
+        return
     assert len(downloads) == 1
     if fault == "expired-scans":
         with pytest.raises(ValueError, match="older than 24 hours"):
@@ -710,10 +726,72 @@ def test_workflow_never_rebuilds_after_candidate_admission() -> None:
     assert names.index("Read back promoted OCI bytes before signing") < names.index(
         "Sign server image provenance with GitHub OIDC"
     )
-    assert workflow["jobs"]["verify-published-source"]["needs"] == [
+    assert workflow["jobs"]["verify-published-source"]["needs"] == ["publish-signed"]
+    assert publish["needs"] == "build-candidate"
+    assert "!cancelled() &&" in publish["if"]
+    assert "needs.build-candidate.result == 'success'" in publish["if"]
+    assert "needs.build-candidate.result == 'skipped'" in publish["if"]
+    for name in [
+        "verify-candidate-preflight",
+        "verify-production-migration-replay",
         "build-candidate",
-        "publish-signed",
-    ]
+    ]:
+        assert "inputs.promotion_source_run_id == ''" in workflow["jobs"][name]["if"]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "legacy",
+        "ref",
+        "revision",
+        "promotion_source_run_id",
+        "promotion_source_run_attempt",
+        "promotion_artifact_id",
+        "promotion_artifact_sha256",
+        "promotion_manifest_sha256",
+        "partial-legacy",
+        "invalid-id",
+        "invalid-sha",
+        "runtime-evidence",
+    ],
+)
+def test_protected_promotion_coordinates_fail_before_transfer(fault) -> None:
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/saas-image-candidate.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    step = workflow["jobs"]["publish-signed"]["steps"][0]
+    coordinates = {
+        "PROMOTION_SOURCE_RUN_ID": "23",
+        "PROMOTION_SOURCE_RUN_ATTEMPT": "2",
+        "PROMOTION_ARTIFACT_ID": "17",
+        "PROMOTION_ARTIFACT_SHA256": "b" * 64,
+        "PROMOTION_MANIFEST_SHA256": "c" * 64,
+    }
+    if fault == "legacy":
+        coordinates = dict.fromkeys(coordinates, "")
+    elif fault == "partial-legacy":
+        coordinates["PROMOTION_SOURCE_RUN_ID"] = ""
+    elif fault and fault.startswith("promotion_"):
+        coordinates[fault.upper()] = ""
+    elif fault == "invalid-id":
+        coordinates["PROMOTION_SOURCE_RUN_ID"] = "0"
+    elif fault == "invalid-sha":
+        coordinates["PROMOTION_ARTIFACT_SHA256"] = "not-a-digest"
+    result = subprocess.run(
+        ["bash", "-c", step["run"]],
+        capture_output=True,
+        text=True,
+        env={
+            **coordinates,
+            "TRUSTED_REF": "refs/heads/topic" if fault == "ref" else "refs/heads/main",
+            "TRUSTED_REVISION": REVISION,
+            "PRODUCT_REVISION": "d" * 40 if fault == "revision" else REVISION,
+            "PROMOTION_RUNTIME_EVIDENCE_REVISION": "d" * 40 if fault == "runtime-evidence" else "",
+        },
+    )
+    assert (result.returncode == 0) == (fault in {None, "legacy"})
 
 
 def test_policy_rejects_reintroduced_post_admission_builder(tmp_path: Path) -> None:
@@ -728,6 +806,37 @@ def test_policy_rejects_reintroduced_post_admission_builder(tmp_path: Path) -> N
     workflow.write_text(text)
     assert (
         "protected release must promote the admitted OCI bytes without rebuilding"
+        in validate_candidate_build_contract(repo)
+    )
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "!cancelled() &&\n      github.event_name == 'workflow_dispatch' &&",
+        "inputs.promotion_source_run_id == '' && needs.build-candidate.result == 'success'",
+        "inputs.promotion_source_run_id != '' && needs.build-candidate.result == 'skipped'",
+        "if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}",
+        "python -m saas.scripts.oci_promotion download-trusted-main",
+        '[[ "$PROMOTION_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]]',
+        (
+            '[[ -z "$PROMOTION_SOURCE_RUN_ATTEMPT$PROMOTION_ARTIFACT_ID'
+            '$PROMOTION_ARTIFACT_SHA256$PROMOTION_MANIFEST_SHA256" ]]'
+        ),
+        "needs: [publish-signed]",
+        "python -m saas.scripts.oci_promotion verify-trusted-main",
+        ".[0] == (.[1] | del(.state, .candidate_manifest_sha256))",
+        ".promotion.source_proof_sha256 == $proof",
+    ],
+)
+def test_cross_run_policy_rejects_bypassed_origin_binding(tmp_path, target) -> None:
+    repo = _candidate_contract_repo(tmp_path)
+    workflow = repo / ".github/workflows/saas-image-candidate.yml"
+    source = workflow.read_text()
+    assert target in source
+    workflow.write_text(source.replace(target, "removed-origin-binding", 1))
+    assert (
+        "cross-run promotion must independently bind a qualified trusted Main producer"
         in validate_candidate_build_contract(repo)
     )
 

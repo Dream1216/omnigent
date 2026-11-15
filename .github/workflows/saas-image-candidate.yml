@@ -85,6 +85,26 @@ on:
         description: Optional immutable admitted runtime evidence data revision
         required: false
         type: string
+      promotion_source_run_id:
+        description: Optional completed trusted Main producer run; empty retains same-run build
+        required: false
+        type: string
+      promotion_source_run_attempt:
+        description: Exact original producer attempt for cross-run promotion
+        required: false
+        type: string
+      promotion_artifact_id:
+        description: Immutable admitted OCI artifact ID from that producer attempt
+        required: false
+        type: string
+      promotion_artifact_sha256:
+        description: Original admitted artifact ZIP SHA256
+        required: false
+        type: string
+      promotion_manifest_sha256:
+        description: Original sealed candidate manifest SHA256
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -102,7 +122,7 @@ env:
 
 jobs:
   verify-candidate-preflight:
-    if: ${{ !inputs.diagnostic_host_only }}
+    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -145,7 +165,7 @@ jobs:
         run: uv run python -m saas.scripts.check_image_supply_chain
 
   verify-production-migration-replay:
-    if: ${{ !inputs.diagnostic_host_only }}
+    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -202,6 +222,7 @@ jobs:
           if-no-files-found: error
 
   build-candidate:
+    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}
     needs:
       - verify-candidate-preflight
       - verify-production-migration-replay
@@ -604,8 +625,8 @@ jobs:
       - name: Upload immutable admitted OCI bytes
         id: upload-oci
         if: >-
-          github.event_name == 'workflow_dispatch' &&
-          inputs.publish_signed && github.ref == 'refs/heads/main'
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: saas-oci-promotion-${{ env.CANDIDATE_REVISION }}
@@ -660,14 +681,19 @@ jobs:
 
   publish-signed:
     if: >-
+      !cancelled() &&
       github.event_name == 'workflow_dispatch' &&
       !inputs.diagnostic_host_only &&
       inputs.publish_signed &&
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/main' &&
+      ((inputs.promotion_source_run_id == '' && needs.build-candidate.result == 'success') ||
+       (inputs.promotion_source_run_id != '' && needs.build-candidate.result == 'skipped'))
     needs: build-candidate
     environment: production-image
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    outputs:
+      candidate-manifest-sha256: ${{ steps.admitted.outputs.manifest-sha256 }}
     permissions:
       actions: read
       contents: read
@@ -679,17 +705,35 @@ jobs:
       OMNIGENT_SKIP_WEB_UI: "true"
       PRODUCT_REVISION: ${{ inputs.product_revision }}
       SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
-      CANDIDATE_MANIFEST_SHA256: ${{ needs.build-candidate.outputs.manifest-sha256 }}
+      CANDIDATE_MANIFEST_SHA256: ${{ inputs.promotion_source_run_id != '' && inputs.promotion_manifest_sha256 || needs.build-candidate.outputs.manifest-sha256 }}
+      OCI_ARTIFACT_ID: ${{ inputs.promotion_source_run_id != '' && inputs.promotion_artifact_id || needs.build-candidate.outputs.oci-artifact-id }}
+      OCI_ARTIFACT_SHA256: ${{ inputs.promotion_source_run_id != '' && inputs.promotion_artifact_sha256 || needs.build-candidate.outputs.oci-artifact-sha256 }}
+      PROMOTION_SOURCE_RUN_ID: ${{ inputs.promotion_source_run_id }}
+      PROMOTION_SOURCE_RUN_ATTEMPT: ${{ inputs.promotion_source_run_attempt }}
     steps:
       - name: Validate protected release coordinates
         env:
           TRUSTED_REF: ${{ github.ref }}
           TRUSTED_REVISION: ${{ github.sha }}
+          PROMOTION_ARTIFACT_ID: ${{ inputs.promotion_artifact_id }}
+          PROMOTION_ARTIFACT_SHA256: ${{ inputs.promotion_artifact_sha256 }}
+          PROMOTION_MANIFEST_SHA256: ${{ inputs.promotion_manifest_sha256 }}
+          PROMOTION_RUNTIME_EVIDENCE_REVISION: ${{ inputs.runtime_evidence_revision }}
         run: |
           set -euo pipefail
-          [[ "$TRUSTED_REF" == "refs/heads/main" ]]
-          [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$PRODUCT_REVISION" == "$TRUSTED_REVISION" ]]
+          [[ "$TRUSTED_REF" == "refs/heads/main" ]] || exit 1
+          [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$PRODUCT_REVISION" == "$TRUSTED_REVISION" ]] || exit 1
+          if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
+            [[ -z "$PROMOTION_RUNTIME_EVIDENCE_REVISION" ]] || exit 1
+            [[ "$PROMOTION_SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+            [[ "$PROMOTION_SOURCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || exit 1
+            [[ "$PROMOTION_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+            [[ "$PROMOTION_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+            [[ "$PROMOTION_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          else
+            [[ -z "$PROMOTION_SOURCE_RUN_ATTEMPT$PROMOTION_ARTIFACT_ID$PROMOTION_ARTIFACT_SHA256$PROMOTION_MANIFEST_SHA256" ]] || exit 1
+          fi
       - name: Checkout immutable release candidate
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -709,20 +753,29 @@ jobs:
           product-revision: ${{ inputs.product_revision }}
           evidence-revision: ${{ inputs.runtime_evidence_revision }}
       - name: Download and validate original admitted OCI artifact
+        id: admitted
         env:
           GH_TOKEN: ${{ github.token }}
-          OCI_ARTIFACT_ID: ${{ needs.build-candidate.outputs.oci-artifact-id }}
-          OCI_ARTIFACT_SHA256: ${{ needs.build-candidate.outputs.oci-artifact-sha256 }}
         run: |
           set -euo pipefail
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
           printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
-          python -m saas.scripts.oci_promotion download \
-            --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
-            --source-date-epoch "$source_epoch" \
-            --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
-            --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
-            --run-id "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY"
+          if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
+            python -m saas.scripts.oci_promotion download-trusted-main \
+              --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+              --source-date-epoch "$source_epoch" \
+              --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+              --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+              --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+              --repository "$GITHUB_REPOSITORY"
+          else
+            python -m saas.scripts.oci_promotion download \
+              --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+              --source-date-epoch "$source_epoch" \
+              --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+              --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+              --run-id "$GITHUB_RUN_ID" --repository "$GITHUB_REPOSITORY"
+          fi
           python -m saas.scripts.scan_oci_candidates \
             --image "server=${RUNNER_TEMP}/admitted-oci/server-1.tar" \
             --image "host=${RUNNER_TEMP}/admitted-oci/host-1.tar" \
@@ -733,6 +786,7 @@ jobs:
             --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
             --current-scans artifacts/promotion-current-scans \
             --layout-root "${RUNNER_TEMP}/admitted-layouts" --discard-transferred-archives
+          printf 'manifest-sha256=%s\n' "$CANDIDATE_MANIFEST_SHA256" >> "$GITHUB_OUTPUT"
       - name: Retain current same-OCI scan evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -994,6 +1048,9 @@ jobs:
             --server "${RUNNER_TEMP}/server-signed.tar" --host "${RUNNER_TEMP}/host-signed.tar" \
             > artifacts/promotion-readback-after-signing.json
           cp "${RUNNER_TEMP}/admitted-oci/oci-promotion-manifest.json" artifacts/
+          if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
+            cp "${RUNNER_TEMP}/admitted-oci/promotion-source.json" artifacts/
+          fi
       - name: Upload exact signed-image scan reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1011,11 +1068,13 @@ jobs:
           WHEEL_ATTESTATION: ${{ steps.attest-wheel.outputs.attestation-url }}
           SERVER_ATTESTATION: ${{ steps.attest-server.outputs.attestation-url }}
           HOST_ATTESTATION: ${{ steps.attest-host.outputs.attestation-url }}
-          OCI_ARTIFACT_ID: ${{ needs.build-candidate.outputs.oci-artifact-id }}
-          OCI_ARTIFACT_SHA256: ${{ needs.build-candidate.outputs.oci-artifact-sha256 }}
         run: |
           set -euo pipefail
           mkdir -p artifacts
+          source_proof_sha256=""
+          if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
+            source_proof_sha256=$(sha256sum artifacts/promotion-source.json | cut -d' ' -f1)
+          fi
           jq -n \
             --arg revision "$PRODUCT_REVISION" \
             --arg workflow "$GITHUB_WORKFLOW_REF" \
@@ -1028,7 +1087,10 @@ jobs:
             --arg host_attestation "$HOST_ATTESTATION" \
             --arg manifest_sha256 "$CANDIDATE_MANIFEST_SHA256" \
             --arg artifact_id "$OCI_ARTIFACT_ID" --arg artifact_sha256 "$OCI_ARTIFACT_SHA256" \
-            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, rebuilt: false}, production_deployment_receipt: null}' \
+            --arg source_run_id "${PROMOTION_SOURCE_RUN_ID:-$GITHUB_RUN_ID}" \
+            --arg source_run_attempt "${PROMOTION_SOURCE_RUN_ATTEMPT:-$GITHUB_RUN_ATTEMPT}" \
+            --arg source_proof_sha256 "$source_proof_sha256" \
+            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, source_run_id: ($source_run_id | tonumber), source_run_attempt: ($source_run_attempt | tonumber), source_proof_sha256: $source_proof_sha256, rebuilt: false}, production_deployment_receipt: null}' \
             > artifacts/signed-release-candidate.json
       - name: Upload signed release candidate facts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1037,6 +1099,7 @@ jobs:
           path: |
             artifacts/signed-release-candidate.json
             artifacts/oci-promotion-manifest.json
+            artifacts/promotion-source.json
             artifacts/promotion-readback-*.json
             artifacts/promotion-current-scans/
             artifacts/supply-chain/
@@ -1045,20 +1108,22 @@ jobs:
 
   verify-published-source:
     if: >-
+      !cancelled() && needs.publish-signed.result == 'success' &&
       github.event_name == 'workflow_dispatch' &&
       !inputs.diagnostic_host_only &&
       inputs.publish_signed &&
       github.ref == 'refs/heads/main'
-    needs: [build-candidate, publish-signed]
+    needs: [publish-signed]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read
       packages: read
       attestations: read
     env:
       PRODUCT_REVISION: ${{ inputs.product_revision }}
-      CANDIDATE_MANIFEST_SHA256: ${{ needs.build-candidate.outputs.manifest-sha256 }}
+      CANDIDATE_MANIFEST_SHA256: ${{ needs.publish-signed.outputs.candidate-manifest-sha256 }}
     steps:
       - name: Checkout immutable independent verifier
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1080,6 +1145,34 @@ jobs:
         with:
           name: signed-release-candidate-${{ inputs.product_revision }}
           path: release-facts
+      - name: Independently verify cross-run producer origin
+        if: inputs.promotion_source_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTION_SOURCE_RUN_ID: ${{ inputs.promotion_source_run_id }}
+          PROMOTION_SOURCE_RUN_ATTEMPT: ${{ inputs.promotion_source_run_attempt }}
+          OCI_ARTIFACT_ID: ${{ inputs.promotion_artifact_id }}
+          OCI_ARTIFACT_SHA256: ${{ inputs.promotion_artifact_sha256 }}
+        run: |
+          set -euo pipefail
+          source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
+          python -m saas.scripts.oci_promotion verify-trusted-main \
+            --root release-facts --revision "$PRODUCT_REVISION" \
+            --source-date-epoch "$source_epoch" --repository "$GITHUB_REPOSITORY" \
+            --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+            --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+            --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+            > release-facts/independent-promotion-source.json
+          jq -e --arg seal "$CANDIDATE_MANIFEST_SHA256" \
+            '.state == "trusted_source_transferred_requires_current_prepare" and .candidate_manifest_sha256 == $seal' \
+            release-facts/promotion-source.json >/dev/null
+          jq -e -s '.[0] == (.[1] | del(.state, .candidate_manifest_sha256))' \
+            release-facts/independent-promotion-source.json release-facts/promotion-source.json >/dev/null
+          source_proof_sha256=$(sha256sum release-facts/promotion-source.json | cut -d' ' -f1)
+          jq -e --arg proof "$source_proof_sha256" \
+            --arg run "$PROMOTION_SOURCE_RUN_ID" --arg attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+            '.promotion.source_run_id == ($run | tonumber) and .promotion.source_run_attempt == ($attempt | tonumber) and .promotion.source_proof_sha256 == $proof' \
+            release-facts/signed-release-candidate.json >/dev/null
       - name: Set up crane
         uses: ./saas/actions/setup-pinned-crane
         timeout-minutes: 3
@@ -1150,7 +1243,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: independent-oci-readback-${{ inputs.product_revision }}
-          path: release-facts/independent-oci-readback.json
+          path: |
+            release-facts/independent-oci-readback.json
+            release-facts/independent-promotion-source.json
           if-no-files-found: error
           retention-days: 90
 

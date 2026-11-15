@@ -393,6 +393,15 @@ def verify_trusted_main_source(
         "source producer and prerequisites must pass for this exact attempt",
     )
     producer = by_name["build-candidate"]
+    runtime_context = [
+        step
+        for step in producer.get("steps", [])
+        if step.get("name") == "Prepare immutable runtime evidence data for candidate"
+    ]
+    require(
+        len(runtime_context) == 1 and runtime_context[0].get("conclusion") == "skipped",
+        "cross-run promotion requires the unmodified Main runtime evidence context",
+    )
     uploads = [
         step
         for step in producer.get("steps", [])
@@ -438,6 +447,48 @@ def download_artifact(endpoint: str, root: Path, *, zip_sha256: str) -> None:
         with archive.open("wb") as stream:
             subprocess.run(["gh", "api", endpoint + "/zip"], stdout=stream, check=True)
         extract_artifact(archive, root, zip_sha256=zip_sha256)
+
+
+def resolve_trusted_main_source(
+    *,
+    repository: str,
+    revision: str,
+    run_id: int,
+    run_attempt: int,
+    artifact_id: int,
+    zip_sha256: str,
+) -> dict[str, Any]:
+    """Use authenticated source metadata independently in signer and readback jobs."""
+    repository_id = verify_promotion_controller(
+        dict(os.environ), repository=repository, revision=revision
+    )
+    require(
+        run_id > 0 and run_attempt > 0 and artifact_id > 0, "positive source coordinates required"
+    )
+    endpoint = f"repos/{repository}/actions/runs/{run_id}/attempts/{run_attempt}"
+    run = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+    pages = json.loads(
+        subprocess.check_output(
+            ["gh", "api", "--paginate", "--slurp", endpoint + "/jobs?per_page=100"], text=True
+        )
+    )
+    artifact = json.loads(
+        subprocess.check_output(
+            ["gh", "api", f"repos/{repository}/actions/artifacts/{artifact_id}"], text=True
+        )
+    )
+    return verify_trusted_main_source(
+        run,
+        [job for page in pages for job in page["jobs"]],
+        artifact,
+        repository=repository,
+        repository_id=repository_id,
+        revision=revision,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        artifact_id=artifact_id,
+        zip_sha256=zip_sha256,
+    )
 
 
 def extract_artifact(archive: Path, root: Path, *, zip_sha256: str) -> None:
@@ -488,7 +539,15 @@ def verify_readback(archive: Path, expected: dict[str, Any]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("seal", "download", "download-trusted-main", "prepare", "readback")
+        "command",
+        choices=(
+            "seal",
+            "download",
+            "download-trusted-main",
+            "verify-trusted-main",
+            "prepare",
+            "readback",
+        ),
     )
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--revision", required=True)
@@ -506,7 +565,7 @@ def main() -> int:
     parser.add_argument("--host", type=Path)
     args = parser.parse_args()
     labels = expected_labels(Path.cwd(), args.revision)
-    if args.command in {"download", "download-trusted-main"}:
+    if args.command in {"download", "download-trusted-main", "verify-trusted-main"}:
         require(
             args.artifact_id is not None
             and args.run_id is not None
@@ -517,38 +576,11 @@ def main() -> int:
             "immutable artifact coordinates are required",
         )
         endpoint = f"repos/{args.repository}/actions/artifacts/{args.artifact_id}"
-        repository_id = None
-        if args.command == "download-trusted-main":
-            repository_id = verify_promotion_controller(
-                dict(os.environ), repository=args.repository, revision=args.revision
-            )
-            require(args.run_attempt is not None, "the original source attempt is required")
-        metadata = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
-        verify_artifact_metadata(
-            metadata,
-            artifact_id=args.artifact_id,
-            zip_sha256=args.artifact_sha256,
-            revision=args.revision,
-            run_id=args.run_id,
-        )
         source = None
-        if repository_id is not None:
-            run_endpoint = (
-                f"repos/{args.repository}/actions/runs/{args.run_id}/attempts/{args.run_attempt}"
-            )
-            run = json.loads(subprocess.check_output(["gh", "api", run_endpoint], text=True))
-            pages = json.loads(
-                subprocess.check_output(
-                    ["gh", "api", "--paginate", "--slurp", run_endpoint + "/jobs?per_page=100"],
-                    text=True,
-                )
-            )
-            source = verify_trusted_main_source(
-                run,
-                [job for page in pages for job in page["jobs"]],
-                metadata,
+        if args.command != "download":
+            require(args.run_attempt is not None, "the original source attempt is required")
+            source = resolve_trusted_main_source(
                 repository=args.repository,
-                repository_id=repository_id,
                 revision=args.revision,
                 run_id=args.run_id,
                 run_attempt=args.run_attempt,
@@ -556,6 +588,18 @@ def main() -> int:
                 zip_sha256=args.artifact_sha256,
             )
             require(args.manifest_sha256 is not None, "expected candidate seal is required")
+            if args.command == "verify-trusted-main":
+                print(json.dumps(source, sort_keys=True))
+                return 0
+        else:
+            metadata = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+            verify_artifact_metadata(
+                metadata,
+                artifact_id=args.artifact_id,
+                zip_sha256=args.artifact_sha256,
+                revision=args.revision,
+                run_id=args.run_id,
+            )
         download_artifact(endpoint, args.root, zip_sha256=args.artifact_sha256)
         if source is not None:
             require(
