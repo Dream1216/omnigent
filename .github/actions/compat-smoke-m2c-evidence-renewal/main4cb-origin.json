@@ -1,0 +1,78 @@
+{
+  "artifacts": {
+    "oci": {
+      "bytes": 5231928033,
+      "id": 14182093849,
+      "name": "saas-oci-promotion-4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
+      "sha256": "ad1fdb211748e037dae006f4c09e6b65d7d732f4fea31eeb5f35b8c44d66b6a4"
+    },
+    "signed": {
+      "bytes": 3975741,
+      "id": 14183029120,
+      "name": "signed-release-candidate-4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
+      "sha256": "a473467773775c12496647eab70604457a2b2ef0bfb58045479cb116ced94e0f"
+    }
+  },
+  "attempt": 1,
+  "images": {
+    "host": "sha256:f3f1b00046d94a8f8363b4dcf78760739a7ab10d66a888f36aa418c12e34d21e",
+    "server": "sha256:2d5fe7919104042ab7971c9e8517b5ace238c1198dd351f2b78c9cbf29ea8a77"
+  },
+  "manifest_sha256": "b987fbc5e9ed07b8b9bf73847da63f46dad901b7ce9b91df9044f34d17e849be",
+  "original_environment_review": {
+    "approval_POST_count": 1,
+    "attempt": 1,
+    "deployment_id": 7810538481,
+    "environment": "production-image",
+    "id": 19541282195,
+    "no_rules_bypassed": true,
+    "normal_pending_api_approval": true,
+    "product_revision": "4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
+    "review_received_at": "2026-11-15T21:54:56.055641+00:00",
+    "reviewer_login": "Dream1216",
+    "run": 43755049480,
+    "signatures_or_q_not_yet_claimed": true
+  },
+  "original_main_ci": {
+    "expires_at": "2026-11-16T19:54:52+00:00",
+    "product_revision": "4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
+    "product_tree": "a3de86a0a5e8ad9120b7ac451d135804335d5525",
+    "qualification_sha256": "b9e45e69935692dc6b0de8d987cb4b41ba2360643551c2c3a7b95de04e59ec8d",
+    "required_workflow_count": 6
+  },
+  "platforms": {
+    "host-amd64": {
+      "config_digest": "sha256:9594df31367af48de3d0c1dd2223412d575c1ce5baaf4b6515d1c30c9525fd0e",
+      "manifest_digest": "sha256:1852d55c272cb879b53aacbffa1b5d3a3db52944c10203072f11eb8d0fc4d91d"
+    },
+    "host-arm64": {
+      "config_digest": "sha256:5f3d41375fa5449673d4bd29aa338816bb1ebd8997a4c90a5958d2c42edf570f",
+      "manifest_digest": "sha256:bedaf44644b73bbfc97025df8b8b62cd04c0e0d6603fcf87481b1102fcfbcec3"
+    },
+    "server-amd64": {
+      "config_digest": "sha256:cd46154dd81cdebd866a3ae7185698b1aa61ce3a037e2a1b0266c9db9e7838b2",
+      "manifest_digest": "sha256:2e9dcea802f9199e6f7b442a7b7c9c43ddb7a69fa8ce63bc675b91dfcdf8a9bc"
+    },
+    "server-arm64": {
+      "config_digest": "sha256:e6b7eeb82b8d4f7cf02db079145fb8dd309f7ce7d6f01ad04652386cd7bf67ed",
+      "manifest_digest": "sha256:6167fa905882a481be367aeeb30bc6c95c31ac86501ccf3ec217a3504ee80765"
+    }
+  },
+  "product_revision": "4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
+  "product_tree": "a3de86a0a5e8ad9120b7ac451d135804335d5525",
+  "rebuilt": false,
+  "repository": "Dream1216/omnigent",
+  "required_jobs": [
+    132937262240,
+    132937262421,
+    132937262645,
+    132939071364,
+    132971403766,
+    132979954294
+  ],
+  "run_id": 43755049480,
+  "schema_version": 1,
+  "source_date_epoch": 1794772441,
+  "source_qualification_sha256": "821f80467cad0328549a3d8b8f0697b90edcbcf8c1d5eb79efcf3e83f76009e5",
+  "workflow": ".github/workflows/saas-image-candidate.yml"
+}

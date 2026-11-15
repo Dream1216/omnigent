@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "6f9f86e1b2589b1aa6d19c6662ce00c62dc67ad196577af82a233ab8b2b0bb00",
+  "candidate_manifest_sha256": "d51959f12336e7469b7a88d5d689d8e8d04021f1da42f3dbc74ac017cab7c0fc",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -333,13 +333,13 @@
     },
     {
       "path": ".github/actions/compat-smoke-m2c-evidence-renewal/renewal.py",
-      "bytes": 15889,
-      "sha256": "6209896356a35bdfd489e46b288796cdbe370c9c7f9c5a29b7961df54a2b4289"
+      "bytes": 19015,
+      "sha256": "73c73680922b7d604068f4635a29c5c9a68495fb446e99723f2d354320607f99"
     },
     {
       "path": ".github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py",
-      "bytes": 7702,
-      "sha256": "f5c9f69022ac25d188275288e040332dcfd3aecfde41b1a2bd69e60dbf622269"
+      "bytes": 11756,
+      "sha256": "146ae8493b64d6b3e6d54562d82d890aef2e6d01af94ba1a2e115eb59ec5d534"
     },
     {
       "path": ".github/workflows/saas-m2c-evidence-renewal.yml",
@@ -410,6 +410,16 @@
       "path": "saas/scripts/check_image_supply_chain.py",
       "bytes": 118577,
       "sha256": "920af2729cc8cb265d4a301831d451b3f73ca12d86fbdfc564c910ba94c1dd9e"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json",
+      "bytes": 3102,
+      "sha256": "f5e5bfd1045eef2677483ade372474ca814ce173bab17319808a994a43ef0532"
+    },
+    {
+      "path": ".github/workflows/saas-m-current-evidence-renewal.yml",
+      "bytes": 6837,
+      "sha256": "e5c10dd45525bad0eaa7ce8693f8f6251ac6bb08874bd2f0c4622ca15cfa52b4"
     }
   ],
   "governance_paths": [
@@ -576,5 +586,21 @@
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-P1-trusted-main-crossrun-20261116/P1-SECOND-BATCH.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
     "bytes": 4263,
     "sha256": "599a8951dbc9030b53c450d3f670f5a34b042395967c4982b47bd62c1c68ee53"
+  },
+  "previous_p1_second_exact_scope": {
+    "candidate_manifest_sha256": "6f9f86e1b2589b1aa6d19c6662ce00c62dc67ad196577af82a233ab8b2b0bb00",
+    "scope_sha256": "dde0e381d98998e2ad36d3d68908405f41a5890adf0dad23d42871630a495cfe",
+    "approval": {
+      "candidate_manifest_sha256": "6f9f86e1b2589b1aa6d19c6662ce00c62dc67ad196577af82a233ab8b2b0bb00",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "599a8951dbc9030b53c450d3f670f5a34b042395967c4982b47bd62c1c68ee53"
+    },
+    "retained_P1_and_runtime_protected_bytes_unchanged": true
+  },
+  "current_security_renewal_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-M4cb-normal-current-security-renewal-20261116/NORMAL-CURRENT-RENEWAL.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
+    "bytes": 2630,
+    "sha256": "30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0"
   }
 }

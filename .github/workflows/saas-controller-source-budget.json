@@ -32,11 +32,11 @@
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "68317835bb1b950b98eff10f257fc6b9959b1719d67b04d70d15471d206ae30f",
+    "current_controller_baseline_sha256": "45a2cc5af55873ea8f1157a9a76e90614e496e83524076395672eb4aa9329387",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 275,
     "reason": "Retain the three existing asynchronous test observation boundaries and the reviewed Host readiness change. The measured controller budget increases by one file and 249 net lines.",
-    "authority": "Direct human11/16 optimization implementation plan bound to independently closed P1 crossrun controller wiring; currentMain4cb capture unchanged; numeric275/13650/9/.85 preserved; authority 599a8951dbc9030b53c450d3f670f5a34b042395967c4982b47bd62c1c68ee53",
+    "authority": "Verified direct human11/16 implementation authority, exact independently closed Main4cb same-digest current-security controller increment; product/q821f/CI cap unchanged, numeric275/13650/9/.85 preserved; authority 30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,9 +47,9 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "6f9f86e1b2589b1aa6d19c6662ce00c62dc67ad196577af82a233ab8b2b0bb00",
+    "candidate_manifest_sha256": "d51959f12336e7469b7a88d5d689d8e8d04021f1da42f3dbc74ac017cab7c0fc",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "599a8951dbc9030b53c450d3f670f5a34b042395967c4982b47bd62c1c68ee53"
+    "authority_record_sha256": "30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0"
   }
 }
