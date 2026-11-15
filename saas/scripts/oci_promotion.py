@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import tarfile
@@ -28,6 +29,8 @@ IMAGES = ("server", "host")
 PLATFORMS = ("linux/amd64", "linux/arm64")
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_NAME = "oci-promotion-manifest.json"
+TRUSTED_REPOSITORY = "Dream1216/omnigent"
+TRUSTED_WORKFLOW = ".github/workflows/saas-image-candidate.yml"
 
 
 def require(condition: bool, message: str) -> None:
@@ -283,6 +286,160 @@ def verify_artifact_metadata(
     )
 
 
+def verify_promotion_controller(
+    environment: dict[str, str], *, repository: str, revision: str
+) -> int:
+    """Permit cross-run intake only from the exact protected Main controller."""
+    require(
+        repository == TRUSTED_REPOSITORY
+        and environment.get("GITHUB_ACTIONS") == "true"
+        and environment.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+        and environment.get("GITHUB_REPOSITORY") == repository
+        and environment.get("GITHUB_REF") == "refs/heads/main"
+        and environment.get("GITHUB_SHA") == revision
+        and re.fullmatch(r"[0-9a-f]{40}", revision) is not None
+        and environment.get("GITHUB_WORKFLOW_REF")
+        == f"{repository}/{TRUSTED_WORKFLOW}@refs/heads/main"
+        and environment.get("GITHUB_WORKFLOW_SHA") == revision
+        and re.fullmatch(r"[1-9][0-9]*", environment.get("GITHUB_REPOSITORY_ID", "")) is not None,
+        "cross-run promotion requires the registered exact Main controller",
+    )
+    return int(environment["GITHUB_REPOSITORY_ID"])
+
+
+def verify_trusted_main_source(
+    run: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    artifact: dict[str, Any],
+    *,
+    repository: str,
+    repository_id: int,
+    revision: str,
+    run_id: int,
+    run_attempt: int,
+    artifact_id: int,
+    zip_sha256: str,
+) -> dict[str, Any]:
+    """Bind an admitted artifact to its actual successful Main producer attempt."""
+    require(
+        repository == TRUSTED_REPOSITORY
+        and type(repository_id) is int
+        and repository_id > 0
+        and type(run_id) is int
+        and run_id > 0
+        and type(run_attempt) is int
+        and run_attempt > 0
+        and run.get("id") == run_id
+        and run.get("run_attempt") == run_attempt
+        and run.get("path") == TRUSTED_WORKFLOW
+        and run.get("event") in {"push", "workflow_dispatch"}
+        and run.get("status") == "completed"
+        and run.get("head_sha") == revision
+        and run.get("head_branch") == "main"
+        and all(
+            run.get(key, {}).get("full_name") == repository
+            and run.get(key, {}).get("id") == repository_id
+            for key in ("repository", "head_repository")
+        ),
+        "source is not the registered completed Main workflow and attempt",
+    )
+    verify_artifact_metadata(
+        artifact,
+        artifact_id=artifact_id,
+        zip_sha256=zip_sha256,
+        revision=revision,
+        run_id=run_id,
+    )
+    require(
+        artifact.get("workflow_run", {}).get("repository_id") == repository_id
+        and artifact.get("workflow_run", {}).get("head_repository_id") == repository_id
+        and artifact.get("workflow_run", {}).get("head_branch") == "main",
+        "artifact repository or Main source differs",
+    )
+    by_name = {job.get("name"): job for job in jobs}
+    require(len(by_name) == len(jobs), "duplicate source job names")
+    migrations = [
+        job
+        for name, job in by_name.items()
+        if isinstance(name, str) and name.startswith("verify-production-migration-replay (")
+    ]
+    require(
+        len(migrations) == 2
+        and all(
+            sum(job["name"].startswith(prefix) for job in migrations) == 1
+            for prefix in (
+                "verify-production-migration-replay (postgres:16.14-",
+                "verify-production-migration-replay (postgres:18.6-",
+            )
+        ),
+        "both registered production migration replays are required",
+    )
+    required_jobs = [
+        by_name.get(name, {}) for name in ("verify-candidate-preflight", "build-candidate")
+    ]
+    required_jobs.extend(migrations)
+    require(
+        len({job.get("id") for job in required_jobs}) == len(required_jobs)
+        and all(
+            type(job.get("id")) is int
+            and job["id"] > 0
+            and job.get("run_id") == run_id
+            and job.get("run_attempt") == run_attempt
+            and job.get("head_sha") == revision
+            and job.get("status") == "completed"
+            and job.get("conclusion") == "success"
+            for job in required_jobs
+        ),
+        "source producer and prerequisites must pass for this exact attempt",
+    )
+    producer = by_name["build-candidate"]
+    uploads = [
+        step
+        for step in producer.get("steps", [])
+        if step.get("name") == "Upload immutable admitted OCI bytes"
+    ]
+    require(
+        len(uploads) == 1
+        and uploads[0].get("status") == "completed"
+        and uploads[0].get("conclusion") == "success",
+        "source producer did not complete the admitted OCI upload",
+    )
+    try:
+        started, created, completed = [
+            datetime.fromisoformat(value)
+            for value in (
+                uploads[0]["started_at"],
+                artifact["created_at"],
+                uploads[0]["completed_at"],
+            )
+        ]
+        require(
+            all(value.tzinfo is not None for value in (started, created, completed))
+            and started <= created <= completed <= datetime.now(UTC),
+            "artifact creation does not bind the producer upload attempt",
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("artifact creation does not bind the producer upload attempt") from exc
+    return {
+        "repository": repository,
+        "product_revision": revision,
+        "source_run_id": run_id,
+        "source_run_attempt": run_attempt,
+        "source_producer_job_id": producer["id"],
+        "artifact_id": artifact_id,
+        "artifact_sha256": zip_sha256,
+    }
+
+
+def download_artifact(endpoint: str, root: Path, *, zip_sha256: str) -> None:
+    """Transfer the immutable original once and retain the existing ZIP checks."""
+    with tempfile.TemporaryDirectory(prefix="omnigent-promotion-download-") as temporary:
+        archive = Path(temporary) / "candidate.zip"
+        with archive.open("wb") as stream:
+            subprocess.run(["gh", "api", endpoint + "/zip"], stdout=stream, check=True)
+        extract_artifact(archive, root, zip_sha256=zip_sha256)
+
+
 def extract_artifact(archive: Path, root: Path, *, zip_sha256: str) -> None:
     require(file_sha256(archive) == zip_sha256, "original artifact ZIP digest mismatch")
     root.mkdir(parents=True, exist_ok=False)
@@ -330,7 +487,9 @@ def verify_readback(archive: Path, expected: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("seal", "download", "prepare", "readback"))
+    parser.add_argument(
+        "command", choices=("seal", "download", "download-trusted-main", "prepare", "readback")
+    )
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--source-date-epoch", type=int, required=True)
@@ -338,6 +497,7 @@ def main() -> int:
     parser.add_argument("--artifact-id", type=int)
     parser.add_argument("--artifact-sha256")
     parser.add_argument("--run-id", type=int)
+    parser.add_argument("--run-attempt", type=int)
     parser.add_argument("--repository")
     parser.add_argument("--layout-root", type=Path)
     parser.add_argument("--current-scans", type=Path)
@@ -346,7 +506,7 @@ def main() -> int:
     parser.add_argument("--host", type=Path)
     args = parser.parse_args()
     labels = expected_labels(Path.cwd(), args.revision)
-    if args.command == "download":
+    if args.command in {"download", "download-trusted-main"}:
         require(
             args.artifact_id is not None
             and args.run_id is not None
@@ -357,6 +517,12 @@ def main() -> int:
             "immutable artifact coordinates are required",
         )
         endpoint = f"repos/{args.repository}/actions/artifacts/{args.artifact_id}"
+        repository_id = None
+        if args.command == "download-trusted-main":
+            repository_id = verify_promotion_controller(
+                dict(os.environ), repository=args.repository, revision=args.revision
+            )
+            require(args.run_attempt is not None, "the original source attempt is required")
         metadata = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
         verify_artifact_metadata(
             metadata,
@@ -365,11 +531,54 @@ def main() -> int:
             revision=args.revision,
             run_id=args.run_id,
         )
-        with tempfile.TemporaryDirectory(prefix="omnigent-promotion-download-") as temporary:
-            archive = Path(temporary) / "candidate.zip"
-            with archive.open("wb") as stream:
-                subprocess.run(["gh", "api", endpoint + "/zip"], stdout=stream, check=True)
-            extract_artifact(archive, args.root, zip_sha256=args.artifact_sha256)
+        source = None
+        if repository_id is not None:
+            run_endpoint = (
+                f"repos/{args.repository}/actions/runs/{args.run_id}/attempts/{args.run_attempt}"
+            )
+            run = json.loads(subprocess.check_output(["gh", "api", run_endpoint], text=True))
+            pages = json.loads(
+                subprocess.check_output(
+                    ["gh", "api", "--paginate", "--slurp", run_endpoint + "/jobs?per_page=100"],
+                    text=True,
+                )
+            )
+            source = verify_trusted_main_source(
+                run,
+                [job for page in pages for job in page["jobs"]],
+                metadata,
+                repository=args.repository,
+                repository_id=repository_id,
+                revision=args.revision,
+                run_id=args.run_id,
+                run_attempt=args.run_attempt,
+                artifact_id=args.artifact_id,
+                zip_sha256=args.artifact_sha256,
+            )
+            require(args.manifest_sha256 is not None, "expected candidate seal is required")
+        download_artifact(endpoint, args.root, zip_sha256=args.artifact_sha256)
+        if source is not None:
+            require(
+                file_sha256(args.root / MANIFEST_NAME) == args.manifest_sha256,
+                "candidate seal digest mismatch",
+            )
+            manifest = read_json(args.root / MANIFEST_NAME)
+            require(
+                manifest.get("product_revision") == args.revision
+                and manifest.get("source_date_epoch") == args.source_date_epoch
+                and manifest.get("labels") == labels
+                and set(manifest.get("images", {})) == set(IMAGES)
+                and all(
+                    set(manifest["images"][name]["facts"]["platforms"]) == set(PLATFORMS)
+                    for name in IMAGES
+                ),
+                "transferred candidate source or platform set differs",
+            )
+            source["candidate_manifest_sha256"] = args.manifest_sha256
+            source["state"] = "trusted_source_transferred_requires_current_prepare"
+            (args.root / "promotion-source.json").write_text(
+                json.dumps(source, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
         return 0
     if args.command == "seal":
         manifest = seal_candidate(

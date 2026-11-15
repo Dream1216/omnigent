@@ -10,6 +10,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tarfile
 import time
 import urllib.request
@@ -21,6 +22,7 @@ from typing import Any
 import pytest
 import yaml
 
+from saas.scripts import oci_promotion
 from saas.scripts.check_image_supply_chain import validate_candidate_build_contract
 from saas.scripts.compare_oci_rebuilds import compare_archives, inspect_oci_archive
 from saas.scripts.oci_promotion import (
@@ -31,7 +33,9 @@ from saas.scripts.oci_promotion import (
     seal_candidate,
     verify_artifact_metadata,
     verify_candidate,
+    verify_promotion_controller,
     verify_readback,
+    verify_trusted_main_source,
 )
 from saas.scripts.scan_oci_candidates import file_sha256
 from tests.saas.test_image_supply_chain import _candidate_contract_repo, _write_oci
@@ -358,6 +362,303 @@ def test_wrong_artifact_or_workflow_coordinates_are_rejected(field: str) -> None
         verify_artifact_metadata(
             metadata, artifact_id=17, zip_sha256="b" * 64, revision=REVISION, run_id=23
         )
+
+
+@pytest.fixture
+def main_producer() -> dict[str, Any]:
+    now = datetime.now(UTC)
+    repository = {"full_name": "Dream1216/omnigent", "id": 19}
+    job = {
+        "id": 31,
+        "run_id": 23,
+        "run_attempt": 2,
+        "head_sha": REVISION,
+        "status": "completed",
+        "conclusion": "success",
+    }
+    jobs = [
+        {**job, "name": name}
+        for name in (
+            "verify-candidate-preflight",
+            "build-candidate",
+            "verify-production-migration-replay (postgres:16.14-bookworm@sha256:fixed)",
+            "verify-production-migration-replay (postgres:18.6-trixie@sha256:fixed)",
+        )
+    ]
+    for index, item in enumerate(jobs, 31):
+        item["id"] = index
+    jobs[1]["steps"] = [
+        {
+            "name": "Upload immutable admitted OCI bytes",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": (now - timedelta(minutes=3)).isoformat(),
+            "completed_at": (now - timedelta(minutes=1)).isoformat(),
+        }
+    ]
+    return {
+        "controller": {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_REPOSITORY": repository["full_name"],
+            "GITHUB_REPOSITORY_ID": "19",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_SHA": REVISION,
+            "GITHUB_WORKFLOW_SHA": REVISION,
+            "GITHUB_WORKFLOW_REF": (
+                "Dream1216/omnigent/.github/workflows/saas-image-candidate.yml@refs/heads/main"
+            ),
+        },
+        "run": {
+            "id": 23,
+            "run_attempt": 2,
+            "path": oci_promotion.TRUSTED_WORKFLOW,
+            "event": "push",
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": REVISION,
+            "head_branch": "main",
+            "repository": repository,
+            "head_repository": dict(repository),
+        },
+        "jobs": jobs,
+        "artifact": {
+            "id": 17,
+            "name": f"saas-oci-promotion-{REVISION}",
+            "expired": False,
+            "digest": "sha256:" + "b" * 64,
+            "created_at": (now - timedelta(minutes=2)).isoformat(),
+            "workflow_run": {
+                "id": 23,
+                "head_sha": REVISION,
+                "head_branch": "main",
+                "repository_id": 19,
+                "head_repository_id": 19,
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "GITHUB_ACTIONS",
+        "GITHUB_EVENT_NAME",
+        "GITHUB_REPOSITORY",
+        "GITHUB_REPOSITORY_ID",
+        "GITHUB_REF",
+        "GITHUB_SHA",
+        "GITHUB_WORKFLOW_SHA",
+        "GITHUB_WORKFLOW_REF",
+    ],
+)
+def test_cross_run_requires_the_exact_main_controller(main_producer, field: str) -> None:
+    environment = main_producer["controller"]
+    assert (
+        verify_promotion_controller(
+            environment, repository="Dream1216/omnigent", revision=REVISION
+        )
+        == 19
+    )
+    environment[field] = "different"
+    with pytest.raises(ValueError, match="Main controller"):
+        verify_promotion_controller(
+            environment, repository="Dream1216/omnigent", revision=REVISION
+        )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "late-publisher-failure",
+        "run",
+        "attempt",
+        "workflow",
+        "event",
+        "branch",
+        "product",
+        "repository",
+        "fork",
+        "artifact-run",
+        "artifact-attempt-time",
+        "artifact-expired",
+        "artifact-repository",
+        "producer-attempt",
+        "producer-failed",
+        "preflight-failed",
+        "missing-migration",
+        "duplicate-job",
+        "missing-upload",
+        "upload-failed",
+    ],
+)
+def test_cross_run_binds_the_actual_producer_and_upload_attempt(main_producer, fault) -> None:
+    run, jobs, artifact = [main_producer[key] for key in ("run", "jobs", "artifact")]
+    if fault == "late-publisher-failure":
+        run["conclusion"] = "failure"
+    elif fault in {"run", "attempt", "workflow", "event", "branch", "product"}:
+        field = {
+            "run": "id",
+            "attempt": "run_attempt",
+            "workflow": "path",
+            "event": "event",
+            "branch": "head_branch",
+            "product": "head_sha",
+        }[fault]
+        run[field] = "different"
+    elif fault in {"repository", "fork"}:
+        run["repository" if fault == "repository" else "head_repository"]["id"] = 20
+    elif fault == "artifact-run":
+        artifact["workflow_run"]["id"] = 24
+    elif fault == "artifact-attempt-time":
+        artifact["created_at"] = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    elif fault == "artifact-expired":
+        artifact["expired"] = True
+    elif fault == "artifact-repository":
+        artifact["workflow_run"]["head_repository_id"] = 20
+    elif fault == "producer-attempt":
+        jobs[1]["run_attempt"] = 1
+    elif fault in {"producer-failed", "preflight-failed"}:
+        jobs[1 if fault == "producer-failed" else 0]["conclusion"] = "failure"
+    elif fault == "missing-migration":
+        jobs.pop()
+    elif fault == "duplicate-job":
+        jobs.append(copy.deepcopy(jobs[0]))
+    elif fault == "missing-upload":
+        jobs[1]["steps"] = []
+    elif fault == "upload-failed":
+        jobs[1]["steps"][0]["conclusion"] = "failure"
+
+    def verify():
+        return verify_trusted_main_source(
+            run,
+            jobs,
+            artifact,
+            repository="Dream1216/omnigent",
+            repository_id=19,
+            revision=REVISION,
+            run_id=23,
+            run_attempt=2,
+            artifact_id=17,
+            zip_sha256="b" * 64,
+        )
+
+    if fault in {None, "late-publisher-failure"}:
+        result = verify()
+        assert result["source_run_id"] == 23 and result["source_run_attempt"] == 2
+        assert result["source_producer_job_id"] == 32
+    else:
+        with pytest.raises(ValueError):
+            verify()
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "wrong-attempt", "tampered-zip", "missing-platform", "expired-scans"]
+)
+def test_cross_run_download_reuses_original_oci_and_security_checks(
+    tmp_path, monkeypatch, main_producer, fault
+) -> None:
+    source = tmp_path / "source"
+    labels, now = candidate(source)
+    if fault == "expired-scans":
+        refresh_scan_time(source, now - timedelta(hours=26))
+        now -= timedelta(hours=25)
+    manifest = seal(source, labels, now)
+    if fault == "missing-platform":
+        del manifest["images"]["host"]["facts"]["platforms"]["linux/arm64"]
+    write_json(source / MANIFEST_NAME, manifest)
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for member in source.rglob("*"):
+            if member.is_file():
+                bundle.write(member, member.relative_to(source))
+    zip_bytes = archive.getvalue()
+    zip_sha = hashlib.sha256(zip_bytes).hexdigest()
+    main_producer["artifact"]["digest"] = "sha256:" + zip_sha
+    if fault == "wrong-attempt":
+        main_producer["jobs"][1]["run_attempt"] = 1
+    for key, value in main_producer["controller"].items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(oci_promotion, "expected_labels", lambda repo, revision: labels)
+    downloads = []
+
+    def metadata(args, **kwargs):
+        endpoint = args[-1]
+        if endpoint.endswith("/jobs?per_page=100"):
+            return json.dumps([{"jobs": main_producer["jobs"]}])
+        return json.dumps(
+            main_producer["artifact"] if "/artifacts/" in endpoint else main_producer["run"]
+        )
+
+    def transfer(args, *, stdout, check):
+        assert args == ["gh", "api", "repos/Dream1216/omnigent/actions/artifacts/17/zip"]
+        downloads.append(args)
+        stdout.write(zip_bytes + (b"tamper" if fault == "tampered-zip" else b""))
+
+    monkeypatch.setattr(oci_promotion.subprocess, "check_output", metadata)
+    monkeypatch.setattr(oci_promotion.subprocess, "run", transfer)
+    destination = tmp_path / "download"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "oci_promotion",
+            "download-trusted-main",
+            "--root",
+            str(destination),
+            "--revision",
+            REVISION,
+            "--source-date-epoch",
+            str(EPOCH),
+            "--repository",
+            "Dream1216/omnigent",
+            "--run-id",
+            "23",
+            "--run-attempt",
+            "2",
+            "--artifact-id",
+            "17",
+            "--artifact-sha256",
+            zip_sha,
+            "--manifest-sha256",
+            file_sha256(source / MANIFEST_NAME),
+        ],
+    )
+    if fault not in {None, "expired-scans"}:
+        with pytest.raises(ValueError):
+            oci_promotion.main()
+        assert not (destination / "promotion-source.json").exists()
+        assert bool(downloads) == (fault != "wrong-attempt")
+        return
+    assert oci_promotion.main() == 0
+    assert len(downloads) == 1
+    if fault == "expired-scans":
+        with pytest.raises(ValueError, match="older than 24 hours"):
+            verify_candidate(
+                destination,
+                manifest_sha256=file_sha256(source / MANIFEST_NAME),
+                labels=labels,
+                source_date_epoch=EPOCH,
+            )
+        return
+    assert (
+        verify_candidate(
+            destination,
+            manifest_sha256=file_sha256(source / MANIFEST_NAME),
+            labels=labels,
+            source_date_epoch=EPOCH,
+        )
+        == manifest
+    )
+    for name in ("server", "host"):
+        assert (
+            file_sha256(destination / f"{name}-1.tar")
+            == manifest["images"][name]["archive_sha256"]
+        )
+        verify_readback(destination / f"{name}-1.tar", manifest["images"][name])
+    receipt = json.loads((destination / "promotion-source.json").read_text())
+    assert receipt["source_run_attempt"] == 2 and receipt["artifact_sha256"] == zip_sha
 
 
 def test_zip_sha_and_path_traversal_fail_closed(tmp_path: Path) -> None:
