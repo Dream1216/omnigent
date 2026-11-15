@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011",
+  "candidate_manifest_sha256": "5b87413a152ca4da086ee8026dd1d34312131216fb674a0184c5b417881be669",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -425,6 +425,16 @@
       "path": "tests/saas/test_scan_oci_candidates.py",
       "bytes": 21918,
       "sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011"
+    },
+    {
+      "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json",
+      "bytes": 249366,
+      "sha256": "e5f1940ea273879f54bc22aa9a0e42ab7355fa6d83e978530e3d8becd8fdb2f1"
+    },
+    {
+      "path": "tests/saas/test_legacy_domain_discovery.py",
+      "bytes": 45920,
+      "sha256": "bc1dd290e6de850dcf41db0e3e5b29a67bfa1c9ffd8cf0a115c2b4d5252116c8"
     }
   ],
   "governance_paths": [
@@ -623,5 +633,21 @@
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-M4cb-normal-current-security-renewal-20261116/PR283-DIAGNOSTIC-GUARD.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
     "bytes": 2027,
     "sha256": "6fca6f621dbd839a3a448e192611391c8af5861bcfe64d1e16e7a786c3df315d"
+  },
+  "previous_diagnostic_guard_exact_scope": {
+    "candidate_manifest_sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011",
+    "scope_sha256": "aa8a8161a5f19e1e719050cf034ecbf4cd79b71bc2d5be0126497458ae39a571",
+    "approval": {
+      "candidate_manifest_sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "6fca6f621dbd839a3a448e192611391c8af5861bcfe64d1e16e7a786c3df315d"
+    },
+    "production_P1_current_security_and_runtime_bytes_unchanged": true
+  },
+  "legacy_inverse_guard_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-M4cb-normal-current-security-renewal-20261116/PR283-LEGACY-IMMUTABLE-GUARD.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
+    "bytes": 2215,
+    "sha256": "fdf1ec114056675b3cfe0bd24eab10e709f91312f0f56d746b522e8860c74c30"
   }
 }
