@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "cf5f16079af45bc5f041b86258a18bc1e05ba5c5511134432adaca902f577228",
+  "candidate_manifest_sha256": "3cab4a491f9d6213af881e1dca4c5cc260a3a52979077936daf08c4c9a59146a",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 271,
-    "max_upstream_net_added_loc": 12953,
+    "max_direct_upstream_files": 275,
+    "max_upstream_net_added_loc": 13550,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -18,8 +18,8 @@
     },
     {
       "path": "deploy/docker/Dockerfile",
-      "bytes": 53528,
-      "sha256": "2f7b7b04ae26053b0c74b91a24642278cd9fb4d0e6a80994fac9bbad05431add"
+      "bytes": 53923,
+      "sha256": "98fddfea8f6b02db45beb2e93bc1d00932f36b677f57ca4bfdfb944e5a7037fe"
     },
     {
       "path": "dev/benchmarks/omnigent/environment.py",
@@ -58,8 +58,8 @@
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_artifact.py",
-      "bytes": 6944,
-      "sha256": "655147e6c4e29fec79ac388d37b363c4c82d5096c092e7d3e4a00626c00b5952"
+      "bytes": 7229,
+      "sha256": "6d56a42fe6cbc982809e806e6b5c282e575692a759e9da4cb6d935b800a8a40a"
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_backend.py",
@@ -113,8 +113,8 @@
     },
     {
       "path": "omnigent/runner/app.py",
-      "bytes": 414452,
-      "sha256": "7771ff9c3cc58f3b2619278bd3d0260d966da04d2ffc1ddd743e9259a2d6dc26"
+      "bytes": 414525,
+      "sha256": "71a8bf5bce70e8062bd3a53b77c6661ffb7d53a40b7a248712644694279bf999"
     },
     {
       "path": "omnigent/runner/app_support.py",
@@ -168,8 +168,8 @@
     },
     {
       "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
-      "bytes": 260451,
-      "sha256": "3e8477014b17afbe80c37f3e20e7bb0231b33ab4cf77628c5a39b92316daacf6"
+      "bytes": 262376,
+      "sha256": "b0dcbdcfc3a5e8286e6b0e6fd2eda8c2a2531285d1c00017fd5605f3322c4d13"
     },
     {
       "path": "saas/upstream-patches/README.md",
@@ -238,8 +238,8 @@
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_artifact.py",
-      "bytes": 3929,
-      "sha256": "57bca692574e5512b1fe2332f1c3b2d9acb2311c6ec7de504462cbbc1cdf53b1"
+      "bytes": 4839,
+      "sha256": "8279ecbcada561ac2482bc5b3f41533ff26ddd5cd3ff9887ec719625a7f4913e"
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_backend.py",
@@ -313,8 +313,8 @@
     },
     {
       "path": "tests/saas/test_runtime_security_overlays.py",
-      "bytes": 12415,
-      "sha256": "3119a33b4a1f4d9920d4cd3d2cb3f70ac32b4e7196d46cb3f9cb67521e44346b"
+      "bytes": 13352,
+      "sha256": "80606c1efee8531bdfb01283330a9dc2836d216babd766ea922d7c55a55bfccc"
     },
     {
       "path": "tests/saas/test_upgrade_benchmark_fixture.py",
@@ -325,6 +325,61 @@
       "path": "tests/server/integration/test_mock_llm_server.py",
       "bytes": 23179,
       "sha256": "941d548c3e18e37fb310039e8136d966e7a33a08d33d49ff461cee2f94d75e85"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/origin.json",
+      "bytes": 2176,
+      "sha256": "ede48e984113d0b14c2f4e621cb393594cc9639cbc4c3af07c3a849581577a59"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/renewal.py",
+      "bytes": 15889,
+      "sha256": "6209896356a35bdfd489e46b288796cdbe370c9c7f9c5a29b7961df54a2b4289"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py",
+      "bytes": 7702,
+      "sha256": "f5c9f69022ac25d188275288e040332dcfd3aecfde41b1a2bd69e60dbf622269"
+    },
+    {
+      "path": ".github/workflows/saas-m2c-evidence-renewal.yml",
+      "bytes": 6715,
+      "sha256": "fe76ec364ebb6789a640874ccf2b1b6d766dd4a2b9b7ac8b2fefd94764645574"
+    },
+    {
+      "path": ".github/actions/e2e-run/action.yml",
+      "bytes": 13478,
+      "sha256": "19b575961bb7b74ceca4305cadfdc39030162929b4e7b1b528c70a5d825d17e0"
+    },
+    {
+      "path": ".github/workflows/e2e.yml",
+      "bytes": 7377,
+      "sha256": "b64ea7d37f43c9331a1e2f0e77b24fce660f1c63fa18ff1289e3425b0546fb20"
+    },
+    {
+      "path": "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py",
+      "bytes": 24479,
+      "sha256": "70d2fb5970e3782a6ceda69aadb919626ef5016e1a58be7b22aa61be186c3f2b"
+    },
+    {
+      "path": "omnigent/server/routes/_sessions/orchestration.py",
+      "bytes": 653240,
+      "sha256": "c02b1b2f1ed11a44db39c45005bc4eefccd4147ecb49d0644b6f264eb5ef7da4"
+    },
+    {
+      "path": "tests/server/routes/test_sessions_runner_relay.py",
+      "bytes": 175440,
+      "sha256": "499b569e6245a2fc59a19ff929e50e8cbe4c722023c6d3df2ce9d3f999b61780"
+    },
+    {
+      "path": "tests/runner/test_app_sessions_native_supervision.py",
+      "bytes": 127451,
+      "sha256": "e6aa0e105e8b37cbd266b7b6a16544c7c638c7ea380cf43d3b6664e82ed846e2"
+    },
+    {
+      "path": "tests/e2e/resilience/lab/observe.py",
+      "bytes": 7560,
+      "sha256": "4f51470933fcd18f7f617f3978e428a3850607fc4741bebaf07bb5fd55ca2037"
     }
   ],
   "governance_paths": [
@@ -338,5 +393,113 @@
     "baseline": "7c3d86f306a1cb89bdaa728a2698267b9da98961d9c1b993b8c1f49ac708cf91",
     "controller": "b3242eeb5a09e6da7027c345e65814ede25f4ae0bcee8339c3ff926e32835569"
   },
-  "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
+  "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
+  "previous_fixed63_approved_scope": {
+    "candidate_manifest_sha256": "cf5f16079af45bc5f041b86258a18bc1e05ba5c5511134432adaca902f577228",
+    "scope_sha256": "e1a419567a781e228a6525fefd85bc4334efeb24b09e8c1e65177db325698500",
+    "approval": {
+      "candidate_manifest_sha256": "cf5f16079af45bc5f041b86258a18bc1e05ba5c5511134432adaca902f577228",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "26fbf2125c81ba56b3335d2d0d1a226501b417cb616d19d2b975aeaddbfbdb57"
+    },
+    "retained_runtime_protected_bytes_unchanged": true
+  },
+  "previous_evidence_renewal_approved_scope": {
+    "candidate_manifest_sha256": "8a4dd6922fa7d26faeeeac93622bddcca5caf5e4cd7970ae667c429b939f041f",
+    "scope_sha256": "3aeae43922bc92891388040785c6eaf949e56cb4fdfbc9570728313ef3544b4c",
+    "approval": {
+      "candidate_manifest_sha256": "8a4dd6922fa7d26faeeeac93622bddcca5caf5e4cd7970ae667c429b939f041f",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "044d8d955a63d66daf8f8d32698dc1fd2633f474605ab26add66aa7b57ddc69d"
+    },
+    "retained_product_runtime_and_controller_functional_bytes_unchanged": true
+  },
+  "previous_s5_observation_approved_scope": {
+    "candidate_manifest_sha256": "d30b2f92d437f640406a0cf23e6d3f08df4ce8dbebfce968a2cc3319c87af717",
+    "scope_sha256": "08442f2f8c80cc28b3480d4fc57e6a42092fa3213b47a0fbd1f18875261d8b0a",
+    "approval": {
+      "candidate_manifest_sha256": "d30b2f92d437f640406a0cf23e6d3f08df4ce8dbebfce968a2cc3319c87af717",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "529795415a0acf3c985b4a461ab50be62a5d6e92e1fc77e787ba7182196ae7ef"
+    },
+    "actual_source_head": "5d78d53577e04777b9a6f4faf58c233fc86dd0e0",
+    "actual_single_diagnostic_run": 43616797281,
+    "attempt": 1,
+    "result": "strict15s1F_3pureP_native_causal_log_incomplete_no_rerun",
+    "retained_other69_scope_records_unchanged": true
+  },
+  "previous_session_runner_capture_approved_scope": {
+    "candidate_manifest_sha256": "996c3690c5fe165d081c9baa6f13e8d68e6496a6433f349fca3c28989375c283",
+    "scope_sha256": "2fc06692055c3c18938f4d64dd97205c7ac909de4047a6eb2daf57f8f3da6cb9",
+    "approval": {
+      "candidate_manifest_sha256": "996c3690c5fe165d081c9baa6f13e8d68e6496a6433f349fca3c28989375c283",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "03262224c6ca692c1a04c3d69cb6c53b0b27ac4cf34766a0a509657928e36533"
+    },
+    "source_head": "9a8d34102cf23a76457e11673805c00a25afeb70",
+    "actual_capture_run": 43620907030,
+    "attempt": 1,
+    "actual": "4P/6nativeRows; producerpathgapclosed notoriginalfailureRCA",
+    "retained_all70_scope_records_unchanged": true
+  },
+  "previous_relay_order_approved_scope": {
+    "candidate_manifest_sha256": "47d0d3eb579ca864d93b0b918ccb5bdad663632ee92c989facb0449fd968976e",
+    "scope_sha256": "6ce551b110951ef7d69ca6b93b18b690f3a9eb3d1d1087d61cba5dc9386101f6",
+    "approval": {
+      "candidate_manifest_sha256": "47d0d3eb579ca864d93b0b918ccb5bdad663632ee92c989facb0449fd968976e",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "b1614596b3a789a55531f89369759f9ddfda19a7358938016017983de1d9a864"
+    },
+    "source_head": "b9622b2ad33bad6c148e486ede0e1ccd6d50cde5",
+    "actual_server_rest": "8430P/8skip/new55lineP",
+    "actual_S5": "43624833777a1 strict15sF/116P/24skip/shard6; never reclassified fixed",
+    "retained_original_runtime_relay_fix_and55line_test": true
+  },
+  "previous_consolidated_R2_approved_scope": {
+    "candidate_manifest_sha256": "04b94b9a43470dbeccf35c7735dbc5497528a677f0dd28f3ba9d3abbce63979c",
+    "scope_sha256": "6d0fe3c51aa8dd39aeb69c4e9a9b06167a9c20c58f88e6d79aa98cab05edd963",
+    "approval": {
+      "candidate_manifest_sha256": "04b94b9a43470dbeccf35c7735dbc5497528a677f0dd28f3ba9d3abbce63979c",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "c11ac074e42cf643f2e303f17fc5129f24c0eb116cf4a6a4c84ac365ec92c1f7"
+    },
+    "source_head": "87c67515ed280e98db6641e946fbc713e35147ee",
+    "all_production_Host_recipe_artifact_queue_and_typed_observer_bytes_unchanged": true
+  },
+  "previous_consolidated_R3_approved_scope": {
+    "candidate_manifest_sha256": "b6ef18f61097b8275a5a1aaf911dc7d84cfe40d9713f8e3bfa942791b8ee47db",
+    "scope_sha256": "617db39afa3fa0a24e7497df615e1fc14eb9957d37a67d59b8c4767573d9a836",
+    "approval": {
+      "candidate_manifest_sha256": "b6ef18f61097b8275a5a1aaf911dc7d84cfe40d9713f8e3bfa942791b8ee47db",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "91dca11f50965c182c493a1fac5ad8307a2a4e6b6f3285182d798a1f4e2425a8"
+    },
+    "source_head": "52b2d0ef146735753b7e7315867b6fcb0b7ffa4c",
+    "current_changed_functional_paths": [
+      "omnigent/harnesses/codex_native/executor_artifact.py",
+      "tests/harnesses/codex_native/test_executor_artifact.py"
+    ],
+    "unchanged_runtime_S5_status_forwarder_policy_relay_queue_and_Dockerfile": true,
+    "original_R3_OCI_result": "FAIL: random build-time Codex arg0 paths; raw full scan skipped; never release-qualified"
+  },
+  "previous_R4_private_probe_scope": {
+    "candidate_manifest_sha256": "8a9f4c591854e04d0a5b29d86292c0589c9fae6d8bc4190060153cca40154689",
+    "scope_sha256": "4ddc3ea7a993378c5b9e76125084016a6c46366057ca3e994a1de3461f05b602",
+    "approval": {
+      "candidate_manifest_sha256": "8a9f4c591854e04d0a5b29d86292c0589c9fae6d8bc4190060153cca40154689",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "b5249e1a9afd8a2ed96fe3f5f14b66c1a6a88cd63354e5acd9894a976f70ba97"
+    },
+    "source_head": "6bfde86690e976163791a7b397f4e3fc5efa22f6",
+    "retained_runtime_and_test_bytes_unchanged": true,
+    "original_OCI_result": "FAIL before build: replay patch omitted current executor_artifact.py; not a Host reproducibility result"
+  }
 }

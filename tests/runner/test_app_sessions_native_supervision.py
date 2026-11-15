@@ -2670,11 +2670,9 @@ async def test_events_interrupt_on_native_session_injects_escape_without_marker(
         # watcher, so the runner injection task must not publish its
         # own running/idle edges.
         ("claude-native", []),
-        # codex-native may use the runner's running edge so the thread
-        # shows work as soon as Omnigent accepts the turn, but must not use the
-        # runner's idle edge because the injection task completes before
-        # the user-visible Codex turn.
-        ("codex-native", ["running"]),
+        # Codex forwarder owns both edges; delayed injection status must not
+        # reopen a turn the native runtime has already completed.
+        ("codex-native", []),
         # antigravity-native shares codex's shape: the executor's
         # SendUserCascadeMessage returns as soon as agy accepts the turn, so the
         # RPC read driver (not the runner injection task) owns idle. Publishing
@@ -2688,6 +2686,7 @@ async def test_events_interrupt_on_native_session_injects_escape_without_marker(
 )
 @pytest.mark.asyncio
 async def test_message_turn_lifecycle_status_suppressed_for_terminal_backed_harnesses(
+    monkeypatch: pytest.MonkeyPatch,
     harness: str,
     expected_statuses: list[str],
 ) -> None:
@@ -2697,9 +2696,8 @@ async def test_message_turn_lifecycle_status_suppressed_for_terminal_backed_harn
     First-principles invariant: the thread's "Working…" indicator should
     represent the user-visible model turn. For claude-native, the runner
     turn is only a pane-injection task, so its ``running`` and ``idle`` edges
-    are both suppressed. For codex-native, the runner's ``running`` edge is a
-    useful immediate signal that Omnigent accepted the turn, but its ``idle`` edge
-    is invalid because the injection task finishes before Codex is done.
+    are both suppressed. Codex-native also uses its native forwarder as the
+    running/idle source; delayed injection status cannot reopen a completed turn.
 
     Drives the real ``POST /events`` message path and waits for the
     background injection turn to finish, so both the synchronous ``running``
@@ -2754,15 +2752,13 @@ async def test_message_turn_lifecycle_status_suppressed_for_terminal_backed_harn
         while not queue.empty():
             queue.get_nowait()
 
-        msg_resp = await client.post(
-            f"/v1/sessions/{session_id}/events",
-            json={
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": "test"}],
-                "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb",
-            },
-        )
+        message = {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "test"}],
+            "agent_id": "880b5afda28ad55ff74cbeb9b5fc67fb",
+        }
+        msg_resp = await client.post(f"/v1/sessions/{session_id}/events", json=message)
         assert msg_resp.status_code in (200, 202), msg_resp.text
 
         if harness != "claude-native":
@@ -2771,9 +2767,9 @@ async def test_message_turn_lifecycle_status_suppressed_for_terminal_backed_harn
             # this is where the invalid ``idle`` edge appears.
             await asyncio.wait_for(stream_finished.wait(), timeout=1.0)
 
-            # Let the task resume after stream exhaustion and publish its
-            # terminal lifecycle edge before the queue is drained below.
-            await asyncio.sleep(0)
+            # Join the actual injection worker before consuming its queued edges.
+            if task := app.state.active_turns.get(session_id):
+                await asyncio.wait_for(task, timeout=1.0)
 
         # Drain BEFORE deleting: DELETE removes the queue. By this point both
         # the synchronous turn-start edge and the async turn-end edge have run.
@@ -2783,14 +2779,54 @@ async def test_message_turn_lifecycle_status_suppressed_for_terminal_backed_harn
             if isinstance(item, dict) and item.get("type") == "session.status":
                 statuses.append(item.get("status"))
 
+        if harness == "codex-native":
+            from omnigent.runtime import session_stream
+            from omnigent.server.routes import sessions as sessions_module
+
+            try:
+                sessions_module._publish_status(
+                    session_id, "idle", response_id="codex_completed", persist_live_status=False
+                )
+                # Consume actual injection output only after the native completion.
+                for status in statuses:
+                    sessions_module._publish_status(session_id, status, persist_live_status=False)
+                assert sessions_module._session_status_cache[session_id] == "idle"
+            finally:
+                sessions_module._session_status_cache.pop(session_id, None)
+                sessions_module._session_active_response_cache.pop(session_id, None)
+                session_stream.close(session_id)
+
+            monkeypatch.setattr("omnigent.runner.app._server_version", None)
+            child_id = uuid.uuid4().hex
+            subagent_work.register_subagent_work(
+                parent_session_id=session_id,
+                child_session_id=child_id,
+                agent="test-agent",
+                title="pending child",
+            )
+            try:
+                response = await client.post(f"/v1/sessions/{session_id}/events", json=message)
+                assert response.status_code in (200, 202), response.text
+                if task := app.state.active_turns.get(session_id):
+                    await asyncio.wait_for(task, timeout=1.0)
+                waiting = [
+                    item["status"]
+                    for item in _drain_session_event_queue(queue)
+                    if item.get("type") == "session.status"
+                ]
+                # Unknown/old Server versions retain the waiting→running fallback.
+                assert waiting == ["running"]
+            finally:
+                subagent_work.unregister_subagent_work_for_session(child_id)
+
         # DELETE cancels the background turn so it can't outlive the test.
         await client.delete(f"/v1/sessions/{session_id}")
 
     assert statuses == expected_statuses, (
         f"harness={harness}: expected runner turn lifecycle statuses "
         f"{expected_statuses!r}, got {statuses!r}. Claude-native must rely "
-        f"fully on the PTY watcher, Codex-native must keep only the runner "
-        f"running edge, and non-terminal harnesses must keep the full runner "
+        f"fully on the PTY watcher, Codex-native on its native forwarder, "
+        f"and non-terminal harnesses must keep the full runner "
         f"lifecycle source."
     )
 

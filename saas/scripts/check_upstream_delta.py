@@ -28,10 +28,10 @@ def _is_under(path: str, prefixes: tuple[str, ...]) -> bool:
 
 
 _ORDINARY_M_APPROVAL = "ordinary_m_native_0142_finite_approval"
-_ORDINARY_M_CANDIDATE = "cf5f16079af45bc5f041b86258a18bc1e05ba5c5511134432adaca902f577228"
+_ORDINARY_M_CANDIDATE = "3cab4a491f9d6213af881e1dca4c5cc260a3a52979077936daf08c4c9a59146a"
 _ORDINARY_M_PROTECTED_PATH = "omnigent/runner/native/orchestration.py"
 _ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.json"
-_ORDINARY_M_SCOPE_SHA256 = "e1a419567a781e228a6525fefd85bc4334efeb24b09e8c1e65177db325698500"
+_ORDINARY_M_SCOPE_SHA256 = "7a4b4691de689f4b801a7d5554f5a90a212d1cf41eac3f22a4a8d7377471ce98"
 
 
 def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:
@@ -78,6 +78,14 @@ def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, 
             "7ce353d6a58ea9083be29c081b9c093052f2ddae1c075ab46f1451dd5c92c5a3",
             "eb8592d8a012a531170fdf640ece511b20971869fc270a01bf61778cb18710f8",
             "dd31812e65300988d62f8e9ea1bbb6abbfaf3e5f129e43277ae58f950a32a56d",
+            "26fbf2125c81ba56b3335d2d0d1a226501b417cb616d19d2b975aeaddbfbdb57",
+            "044d8d955a63d66daf8f8d32698dc1fd2633f474605ab26add66aa7b57ddc69d",
+            "529795415a0acf3c985b4a461ab50be62a5d6e92e1fc77e787ba7182196ae7ef",
+            "03262224c6ca692c1a04c3d69cb6c53b0b27ac4cf34766a0a509657928e36533",
+            "b1614596b3a789a55531f89369759f9ddfda19a7358938016017983de1d9a864",
+            "c11ac074e42cf643f2e303f17fc5129f24c0eb116cf4a6a4c84ac365ec92c1f7",
+            "91dca11f50965c182c493a1fac5ad8307a2a4e6b6f3285182d798a1f4e2425a8",
+            "b5249e1a9afd8a2ed96fe3f5f14b66c1a6a88cd63354e5acd9894a976f70ba97",
         }
     ):
         return False
@@ -100,7 +108,7 @@ def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, 
         if _manifest_controls_sha256(manifest) != scope["manifest_controls_sha256"][kind]:
             return False
         if kind == "controller" and (
-            manifest["controller_budget_scope"]["current_controller_file_ceiling"] != 271
+            manifest["controller_budget_scope"]["current_controller_file_ceiling"] != 275
             or manifest["controller_budget_scope"].get("prior_approved_controller_authority")
             != scope["previous_controller_authority"]
         ):

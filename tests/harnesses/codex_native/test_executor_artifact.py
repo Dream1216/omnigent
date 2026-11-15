@@ -41,9 +41,21 @@ async def test_artifact_receipt_binds_source_native_bytes_lock_and_normal_factor
     monkeypatch.setattr(artifact, "installed_revision", lambda: "a" * 40)
     monkeypatch.setattr(artifact, "HOST_LOCK_PATH", lock)
     monkeypatch.setattr(artifact, "ARTIFACT_PATH", manifest)
+    probe_homes: list[Path] = []
+    fail_probe = False
 
     def version(command, **kwargs):
         assert command == [str(native), "--version"]
+        assert kwargs["env"].keys() == {"PATH", "CODEX_HOME"}
+        home = Path(kwargs["env"]["CODEX_HOME"])
+        assert home.parent == manifest.parent
+        assert home.is_dir()
+        probe_homes.append(home)
+        startup = home / "tmp" / "arg0" / "codex-arg0-fixture"
+        startup.mkdir(parents=True)
+        (startup / ".lock").touch()
+        if fail_probe:
+            raise artifact.subprocess.TimeoutExpired(command, kwargs["timeout"])
         return SimpleNamespace(stdout="codex-cli 0.142.0\n")
 
     monkeypatch.setattr(artifact.subprocess, "run", version)
@@ -52,6 +64,13 @@ async def test_artifact_receipt_binds_source_native_bytes_lock_and_normal_factor
     assert installed.binary == native
     assert installed.sha256 == hashlib.sha256(native.read_bytes()).hexdigest()
     assert manifest.stat().st_mode & 0o222 == 0
+    assert len(probe_homes) == 1 and not probe_homes[0].exists()
+    fail_probe = True
+    failed_manifest = tmp_path / "failed-artifact.json"
+    with pytest.raises(artifact.subprocess.TimeoutExpired):
+        artifact.record_installed_artifact(wrapper, failed_manifest)
+    assert len(probe_homes) == 2 and all(not home.exists() for home in probe_homes)
+    assert not failed_manifest.exists()
     registry = Mock()
     registry.prepare_native_executor = AsyncMock(return_value="bound-runtime")
     server = Mock()

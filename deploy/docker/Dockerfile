@@ -850,7 +850,11 @@ RUN set -eu; \
         set -f; \
         bash /tmp/install-saas-harness-cli.sh ${EXTRA_HARNESS_CLIS}; \
     fi; \
-    rm -f /tmp/install-harness-cli.sh /tmp/install-saas-harness-cli.sh /tmp/normalize_host_cli_tree.py
+    rm -f /tmp/install-harness-cli.sh /tmp/install-saas-harness-cli.sh /tmp/normalize_host_cli_tree.py; \
+    if [ "${SOURCE_REVISION}" != "unknown" ]; then \
+      /opt/venv/bin/python -B -I -m omnigent.harnesses.codex_native.executor_artifact --command /opt/omnigent-host-cli/.github/ci-deps/node_modules/@openai/codex/bin/codex.js; \
+      /opt/venv/bin/python -B -I -c 'from omnigent.harnesses.codex_native.executor_artifact import load_installed_artifact; load_installed_artifact()'; \
+    fi
 
 WORKDIR /root
 

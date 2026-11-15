@@ -10,6 +10,10 @@ description: >
   the gate tests refs/pull/N/merge; backcompat needs fetch-depth 0 for tags).
 
 inputs:
+  diagnostic_s5_codex_send:
+    description: One observed Codex offline-send case; never the full merge gate.
+    required: false
+    default: "false"
   dependency_smoke:
     description: Deprecated; removal in 0.21.0. Run compatibility smoke only.
     required: false
@@ -192,6 +196,7 @@ runs:
     - name: Run e2e tests
       shell: bash
       env:
+        DIAGNOSTIC_S5_INPUT: ${{ inputs.diagnostic_s5_codex_send }}
         PARALLELISM_INPUT: ${{ inputs.parallelism }}
         SHARD_ID: ${{ inputs.shard_id }}
         NUM_SHARDS: ${{ inputs.num_shards }}
@@ -217,13 +222,30 @@ runs:
           EXTRA_ARGS+=(-m "not nightly")
         fi
 
+        TEST_TARGETS=(tests/e2e/)
+        if [[ "$DIAGNOSTIC_S5_INPUT" == "true" ]]; then
+          if [[ "$SHARD_ID" != "0" || "$NUM_SHARDS" != "1" || "$NIGHTLY_FULL" == "true" ]]; then
+            echo "Invalid bounded S5 diagnostic shape" >&2
+            exit 1
+          fi
+          TEST_TARGETS=(
+            'tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py::test_s5_host_offline_user_acts[codex-send-20s]'
+            'tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py::test_s5_observation_keeps_outcome_and_ids_without_raw_payloads'
+            'tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py::test_s5_owned_log_tails_are_bounded_and_redacted'
+          )
+          EXTRA_ARGS+=(--reruns 0)
+        elif [[ "$DIAGNOSTIC_S5_INPUT" != "false" ]]; then
+          echo "Invalid S5 diagnostic selector" >&2
+          exit 1
+        fi
+
         # --junitxml emits per-test results eagerly so diagnostics survive a
         # wall-clock overrun. --shard-id/--num-shards chunk the node IDs.
         # --timeout=180 caps each test; --timeout-method=thread because our
         # pty/subprocess children don't get SIGALRM. --max-worker-restart=0
         # fails the shard fast instead of letting loadscope requeue deadlock
         # the controller (the 2026-06-11 shard-2 wedge).
-        uv run pytest tests/e2e/ \
+        uv run pytest "${TEST_TARGETS[@]}" \
           -n "$WORKERS" \
           --dist=loadscope \
           --max-worker-restart=0 \
@@ -251,6 +273,16 @@ runs:
           /tmp/omnigent-e2e-${{ github.run_id }}-shard${{ inputs.shard_id }}/progress/progress-*.log
         retention-days: 7
         if-no-files-found: warn
+        include-hidden-files: true
+
+    - name: Retain the bounded Codex offline-send observation
+      if: ${{ always() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      with:
+        name: s5-codex-offline-send-${{ github.run_id }}-shard${{ inputs.shard_id }}${{ inputs.artifact_suffix }}
+        path: .omnigent/resilience/S5-host-offline-user-acts-harness-codex-action-send-outage_s-20.diagnostic.json
+        retention-days: 7
+        if-no-files-found: ignore
         include-hidden-files: true
 
     - name: Upload token usage

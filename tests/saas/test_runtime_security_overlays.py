@@ -182,6 +182,28 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
         body = dockerfile.partition(f"FROM secured-python-runtime AS {stage}\n")[2]
         body = body.partition("\nFROM ")[0]
         assert body.index(venv_copy) < body.index(seccomp_probe)
+    host_body = dockerfile.partition("FROM secured-python-runtime AS host\n")[2].partition(
+        "\nFROM "
+    )[0]
+    native_receipt = (
+        "/opt/venv/bin/python -B -I -m "
+        "omnigent.harnesses.codex_native.executor_artifact --command "
+        "/opt/omnigent-host-cli/.github/ci-deps/node_modules/@openai/codex/bin/codex.js"
+    )
+    native_load = (
+        "/opt/venv/bin/python -B -I -c 'from "
+        "omnigent.harnesses.codex_native.executor_artifact import "
+        "load_installed_artifact; load_installed_artifact()'"
+    )
+    assert host_body.count(native_receipt) == 1
+    assert host_body.count(native_load) == 1
+    assert (
+        host_body.index("COPY --from=builder /opt/venv-export /opt/venv")
+        < host_body.index("assert actual == expected")
+        < host_body.index("rm -f /tmp/install-harness-cli.sh")
+        < host_body.index(native_receipt)
+        < host_body.index(native_load)
+    )
     assert "gcc=16.2.0-r1" in dockerfile
     assert "apk del --purge make gcc" in dockerfile
     transient = json.loads((_root() / "saas/supply_chain/wolfi-runtime-lock.json").read_text())[

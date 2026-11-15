@@ -787,6 +787,14 @@ def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
         "previous-50-authority",
         "previous-61-authority",
         "previous-62-authority",
+        "previous-63-authority",
+        "previous-8a-authority",
+        "previous-d30-authority",
+        "previous-996-authority",
+        "previous-47d0-authority",
+        "previous-R2-authority",
+        "previous-R3-authority",
+        "previous-R4-authority",
         "scope-bytes",
         "protected-bytes",
         "other-source-bytes",
@@ -829,6 +837,38 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
     elif fault == "previous-62-authority":
         decision["authority_record_sha256"] = (
             "dd31812e65300988d62f8e9ea1bbb6abbfaf3e5f129e43277ae58f950a32a56d"
+        )
+    elif fault == "previous-63-authority":
+        decision["authority_record_sha256"] = (
+            "26fbf2125c81ba56b3335d2d0d1a226501b417cb616d19d2b975aeaddbfbdb57"
+        )
+    elif fault == "previous-8a-authority":
+        decision["authority_record_sha256"] = (
+            "044d8d955a63d66daf8f8d32698dc1fd2633f474605ab26add66aa7b57ddc69d"
+        )
+    elif fault == "previous-d30-authority":
+        decision["authority_record_sha256"] = (
+            "529795415a0acf3c985b4a461ab50be62a5d6e92e1fc77e787ba7182196ae7ef"
+        )
+    elif fault == "previous-996-authority":
+        decision["authority_record_sha256"] = (
+            "03262224c6ca692c1a04c3d69cb6c53b0b27ac4cf34766a0a509657928e36533"
+        )
+    elif fault == "previous-47d0-authority":
+        decision["authority_record_sha256"] = (
+            "b1614596b3a789a55531f89369759f9ddfda19a7358938016017983de1d9a864"
+        )
+    elif fault == "previous-R2-authority":
+        decision["authority_record_sha256"] = (
+            "c11ac074e42cf643f2e303f17fc5129f24c0eb116cf4a6a4c84ac365ec92c1f7"
+        )
+    elif fault == "previous-R3-authority":
+        decision["authority_record_sha256"] = (
+            "91dca11f50965c182c493a1fac5ad8307a2a4e6b6f3285182d798a1f4e2425a8"
+        )
+    elif fault == "previous-R4-authority":
+        decision["authority_record_sha256"] = (
+            "b5249e1a9afd8a2ed96fe3f5f14b66c1a6a88cd63354e5acd9894a976f70ba97"
         )
     target = {
         "scope-bytes": root / guard._ORDINARY_M_SCOPE_PATH,

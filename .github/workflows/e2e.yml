@@ -44,6 +44,11 @@ on:
       - '!.github/workflows/*.js'
   workflow_dispatch:
     inputs:
+      diagnostic_s5_codex_send:
+        description: One bounded observed offline-send case; not merge qualification.
+        type: boolean
+        required: false
+        default: false
       parallelism:
         description: "Number of pytest workers per shard (-n flag). Empty uses the E2E_PARALLELISM repository variable, else 3."
         required: false
@@ -116,7 +121,13 @@ jobs:
           IS_DRAFT: ${{ github.event.pull_request.draft }}
           RUN_TESTS: ${{ steps.scope.outputs.e2e }}
           NUM_SHARDS: "8"
-        run: bash .github/scripts/ci/e2e-shard-matrix.sh
+          DIAGNOSTIC_S5: ${{ github.event_name == 'workflow_dispatch' && inputs.diagnostic_s5_codex_send }}
+        run: |
+          if [[ "$DIAGNOSTIC_S5" == "true" ]]; then
+            echo 'matrix={"include":[{"shard_id":0,"num_shards":1}]}' >> "$GITHUB_OUTPUT"
+          else
+            bash .github/scripts/ci/e2e-shard-matrix.sh
+          fi
 
   e2e:
     # Sharded matrix: each shard runs ~1/N of the set, under the wallclock
@@ -150,7 +161,8 @@ jobs:
       - name: Run e2e suite
         uses: ./.github/actions/e2e-run
         with:
+          diagnostic_s5_codex_send: ${{ github.event_name == 'workflow_dispatch' && inputs.diagnostic_s5_codex_send }}
           shard_id: ${{ matrix.shard_id }}
           num_shards: ${{ matrix.num_shards }}
           parallelism: ${{ github.event.inputs.parallelism || vars.E2E_PARALLELISM || '3' }}
-          nightly_full: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+          nightly_full: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.diagnostic_s5_codex_send) }}

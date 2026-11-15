@@ -1,0 +1,56 @@
+{
+  "artifacts": {
+    "oci": {
+      "bytes": 5231885687,
+      "id": 14095438275,
+      "name": "saas-oci-promotion-2c34fd412118b806156b42de767dc2315e25cbd1",
+      "sha256": "dd1b9f7c91616723ec7052a3d26fb3902caccd10bcfe278ba19ea0dc1c183914"
+    },
+    "signed": {
+      "bytes": 3960496,
+      "id": 14096184584,
+      "name": "signed-release-candidate-2c34fd412118b806156b42de767dc2315e25cbd1",
+      "sha256": "b529f0d7c52b500df49e5ab0f5bd79058926e658f685b0d43c6d3b7b254794fa"
+    }
+  },
+  "attempt": 1,
+  "images": {
+    "host": "sha256:a3f4353e3a53648a42cfefba74125f20d31a1fab6af7452db84f311f57902eb9",
+    "server": "sha256:f0aa9c9f794e1ef28ae2490f8c436bb454b96efac56cc9bbb1e76b0f7e8fbd58"
+  },
+  "manifest_sha256": "8b2f1b9c0ce1c41b87e88aa84092e0a1ce8929516dbddbf090f32b941430cde4",
+  "platforms": {
+    "host-amd64": {
+      "config_digest": "sha256:db1e4ce659f96473578e175e8d6ef40286c05b634a137b64bba1ba008dbd258f",
+      "manifest_digest": "sha256:33a9cd28f8d9a8d31bcaf0306e583ce670cb6f84ff4fdd824804a94554a468fc"
+    },
+    "host-arm64": {
+      "config_digest": "sha256:940a5516ce08d8584de6f1c0880efa538ca5ea01a90b4954f4e103b4c0e668e9",
+      "manifest_digest": "sha256:f3454a062e067877d957f084338d4f97af1e75139b6a7db6cefda2d5b2f5d837"
+    },
+    "server-amd64": {
+      "config_digest": "sha256:40a8134eee559f7e0d59fac03816394a3d09ae2a72a91780857ed2270dd13b0a",
+      "manifest_digest": "sha256:381c6b1555c9f32dd17c5b00a6727bc89b7ca5f544097185983dd0b3e06159c6"
+    },
+    "server-arm64": {
+      "config_digest": "sha256:755b425196517ac0a6c0f6564b498e10c86681d313ecac2e3f24d75181517928",
+      "manifest_digest": "sha256:776c28747db15c1b649cdc8239f0fd31765416c48805aa18bf2733ded0df22b6"
+    }
+  },
+  "product_revision": "2c34fd412118b806156b42de767dc2315e25cbd1",
+  "product_tree": "0589ca4ed27b94691dae61db48dd84e4777401bc",
+  "rebuilt": false,
+  "repository": "Dream1216/omnigent",
+  "required_jobs": [
+    132264917349,
+    132264917559,
+    132264917630,
+    132266879767,
+    132308361057,
+    132318422371
+  ],
+  "run_id": 43535964651,
+  "schema_version": 1,
+  "source_date_epoch": 1794610121,
+  "workflow": ".github/workflows/saas-image-candidate.yml"
+}
