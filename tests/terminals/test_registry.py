@@ -31,14 +31,23 @@ from omnigent.terminals.registry import TerminalListEntry, conversation_link_for
 
 
 @pytest.mark.parametrize("override", [None, "none"])
+@pytest.mark.parametrize("inherit_runtime", [False, True])
 async def test_required_sandbox_overrides_native_none_and_rejects_late_override(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: str | None
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    override: str | None,
+    inherit_runtime: bool,
 ) -> None:
     """All native and user terminal launches cross the same final restriction."""
+    from omnigent.inner import terminal as terminal_mod
+    from omnigent.inner.bwrap_sandbox import BwrapSandboxBackend
+    from omnigent.inner.sandbox import SandboxPolicy, with_additional_write_roots
     from omnigent.inner.terminal import build_terminal_os_env_spec
+    from omnigent.runner.resource_registry import SessionResourceRegistry
     from tests.runner.helpers import make_test_terminal_instance
 
     reg = TerminalRegistry()
+    resources = SessionResourceRegistry(reg)
     reg.require_environment_binding = True
     original = TerminalEnvSpec(
         command="bash",
@@ -50,13 +59,38 @@ async def test_required_sandbox_overrides_native_none_and_rejects_late_override(
     )
     with pytest.raises(RuntimeError, match="has not been bound"):
         await reg.launch("session", "bash", "one", original)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    private_home = tmp_path / "native-runtime" / "home"
+    private_home.mkdir(parents=True)
     required = OSEnvSpec(
-        cwd=str(tmp_path),
+        cwd=str(workspace),
         fork=False,
-        sandbox=OSEnvSandboxSpec(type="linux_bwrap", allow_network=False),
+        sandbox=OSEnvSandboxSpec(
+            type="linux_bwrap",
+            allow_network=False,
+            read_paths=[str(workspace)],
+            write_paths=[str(workspace)],
+        ),
     )
-    reg.bind_required_environment("session", required)
-    created = make_test_terminal_instance("bash", "one", tmp_path, running=False)
+    monkeypatch.setattr(
+        BwrapSandboxBackend,
+        "resolve",
+        lambda self, spec, cwd: SandboxPolicy(
+            backend_type="linux_bwrap",
+            active=True,
+            read_roots=[workspace],
+            write_roots=[workspace],
+            write_files=[],
+            allow_network=False,
+        ),
+    )
+    resources.bind_required_os_env("session", required)
+    environment = resources._resolve_terminal_environment("session", required)
+    environment.sandbox = with_additional_write_roots(environment.sandbox, [private_home])
+    parent_environment = {"parent_environment": environment} if inherit_runtime else {}
+    created = make_test_terminal_instance("bash", "one", workspace, running=False)
+    monkeypatch.setattr(terminal_mod, "_require_supported_tmux", lambda: None)
 
     async def launch(*, cwd: Path) -> None:
         created.running = True
@@ -75,17 +109,50 @@ async def test_required_sandbox_overrides_native_none_and_rejects_late_override(
         )
         captured.append(effective)
         assert spec.command == "bash" and spec.args == ["-i"] and spec.env["KEEP"] == "value"
-        return TerminalCreateResult(instance=created, cwd=tmp_path)
+        prepared = terminal_mod.create_terminal_instance(name, key, spec, **kwargs)
+        try:
+            assert (
+                private_home in prepared.instance.sandbox_policy.write_roots
+            ) is inherit_runtime
+            assert prepared.instance.sandbox_policy.backend_type == "linux_bwrap"
+            assert prepared.instance.sandbox_policy.allow_network is False
+            assert prepared.instance.os_env.spec.fork is False
+        finally:
+            prepared.instance.os_env.close()
+            shutil.rmtree(prepared.instance.private_dir)
+        return TerminalCreateResult(instance=created, cwd=workspace)
 
     monkeypatch.setattr(registry_mod, "create_terminal_instance", create)
     if override is not None:
         with pytest.raises(ValueError):
-            await reg.launch("session", "bash", "one", original, sandbox_override=override)
+            await reg.launch(
+                "session",
+                "bash",
+                "one",
+                original,
+                sandbox_override=override,
+                **parent_environment,
+            )
         assert captured == []
     else:
-        assert await reg.launch("session", "bash", "one", original) is created
+        assert (
+            await reg.launch("session", "bash", "one", original, **parent_environment) is created
+        )
         assert captured[0].sandbox.type == "linux_bwrap" and captured[0].fork is False
         assert original.os_env.sandbox.type == "none"
+        if inherit_runtime:
+            from dataclasses import replace
+
+            environment.spec = replace(required, cwd=str(tmp_path / "unapproved"))
+            with pytest.raises(RuntimeError, match="differs from the required sandbox"):
+                await reg.launch(
+                    "session", "bash", "other", original, parent_environment=environment
+                )
+            environment.spec = required
+            with pytest.raises(RuntimeError, match="differs from the required sandbox"):
+                await TerminalRegistry().launch(
+                    "other", "bash", "one", original, parent_environment=environment
+                )
 
 
 async def test_binding_cannot_race_an_unqualified_terminal_launch(
