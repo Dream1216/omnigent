@@ -504,10 +504,14 @@ def test_list_resources_filters_by_type(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("resource_role", [CODEX_NATIVE_TERMINAL_ROLE, None])
+@pytest.mark.parametrize("managed_runtime", [False, True])
 async def test_terminal_resource_role_is_private_and_cleared_on_close(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    resource_role: str | None,
+    managed_runtime: bool,
 ) -> None:
     """
     Terminal role markers stay private and follow close lifecycle.
@@ -521,10 +525,18 @@ async def test_terminal_resource_role_is_private_and_cleared_on_close(
     :param monkeypatch: Pytest monkeypatch fixture.
     :returns: None.
     """
+    session_id = "e6a0bd1130de4391ab133ee622a92476"
     terminal_registry = TerminalRegistry()
     registry = SessionResourceRegistry(terminal_registry=terminal_registry)
+    environment = Mock(spec=OSEnvironment)
+    resolve_environment = Mock(return_value=environment)
+    monkeypatch.setattr(registry, "resolve_environment", resolve_environment)
+    if managed_runtime:
+        from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
+
+        registry._native_runtime = Mock(spec=CodexPrivateRuntime, session_id=session_id)
     instance = make_test_terminal_instance("codex", "main", tmp_path)
-    registry.set_client_surface("conv_codex", "desktop")
+    registry.set_client_surface(session_id, "desktop")
 
     async def _fake_launch(
         conversation_id: str,
@@ -536,14 +548,17 @@ async def test_terminal_resource_role_is_private_and_cleared_on_close(
         """
         Register a fake terminal instead of starting tmux.
 
-        :param conversation_id: Owning session id, e.g. ``"conv_codex"``.
+        :param conversation_id: Owning session id, e.g. ``session_id``.
         :param terminal_name: Terminal name, e.g. ``"codex"``.
         :param session_key: Terminal session key, e.g. ``"main"``.
         :param spec: Terminal spec passed by the caller.
         :param kwargs: Additional launch kwargs.
         :returns: The fake terminal instance.
         """
-        del kwargs
+        if resource_role == CODEX_NATIVE_TERMINAL_ROLE and managed_runtime:
+            assert kwargs["parent_environment"] is environment
+        else:
+            assert kwargs["parent_environment"] is None
         assert spec.env == {"OMNIGENT_CLIENT_SURFACE": "desktop", "KEEP_ME": "present"}
         terminal_registry._by_conversation.setdefault(conversation_id, {})[
             (terminal_name, session_key)
@@ -558,7 +573,7 @@ async def test_terminal_resource_role_is_private_and_cleared_on_close(
         """
         Remove the fake terminal from the registry.
 
-        :param conversation_id: Owning session id, e.g. ``"conv_codex"``.
+        :param conversation_id: Owning session id, e.g. ``session_id``.
         :param terminal_name: Terminal name, e.g. ``"codex"``.
         :param session_key: Terminal session key, e.g. ``"main"``.
         :returns: ``True`` when the fake terminal existed.
@@ -570,7 +585,7 @@ async def test_terminal_resource_role_is_private_and_cleared_on_close(
     monkeypatch.setattr(terminal_registry, "close", _fake_close)
 
     view = await registry.launch_auxiliary_terminal(
-        "conv_codex",
+        session_id,
         "codex",
         "main",
         TerminalEnvSpec(
@@ -578,28 +593,32 @@ async def test_terminal_resource_role_is_private_and_cleared_on_close(
             args=["--remote", "ws://127.0.0.1:1234"],
             env={"OMNIGENT_CLIENT_SURFACE": "cli", "KEEP_ME": "present"},
         ),
-        resource_role=CODEX_NATIVE_TERMINAL_ROLE,
+        resource_role=resource_role,
     )
 
-    assert registry.terminal_resource_role("conv_codex", view.id) == CODEX_NATIVE_TERMINAL_ROLE
+    assert registry.terminal_resource_role(session_id, view.id) == resource_role
+    if resource_role == CODEX_NATIVE_TERMINAL_ROLE and managed_runtime:
+        resolve_environment.assert_called_once_with(session_id, DEFAULT_ENVIRONMENT_ID)
+    else:
+        resolve_environment.assert_not_called()
     assert "command" not in view.metadata
     assert "args" not in view.metadata
 
     with caplog.at_level(logging.INFO, logger="omnigent.runner.resource_registry"):
-        closed = await registry.close_terminal("conv_codex", view.id)
+        closed = await registry.close_terminal(session_id, view.id)
 
     assert closed is True
-    assert registry.terminal_resource_role("conv_codex", view.id) is None
+    assert registry.terminal_resource_role(session_id, view.id) is None
     record = next(
         record
         for record in caplog.records
         if getattr(record, "event_name", None) == "terminal_close_requested"
     )
-    assert record.session_id == "conv_codex"
+    assert record.session_id == session_id
     assert record.attributes["terminal_id"] == view.id
     assert record.attributes["terminal_instance_id"] == instance.diagnostic_id
-    await registry.cleanup_session("conv_codex")
-    assert registry.client_surface_env("conv_codex") == {"OMNIGENT_CLIENT_SURFACE": "unknown"}
+    await registry.cleanup_session(session_id)
+    assert registry.client_surface_env(session_id) == {"OMNIGENT_CLIENT_SURFACE": "unknown"}
 
 
 @pytest.mark.asyncio

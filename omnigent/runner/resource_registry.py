@@ -1570,6 +1570,10 @@ class SessionResourceRegistry:
             and self._feature_flags.enabled(Feature.CLAUDE_OSC_STATUS)
             else {}
         )
+        native_environment = None
+        if resource_role == CODEX_NATIVE_TERMINAL_ROLE and self._native_runtime is not None:
+            self.native_runtime_for(session_id)
+            native_environment = self.resolve_environment(session_id, DEFAULT_ENVIRONMENT_ID)
         try:
             instance = await self._terminal_registry.launch(
                 conversation_id=session_id,
@@ -1577,6 +1581,7 @@ class SessionResourceRegistry:
                 session_key=session_key,
                 spec=spec,
                 parent_os_env=parent_os_env,
+                parent_environment=native_environment,
                 cwd_override=cwd_override,
                 sandbox_override=sandbox_override,
                 **program_status_args,

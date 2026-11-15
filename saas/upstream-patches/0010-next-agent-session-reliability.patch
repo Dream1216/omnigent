@@ -5834,3 +5834,37 @@ diff --git a/omnigent/runner/app.py b/omnigent/runner/app.py
 @@ -3795 +3797 @@
 -        if status == "idle" and harness in {"codex-native", "antigravity-native"}:
 +        if status == "idle" and harness == "antigravity-native":
+diff --git a/omnigent/runner/resource_registry.py b/omnigent/runner/resource_registry.py
+--- a/omnigent/runner/resource_registry.py
++++ b/omnigent/runner/resource_registry.py
+@@ -1572,0 +1573,4 @@
++        native_environment = None
++        if resource_role == CODEX_NATIVE_TERMINAL_ROLE and self._native_runtime is not None:
++            self.native_runtime_for(session_id)
++            native_environment = self.resolve_environment(session_id, DEFAULT_ENVIRONMENT_ID)
+@@ -1579,0 +1584 @@
++                parent_environment=native_environment,
+diff --git a/omnigent/terminals/registry.py b/omnigent/terminals/registry.py
+index 6a0d588..e0e3f31 100644
+--- a/omnigent/terminals/registry.py
++++ b/omnigent/terminals/registry.py
+@@ -271,0 +272 @@ class TerminalRegistry:
++        parent_environment: OSEnvironment | None = None,
+@@ -287,0 +289 @@ class TerminalRegistry:
++                parent_environment=parent_environment,
+@@ -307,0 +310 @@ class TerminalRegistry:
++        parent_environment: OSEnvironment | None = None,
+@@ -351,0 +355,4 @@ class TerminalRegistry:
++        if parent_environment is not None and (
++            required is None or parent_environment.spec != required
++        ):
++            raise RuntimeError("Terminal parent environment differs from the required sandbox")
+@@ -355 +362 @@ class TerminalRegistry:
+-                os_env=required,
++                os_env="inherit" if parent_environment is not None else required,
+@@ -375 +381,0 @@ class TerminalRegistry:
+-        parent_environment = None
+@@ -378 +384,2 @@ class TerminalRegistry:
+-            environment_spec is not None
++            parent_environment is None
++            and environment_spec is not None

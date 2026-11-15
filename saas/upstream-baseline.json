@@ -115,7 +115,7 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 275,
-    "max_upstream_net_added_loc": 13550,
+    "max_upstream_net_added_loc": 13650,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1444,15 +1444,49 @@
         "tests/onboarding/test_harness_readiness.py",
         "tests/saas/test_upstream_delta.py"
       ]
+    },
+    "codex_home_native_tui_environment_20261116": {
+      "parent_source": "79c0d5bbfe82ff028ccfd6ceed2573d220bc5f7e",
+      "candidate_manifest_sha256": "9b54677f18a352fe4645a1d1ac9f78a9a8859f5a8d41d3446c01e9a1c466121d",
+      "authorization_source": {
+        "thread_id": "01a1db4c-a4d7-7693-96b6-af294b9aed8b",
+        "question_item_id": "[\"request_user_input_async\",\"call_3a612e3d96eb49e3b5e185373f4be161\",0]",
+        "answer_verbatim": "确认此固定候选净行额度 +100（推荐）",
+        "authority_record_sha256": "bf810a8af0cef1129ba707c1e59bc377ce2fdd6943c93ed8c2a792de6223096e"
+      },
+      "recorded_at": "2026-11-16",
+      "previous_max_direct_upstream_files": 275,
+      "max_direct_upstream_files": 275,
+      "previous_max_upstream_net_added_loc": 13550,
+      "max_upstream_net_added_loc": 13650,
+      "measured_direct_upstream_files": 275,
+      "measured_upstream_net_added_loc": 13650,
+      "scope_paths": [
+        "omnigent/runner/resource_registry.py",
+        "omnigent/terminals/registry.py",
+        "saas/upstream-patches/0010-next-agent-session-reliability.patch",
+        "tests/runner/test_resource_registry.py",
+        "tests/terminals/test_registry.py"
+      ],
+      "reason": "Direct human approval of the fixed CODEX_HOME repair only: managed runner-owned Codex TUI inherits its same-Session registered runtime policy; generic user terminal grants and required sandbox restrictions remain. Production14/test86 net lines; no new direct files, ninepatches/.85 and every original release gate remain. Authority registration is not CI, image, signature or business qualification."
+    },
+    "codex_home_normal_hook_format_derivation_20261116": {
+      "approved_fixed_candidate_sha256": "9b54677f18a352fe4645a1d1ac9f78a9a8859f5a8d41d3446c01e9a1c466121d",
+      "actual_format_only_derived_candidate_sha256": "13f3b6b04af32492a59c55bc2755b15f0e6a04ae329ba91203b820156efa9dd6",
+      "direct_human_authority_record_sha256": "bf810a8af0cef1129ba707c1e59bc377ce2fdd6943c93ed8c2a792de6223096e",
+      "derivation_manifest_sha256": "a38c4cf2a662f5ef6a2b03c0d9cac8b4f0e4f69ac18419f2c7893103c91a1e64",
+      "scope": "Required normal ruff call-layout formatting and exact 0010 mirror only. AST unchanged. Original fixed approval retained as original, no claim that human separately approved derived bytes.",
+      "actual_upstream_net_added_loc": 13648,
+      "max_upstream_net_added_loc": 13650
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "upstream_version": "0.21.0.dev20261031",
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "3cab4a491f9d6213af881e1dca4c5cc260a3a52979077936daf08c4c9a59146a",
+    "candidate_manifest_sha256": "13f3b6b04af32492a59c55bc2755b15f0e6a04ae329ba91203b820156efa9dd6",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "ef0e3834810c354520c6da679575fc3f81c5332b69540e233ceeb06afa164ad5"
+    "authority_record_sha256": "bf810a8af0cef1129ba707c1e59bc377ce2fdd6943c93ed8c2a792de6223096e"
   }
 }

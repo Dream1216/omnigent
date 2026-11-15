@@ -269,6 +269,7 @@ class TerminalRegistry:
         spec: TerminalEnvSpec,
         *,
         parent_os_env: OSEnvSpec | None = None,
+        parent_environment: OSEnvironment | None = None,
         cwd_override: str | None = None,
         sandbox_override: str | None = None,
         program_status_app: str | None = None,
@@ -285,6 +286,7 @@ class TerminalRegistry:
                 session_key,
                 spec,
                 parent_os_env=parent_os_env,
+                parent_environment=parent_environment,
                 cwd_override=cwd_override,
                 sandbox_override=sandbox_override,
                 program_status_app=program_status_app,
@@ -305,6 +307,7 @@ class TerminalRegistry:
         spec: TerminalEnvSpec,
         *,
         parent_os_env: OSEnvSpec | None = None,
+        parent_environment: OSEnvironment | None = None,
         cwd_override: str | None = None,
         sandbox_override: str | None = None,
         program_status_app: str | None = None,
@@ -349,10 +352,14 @@ class TerminalRegistry:
             required = deepcopy(self._required_environments.get(conversation_id))
             if self.require_environment_binding and required is None:
                 raise RuntimeError("Required server sandbox has not been bound")
+        if parent_environment is not None and (
+            required is None or parent_environment.spec != required
+        ):
+            raise RuntimeError("Terminal parent environment differs from the required sandbox")
         if required is not None:
             spec = replace(
                 spec,
-                os_env=required,
+                os_env="inherit" if parent_environment is not None else required,
                 allow_cwd_override=False,
                 allow_sandbox_override=False,
             )
@@ -372,10 +379,10 @@ class TerminalRegistry:
         # registry lock across them would serialize all conversations'
         # terminal spawns globally. Instead we re-check after the
         # spawn completes.
-        parent_environment = None
         environment_spec = spec.os_env if isinstance(spec.os_env, OSEnvSpec) else parent_os_env
         if (
-            environment_spec is not None
+            parent_environment is None
+            and environment_spec is not None
             and environment_spec.sandbox is not None
             and any(p.copy_on_write for p in environment_spec.sandbox.write_path_specs)
         ):
