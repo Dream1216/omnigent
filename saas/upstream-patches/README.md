@@ -12,6 +12,20 @@ records below remain audit history; the active limits are those in
 Source replay does not establish CI, image, migration, business or production
 acceptance. Adapter contract 0.2.0 and Runner Session protocol 2 remain unchanged.
 
+## Session-only native turn default (2026-11-16)
+
+Source owns the existing `0010-next-agent-session-reliability.patch` extension
+for `omnigent/inner/codex_native_executor.py`. Send the turn working directory
+without selecting the disabled `local` environment, so pinned Codex 0.142 uses
+its configured Session default. Session-only registration, filesystem policy,
+MCP roles and required sandbox remain unchanged. The existing executor test
+covers present and missing working directories; affected executor, transport and
+backend scenarios cover authority and ownership. The first and last replay
+revision is `ee728a02004749e7f6971beee6c66d990bfbd216`; upstream issue/PR: none.
+Remove this extension when upstream uses the configured default at this turn
+boundary. Nine patches remain. Replay establishes source equality only, not
+native CI, artifacts, signatures, real business or release acceptance.
+
 ## Ordinary-M host-compat extension (2026-11-11)
 
 Patches 0005 and 0010 replay the reviewed Host readiness changes.

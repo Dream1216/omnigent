@@ -919,7 +919,9 @@ def test_codex_delivery_records_input_and_accepted_native_turn(
     assert "private prompt" not in json.dumps(attrs)
 
 
+@pytest.mark.parametrize("has_cwd", [False, True])
 def test_web_started_codex_turn_returns_without_waiting_for_terminal_event(
+    has_cwd: bool,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -949,7 +951,7 @@ def test_web_started_codex_turn_returns_without_waiting_for_terminal_event(
             thread_id="thread_123",
             codex_home=str(tmp_path / "codex-home"),
             active_turn_id=None,
-            cwd=str(tmp_path),
+            cwd=str(tmp_path) if has_cwd else None,
         ),
     )
     executor = CodexNativeExecutor(bridge_dir=tmp_path)
@@ -972,7 +974,7 @@ def test_web_started_codex_turn_returns_without_waiting_for_terminal_event(
             {
                 "threadId": "thread_123",
                 "input": [{"type": "text", "text": "first"}],
-                "environments": [{"environmentId": "local", "cwd": str(tmp_path)}],
+                "cwd": str(tmp_path) if has_cwd else str(Path.cwd()),
             },
         )
     ]
@@ -1019,7 +1021,7 @@ def test_goal_command_sets_goal_before_starting_objective_turn(
             {
                 "threadId": "thread_123",
                 "input": [{"type": "text", "text": "Finish the implementation and tests"}],
-                "environments": [{"environmentId": "local", "cwd": str(tmp_path)}],
+                "cwd": str(tmp_path),
             },
         ),
     ]
@@ -1678,7 +1680,7 @@ def test_system_prompt_does_not_override_collaboration_mode(
             {
                 "threadId": "thread_123",
                 "input": [{"type": "text", "text": "hello"}],
-                "environments": [{"environmentId": "local", "cwd": str(tmp_path)}],
+                "cwd": str(tmp_path),
             },
         ),
     ]
@@ -2806,7 +2808,7 @@ def test_web_model_pick_applied_via_thread_settings_update(
             {
                 "threadId": "thread_123",
                 "input": [{"type": "text", "text": "hello"}],
-                "environments": [{"environmentId": "local", "cwd": str(tmp_path)}],
+                "cwd": str(tmp_path),
             },
         ),
     ]
@@ -3097,7 +3099,7 @@ def test_no_settings_update_when_overrides_unset(
             {
                 "threadId": "thread_123",
                 "input": [{"type": "text", "text": "a"}],
-                "environments": [{"environmentId": "local", "cwd": str(tmp_path)}],
+                "cwd": str(tmp_path),
             },
         ),
     ]
