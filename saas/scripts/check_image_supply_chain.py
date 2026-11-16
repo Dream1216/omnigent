@@ -566,6 +566,8 @@ def _validate_fixed_product_controller_contract(workflow: str) -> list[str]:
             "--source-proof artifacts/promotion-source.json",
         },
         "Download and validate original admitted OCI artifact": {
+            'cp "${RUNNER_TEMP}/admitted-oci/promotion-source.json" artifacts/',
+            "python -m saas.scripts.oci_promotion prepare",
             'if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]',
             "python -m saas.scripts.fixed_main16_ci_promotion download-trusted-main",
             "python -m saas.scripts.oci_promotion download-trusted-main",
@@ -580,13 +582,37 @@ def _validate_fixed_product_controller_contract(workflow: str) -> list[str]:
         },
         "Independently verify fixed-product wheel and controller provenance": {
             "if: " + mode,
+            'wheels=("${RUNNER_TEMP}/independent-wheel/"*.whl)',
+            '[[ "${#wheels[@]}" == 1 && -f "${wheels[0]}" && ! -L "${wheels[0]}" ]] || exit 1',
             "fixed_main16_ci_promotion check-wheel",
             "fixed_main16_ci_promotion verify-predicate",
             '--source-digest "$SIGNING_POLICY_REVISION"',
         },
+        "Stage signed wheel and bundle together": {
+            "WHEEL_BUNDLE_PATH: ${{ steps.attest-wheel.outputs.bundle-path }}",
+            "wheels=(dist/*.whl)",
+            '[[ "${#wheels[@]}" == 1 && -f "${wheels[0]}" && ! -L "${wheels[0]}" ]] || exit 1',
+            '[[ -f "$WHEEL_BUNDLE_PATH" && ! -L "$WHEEL_BUNDLE_PATH" ]] || exit 1',
+            'cp -- "${wheels[0]}" dist/SHA256SUMS "${RUNNER_TEMP}/signed-wheel/"',
+            'cp -- "$WHEEL_BUNDLE_PATH" "${RUNNER_TEMP}/signed-wheel/attestation.json"',
+        },
+        "Upload signed wheel and checksum": {"path: ${{ runner.temp }}/signed-wheel/"},
+        "Install hash-pinned Syft and Grype": {
+            "GH_TOKEN: ${{ github.token }}",
+            "gh release download v1.54.1 --repo anchore/syft",
+            "--pattern syft_1.54.1_linux_amd64.tar.gz",
+            "gh release download v0.120.1 --repo anchore/grype",
+            "--pattern grype_0.120.1_linux_amd64.tar.gz",
+            "c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47",
+            "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d",
+            "sha256sum --check --strict",
+        },
     }
     for name in (
         "Verify wheel signature identity and revision",
+        "Stage signed wheel and bundle together",
+        "Upload signed wheel and checksum",
+        "Install hash-pinned Syft and Grype",
         "Verify image signatures and protected workflow identity",
         "Independently verify registry digests, source labels and signatures",
     ):
@@ -606,6 +632,18 @@ def _validate_fixed_product_controller_contract(workflow: str) -> list[str]:
     profile_input = workflow.partition("      promotion_controller_profile:\n")[2].partition(
         "\npermissions:"
     )[0]
+    proof_copy = 'cp "${RUNNER_TEMP}/admitted-oci/promotion-source.json" artifacts/'
+    intake = (
+        _named_workflow_step(workflow, "Download and validate original admitted OCI artifact")
+        or ""
+    )
+    ordered_steps = (
+        "Download and validate original admitted OCI artifact",
+        "Generate explicit fixed-product controller provenance",
+        "Sign wheel provenance with GitHub OIDC",
+        "Verify wheel signature identity and revision",
+        "Verify image signatures and protected workflow identity",
+    )
     if (
         "options: [same-main, fixed-main16-ci-only]" not in profile_input
         or "default: same-main" not in profile_input
@@ -617,6 +655,11 @@ def _validate_fixed_product_controller_contract(workflow: str) -> list[str]:
             or any(fragment not in step for fragment in required)
             for name, required in steps.items()
         )
+        or workflow.count(proof_copy) != 1
+        or intake.index(proof_copy) < intake.index("python -m saas.scripts.oci_promotion prepare")
+        or any(workflow.count(f"      - name: {name}\n") != 1 for name in ordered_steps)
+        or [workflow.index(f"      - name: {name}\n") for name in ordered_steps]
+        != sorted(workflow.index(f"      - name: {name}\n") for name in ordered_steps)
     ):
         return [
             "fixed-product controller promotion must keep exact source, "
