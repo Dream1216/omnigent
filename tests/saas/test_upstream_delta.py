@@ -796,6 +796,11 @@ def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
         "previous-R3-authority",
         "previous-R4-authority",
         "previous-native-0142-authority",
+        "previous-codex-home-authority",
+        "previous-p1-inert-authority",
+        "previous-p1-wiring-authority",
+        "previous-current-security-authority",
+        "previous-diagnostic-guard-authority",
         "scope-bytes",
         "protected-bytes",
         "other-source-bytes",
@@ -874,6 +879,26 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
     elif fault == "previous-native-0142-authority":
         decision["authority_record_sha256"] = (
             "ef0e3834810c354520c6da679575fc3f81c5332b69540e233ceeb06afa164ad5"
+        )
+    elif fault == "previous-codex-home-authority":
+        decision["authority_record_sha256"] = (
+            "bf810a8af0cef1129ba707c1e59bc377ce2fdd6943c93ed8c2a792de6223096e"
+        )
+    elif fault == "previous-p1-inert-authority":
+        decision["authority_record_sha256"] = (
+            "40f8e2457341de609044b9a0768c9c61a15fb0ced4870d81bc20f110386827a6"
+        )
+    elif fault == "previous-p1-wiring-authority":
+        decision["authority_record_sha256"] = (
+            "599a8951dbc9030b53c450d3f670f5a34b042395967c4982b47bd62c1c68ee53"
+        )
+    elif fault == "previous-current-security-authority":
+        decision["authority_record_sha256"] = (
+            "30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0"
+        )
+    elif fault == "previous-diagnostic-guard-authority":
+        decision["authority_record_sha256"] = (
+            "6fca6f621dbd839a3a448e192611391c8af5861bcfe64d1e16e7a786c3df315d"
         )
     target = {
         "scope-bytes": root / guard._ORDINARY_M_SCOPE_PATH,

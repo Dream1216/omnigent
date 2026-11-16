@@ -1,4 +1,4 @@
-"""Refresh only vulnerability evidence for the fixed, already signed M2c OCI."""
+"""Refresh vulnerability evidence for an explicitly registered signed OCI origin."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import parse_qs, urlsplit
 
 from saas.scripts.legacy_artifact_download import download_artifact_bytes
@@ -30,19 +31,98 @@ from saas.scripts.scan_oci_candidates import official_database_latest, scan_repo
 ORIGIN_FILE = Path(".github/actions/compat-smoke-m2c-evidence-renewal/origin.json")
 WORKFLOW = ".github/workflows/saas-m2c-evidence-renewal.yml"
 PRODUCT = "2c34fd412118b806156b42de767dc2315e25cbd1"
+_FIXED_TREE = "0589ca4ed27b94691dae61db48dd84e4777401bc"
+_FIXED_RUN = 43535964651
+_EVIDENCE_KIND = "same_signed_M2c_current_scan_evidence"
+_ORIGIN_FIELDS = {
+    "schema_version",
+    "repository",
+    "product_revision",
+    "product_tree",
+    "run_id",
+    "attempt",
+    "workflow",
+    "rebuilt",
+    "source_date_epoch",
+    "manifest_sha256",
+    "images",
+    "platforms",
+    "required_jobs",
+    "artifacts",
+}
+
+
+class FixedRelease(NamedTuple):
+    product: str
+    tree: str
+    run: int
+    origin_file: Path
+    workflow: str
+    evidence_kind: str
+
+
+_FIXED_RELEASES = {
+    "m2c": FixedRelease(PRODUCT, _FIXED_TREE, _FIXED_RUN, ORIGIN_FILE, WORKFLOW, _EVIDENCE_KIND),
+    "main4cb": FixedRelease(
+        "4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
+        "a3de86a0a5e8ad9120b7ac451d135804335d5525",
+        43755049480,
+        ORIGIN_FILE.with_name("main4cb-origin.json"),
+        ".github/workflows/saas-m-current-evidence-renewal.yml",
+        "same_signed_M4cb_current_scan_evidence",
+    ),
+}
+
+
+def select_release(release: str) -> None:
+    """Select only a committed fixed profile; no caller-supplied origin path."""
+    global PRODUCT, _FIXED_TREE, _FIXED_RUN, ORIGIN_FILE, WORKFLOW, _EVIDENCE_KIND
+    require(release in _FIXED_RELEASES, "unknown fixed renewal origin")
+    profile = _FIXED_RELEASES[release]
+    PRODUCT, _FIXED_TREE, _FIXED_RUN = profile.product, profile.tree, profile.run
+    ORIGIN_FILE, WORKFLOW, _EVIDENCE_KIND = (
+        profile.origin_file,
+        profile.workflow,
+        profile.evidence_kind,
+    )
 
 
 def origin() -> dict:
     value = read_json(ORIGIN_FILE)
+    extra = (
+        {"source_qualification_sha256", "original_main_ci", "original_environment_review"}
+        if _FIXED_RUN == 43755049480
+        else set()
+    )
     require(
-        value["product_revision"] == PRODUCT
-        and value["product_tree"] == "0589ca4ed27b94691dae61db48dd84e4777401bc"
-        and value["run_id"] == 43535964651
+        set(value) == _ORIGIN_FIELDS | extra
+        and value["product_revision"] == PRODUCT
+        and value["product_tree"] == _FIXED_TREE
+        and value["run_id"] == _FIXED_RUN
         and value["attempt"] == 1
         and value["workflow"] == ".github/workflows/saas-image-candidate.yml"
         and value["rebuilt"] is False,
         "fixed original signed M identity differs",
     )
+    if _FIXED_RUN == 43755049480:
+        require(
+            value.get("source_qualification_sha256")
+            == "821f80467cad0328549a3d8b8f0697b90edcbcf8c1d5eb79efcf3e83f76009e5"
+            and value.get("original_main_ci")
+            == {
+                "product_revision": PRODUCT,
+                "product_tree": _FIXED_TREE,
+                "qualification_sha256": (
+                    "b9e45e69935692dc6b0de8d987cb4b41ba2360643551c2c3a7b95de04e59ec8d"
+                ),
+                "expires_at": "2026-11-16T19:54:52+00:00",
+                "required_workflow_count": 6,
+            }
+            and value["original_environment_review"]["run"] == _FIXED_RUN
+            and value["original_environment_review"]["environment"] == "production-image"
+            and value["original_environment_review"]["no_rules_bypassed"] is True,
+            "original Source qualification, Main CI or normal environment differs",
+        )
     return value
 
 
@@ -190,6 +270,8 @@ def qualify(
     require("temporary_database_age" not in qualified, "normal24 only")
     built = instant(summary["database_built_at"])
     expiry = min(built + timedelta(hours=24), checked + timedelta(hours=24))
+    if "original_main_ci" in value:
+        expiry = min(expiry, instant(value["original_main_ci"]["expires_at"]))
     require(
         latest["status"] == "active"
         and instant(latest["built"]) == built
@@ -229,7 +311,7 @@ def qualify(
             }
     return {
         "schema_version": 1,
-        "kind": "same_signed_M2c_current_scan_evidence",
+        "kind": _EVIDENCE_KIND,
         "origin": value,
         "signing_policy_revision": policy,
         "run_id": run,
@@ -253,7 +335,7 @@ def verify_current(payload: dict, scans: Path, *, policy: str, run: str, attempt
     now = datetime.now(UTC)
     require(
         payload["origin"] == value
-        and payload["kind"] == "same_signed_M2c_current_scan_evidence"
+        and payload["kind"] == _EVIDENCE_KIND
         and payload["signing_policy_revision"] == policy
         and payload["run_id"] == run
         and payload["run_attempt"] == attempt
@@ -266,6 +348,11 @@ def verify_current(payload: dict, scans: Path, *, policy: str, run: str, attempt
         <= instant(payload["database_built_at"]) + timedelta(hours=24),
         "current signed evidence identity or hard expiry differs",
     )
+    if "original_main_ci" in value:
+        require(
+            instant(payload["expires_at"]) <= instant(value["original_main_ci"]["expires_at"]),
+            "new security evidence cannot renew original Main CI",
+        )
     manifest = read_json(scans / MANIFEST_NAME)
     require(digest(scans / MANIFEST_NAME) == value["manifest_sha256"], "independent seal differs")
     require(
@@ -327,7 +414,9 @@ def main() -> None:
     parser.add_argument("--run")
     parser.add_argument("--attempt")
     parser.add_argument("--started")
+    parser.add_argument("--release", choices=tuple(_FIXED_RELEASES), default="m2c")
     args = parser.parse_args()
+    select_release(args.release)
     if args.action == "origin":
         download_origin(args.root)
     elif args.action == "predicate":

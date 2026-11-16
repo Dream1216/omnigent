@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "b8d781ee4f48ac46362a7a5e53c1e8188a1395dd365d211e7085b753a1798bdd",
+  "candidate_manifest_sha256": "5b87413a152ca4da086ee8026dd1d34312131216fb674a0184c5b417881be669",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -333,13 +333,13 @@
     },
     {
       "path": ".github/actions/compat-smoke-m2c-evidence-renewal/renewal.py",
-      "bytes": 15889,
-      "sha256": "6209896356a35bdfd489e46b288796cdbe370c9c7f9c5a29b7961df54a2b4289"
+      "bytes": 19015,
+      "sha256": "73c73680922b7d604068f4635a29c5c9a68495fb446e99723f2d354320607f99"
     },
     {
       "path": ".github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py",
-      "bytes": 7702,
-      "sha256": "f5c9f69022ac25d188275288e040332dcfd3aecfde41b1a2bd69e60dbf622269"
+      "bytes": 11756,
+      "sha256": "146ae8493b64d6b3e6d54562d82d890aef2e6d01af94ba1a2e115eb59ec5d534"
     },
     {
       "path": ".github/workflows/saas-m2c-evidence-renewal.yml",
@@ -390,6 +390,51 @@
       "path": "tests/terminals/test_registry.py",
       "bytes": 42595,
       "sha256": "9b637da04f18960f4aff2ecf31aa18a7103ef2dd950264bc30e0b19d83f0b838"
+    },
+    {
+      "path": "saas/scripts/oci_promotion.py",
+      "bytes": 28102,
+      "sha256": "d8b541095eaaaa0c027b0e3cd3f92e69c60d258cb363b79fda5024e245feff75"
+    },
+    {
+      "path": "tests/saas/test_oci_promotion.py",
+      "bytes": 37634,
+      "sha256": "dbaf8b36b132ed49a0aa0eb36fb6035268784152ac50bb925ffd07b8c2ca4dc7"
+    },
+    {
+      "path": ".github/workflows/saas-image-candidate.yml",
+      "bytes": 68982,
+      "sha256": "74184d3780556ebd3be74e4b7083dc6961c14acb7ef83e92c5859e501017ef44"
+    },
+    {
+      "path": "saas/scripts/check_image_supply_chain.py",
+      "bytes": 118577,
+      "sha256": "920af2729cc8cb265d4a301831d451b3f73ca12d86fbdfc564c910ba94c1dd9e"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json",
+      "bytes": 3102,
+      "sha256": "f5e5bfd1045eef2677483ade372474ca814ce173bab17319808a994a43ef0532"
+    },
+    {
+      "path": ".github/workflows/saas-m-current-evidence-renewal.yml",
+      "bytes": 6837,
+      "sha256": "e5c10dd45525bad0eaa7ce8693f8f6251ac6bb08874bd2f0c4622ca15cfa52b4"
+    },
+    {
+      "path": "tests/saas/test_scan_oci_candidates.py",
+      "bytes": 21918,
+      "sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011"
+    },
+    {
+      "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json",
+      "bytes": 249366,
+      "sha256": "e5f1940ea273879f54bc22aa9a0e42ab7355fa6d83e978530e3d8becd8fdb2f1"
+    },
+    {
+      "path": "tests/saas/test_legacy_domain_discovery.py",
+      "bytes": 45920,
+      "sha256": "bc1dd290e6de850dcf41db0e3e5b29a67bfa1c9ffd8cf0a115c2b4d5252116c8"
     }
   ],
   "governance_paths": [
@@ -400,7 +445,7 @@
     ".github/workflows/saas-controller-source-budget.json"
   ],
   "manifest_controls_sha256": {
-    "baseline": "4aec901d89ee7b6e458d4d4192e66b5f1ab47856547c7351c3d094c5987683c6",
+    "baseline": "5bfa71403c79219635c98449c44179019e248bf8a3d07d86954e8dc0938ca70f",
     "controller": "b3242eeb5a09e6da7027c345e65814ede25f4ae0bcee8339c3ff926e32835569"
   },
   "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
@@ -536,5 +581,73 @@
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main79-host-seccomp-NS02-20261115/connected-native-startup/PR282-PRIVATE-ENV-ABI.FIXED-PROPOSAL.PUBLIC.json",
     "bytes": 5042,
     "sha256": "74bc96abb48087593bcc51356a0a321219d67722b3a6e61eaf337b5a2d300c84"
+  },
+  "previous_codex_home_exact_scope": {
+    "candidate_manifest_sha256": "b8d781ee4f48ac46362a7a5e53c1e8188a1395dd365d211e7085b753a1798bdd",
+    "scope_sha256": "c169f8982710cf1b64f5b2e49e799db2353c8600f2b33e4f4b49ba21e3a91453",
+    "authority_record_sha256": "bf810a8af0cef1129ba707c1e59bc377ce2fdd6943c93ed8c2a792de6223096e"
+  },
+  "p1_first_inert_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-P1-trusted-main-crossrun-20261116/P1-FIRST-BATCH.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
+    "bytes": 3580,
+    "sha256": "40f8e2457341de609044b9a0768c9c61a15fb0ced4870d81bc20f110386827a6"
+  },
+  "previous_p1_first_exact_scope": {
+    "candidate_manifest_sha256": "44447411cd1cb5e20abe0dbc007cf8464e2086fc6ae1ff39c4c605d249037060",
+    "scope_sha256": "35a36dbd158c677e25f32e49fafcb4d115a4412e33ae37c051c77e8fd91e9a8d",
+    "authority_record_sha256": "40f8e2457341de609044b9a0768c9c61a15fb0ced4870d81bc20f110386827a6"
+  },
+  "p1_second_wiring_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-P1-trusted-main-crossrun-20261116/P1-SECOND-BATCH.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
+    "bytes": 4263,
+    "sha256": "599a8951dbc9030b53c450d3f670f5a34b042395967c4982b47bd62c1c68ee53"
+  },
+  "previous_p1_second_exact_scope": {
+    "candidate_manifest_sha256": "6f9f86e1b2589b1aa6d19c6662ce00c62dc67ad196577af82a233ab8b2b0bb00",
+    "scope_sha256": "dde0e381d98998e2ad36d3d68908405f41a5890adf0dad23d42871630a495cfe",
+    "approval": {
+      "candidate_manifest_sha256": "6f9f86e1b2589b1aa6d19c6662ce00c62dc67ad196577af82a233ab8b2b0bb00",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "599a8951dbc9030b53c450d3f670f5a34b042395967c4982b47bd62c1c68ee53"
+    },
+    "retained_P1_and_runtime_protected_bytes_unchanged": true
+  },
+  "current_security_renewal_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-M4cb-normal-current-security-renewal-20261116/NORMAL-CURRENT-RENEWAL.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
+    "bytes": 2630,
+    "sha256": "30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0"
+  },
+  "previous_current_security_renewal_exact_scope": {
+    "candidate_manifest_sha256": "d51959f12336e7469b7a88d5d689d8e8d04021f1da42f3dbc74ac017cab7c0fc",
+    "scope_sha256": "d05bfcef68046aa08426a88fbc8fc2234baf63e437b5a3a8219d9424f31298c1",
+    "approval": {
+      "candidate_manifest_sha256": "d51959f12336e7469b7a88d5d689d8e8d04021f1da42f3dbc74ac017cab7c0fc",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "30dd87c298d7c6f63e94f76fc3c08571e99f592ceeb65605c5646396f947b4c0"
+    },
+    "all_P1_and_current_security_functional_bytes_unchanged": true
+  },
+  "diagnostic_guard_contract_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-M4cb-normal-current-security-renewal-20261116/PR283-DIAGNOSTIC-GUARD.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
+    "bytes": 2027,
+    "sha256": "6fca6f621dbd839a3a448e192611391c8af5861bcfe64d1e16e7a786c3df315d"
+  },
+  "previous_diagnostic_guard_exact_scope": {
+    "candidate_manifest_sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011",
+    "scope_sha256": "aa8a8161a5f19e1e719050cf034ecbf4cd79b71bc2d5be0126497458ae39a571",
+    "approval": {
+      "candidate_manifest_sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "6fca6f621dbd839a3a448e192611391c8af5861bcfe64d1e16e7a786c3df315d"
+    },
+    "production_P1_current_security_and_runtime_bytes_unchanged": true
+  },
+  "legacy_inverse_guard_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-M4cb-normal-current-security-renewal-20261116/PR283-LEGACY-IMMUTABLE-GUARD.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
+    "bytes": 2215,
+    "sha256": "fdf1ec114056675b3cfe0bd24eab10e709f91312f0f56d746b522e8860c74c30"
   }
 }

@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests.saas.test_oci_promotion import EPOCH, REVISION, candidate, seal, write_json
 
@@ -21,8 +22,23 @@ spec.loader.exec_module(renewal)
 POLICY = "b" * 40
 
 
+@pytest.fixture(params=["m2c", "main4cb"])
+def _fixed_release(request, monkeypatch):
+    for name in (
+        "PRODUCT",
+        "_FIXED_TREE",
+        "_FIXED_RUN",
+        "ORIGIN_FILE",
+        "WORKFLOW",
+        "_EVIDENCE_KIND",
+    ):
+        monkeypatch.setattr(renewal, name, getattr(renewal, name))
+    renewal.select_release(request.param)
+    return request.param
+
+
 @pytest.fixture
-def native_origin():
+def native_origin(_fixed_release):
     value = renewal.origin()
     run = {
         "id": value["run_id"],
@@ -93,7 +109,7 @@ def test_origin_rejects_other_material_or_borrowed_success(native_origin, fault)
 
 
 @pytest.fixture
-def current(tmp_path, monkeypatch):
+def current(tmp_path, monkeypatch, _fixed_release):
     sealed = tmp_path / "sealed"
     labels, _ = candidate(sealed)
     summary = json.loads((sealed / "grype/candidate-scan-summary.json").read_text())
@@ -134,6 +150,10 @@ def current(tmp_path, monkeypatch):
             for arch in ("amd64", "arm64")
         },
     )
+    if "original_main_ci" in value:
+        value["original_main_ci"]["expires_at"] = (
+            datetime.now(UTC) + timedelta(hours=2)
+        ).isoformat()
     monkeypatch.setattr(renewal, "origin", lambda: copy.deepcopy(value))
     monkeypatch.setattr(renewal, "PRODUCT", REVISION)
     monkeypatch.setattr(
@@ -190,7 +210,9 @@ def test_current_clock_and_scope_cannot_be_borrowed(current, fault):
         renewal.verify_current(payload, scans, policy=POLICY, run="42", attempt="1")
 
 
-def test_current_evidence_signature_requires_its_actual_native_controller_and_subject():
+def test_current_evidence_signature_requires_its_actual_native_controller_and_subject(
+    _fixed_release,
+):
     claims = renewal.build_certificate_claims(
         renewal.origin()["repository"],
         POLICY,
@@ -214,3 +236,72 @@ def test_current_evidence_signature_requires_its_actual_native_controller_and_su
         renewal.verify_signature([entry], "f" * 64, policy=POLICY, run="42", attempt="1")
     with pytest.raises(ValueError):
         renewal.verify_signature([entry], subject, policy=POLICY, run="43", attempt="1")
+
+
+@pytest.mark.parametrize("fault", ["Source-q", "Main-CI", "normal-environment"])
+def test_profile_does_not_borrow_another_origin_or_renew_its_authority(
+    _fixed_release, monkeypatch, fault
+):
+    value = copy.deepcopy(renewal.origin())
+    if fault == "Source-q":
+        value["source_qualification_sha256"] = "0" * 64
+    elif fault == "Main-CI":
+        value.setdefault("original_main_ci", {})["expires_at"] = "2099-01-01T00:00:00Z"
+    else:
+        value.setdefault("original_environment_review", {})["run"] = 1
+    monkeypatch.setattr(renewal, "read_json", lambda _: value)
+    with pytest.raises(ValueError):
+        renewal.origin()
+
+
+def test_unregistered_release_does_not_accept_an_arbitrary_origin_path():
+    with pytest.raises(ValueError):
+        renewal.select_release("/tmp/untrusted-origin.json")
+
+
+def test_current_security_expiry_is_bounded_by_original_Main_CI(current, monkeypatch):
+    payload, scans = current
+    value = copy.deepcopy(renewal.origin())
+    if "original_main_ci" not in value:
+        # The historical M2c profile keeps its original contract unchanged.
+        assert "original_main_ci" not in payload["origin"]
+        return
+    assert renewal.instant(payload["expires_at"]) <= renewal.instant(
+        value["original_main_ci"]["expires_at"]
+    )
+    value["original_main_ci"]["expires_at"] = datetime.now(UTC).isoformat()
+    payload["origin"] = value
+    monkeypatch.setattr(renewal, "origin", lambda: copy.deepcopy(value))
+    with pytest.raises(ValueError, match="cannot renew original Main CI"):
+        renewal.verify_current(payload, scans, policy=POLICY, run="42", attempt="1")
+
+
+def test_protected_workflow_signs_only_new_evidence_for_its_fixed_origin(_fixed_release):
+    workflow = yaml.safe_load(Path(renewal.WORKFLOW).read_text())
+    assert workflow["permissions"] == {"contents": "read"}
+    job = workflow["jobs"]["sign-current-evidence"]
+    assert job["environment"] == "production-image"
+    assert job["permissions"]["packages"] == "read"
+    assert job["permissions"]["id-token"] == job["permissions"]["attestations"] == "write"
+    assert "github.ref == 'refs/heads/main'" in job["if"]
+    assert "inputs.policy_revision == github.sha" in job["if"]
+    commands = "\n".join(step.get("run", "") for step in job["steps"])
+    assert f"git merge-base --is-ancestor {renewal.PRODUCT} HEAD" in commands
+    assert "--source-digest " + renewal.PRODUCT in commands
+    assert "'.images[$role]' " + renewal.ORIGIN_FILE.as_posix() + ")" in commands
+    assert '--image "server=$RUNNER_TEMP/origin/sealed/server-1.tar"' in commands
+    assert '--image "host=$RUNNER_TEMP/origin/sealed/host-1.tar"' in commands
+    signing = [
+        step
+        for step in job["steps"]
+        if step.get("name") == "Sign only new current evidence subject"
+    ]
+    assert len(signing) == 1
+    assert signing[0]["with"]["subject-path"] == "evidence/current-scan-evidence.json"
+    independent = workflow["jobs"]["independent-current-readback"]
+    assert independent["needs"] == "sign-current-evidence"
+    assert all(access == "read" for access in independent["permissions"].values())
+    verification = "\n".join(step.get("run", "") for step in independent["steps"])
+    assert renewal.WORKFLOW in verification
+    assert commands.count("--release main4cb") == (4 if _fixed_release == "main4cb" else 0)
+    assert verification.count("--release main4cb") == (1 if _fixed_release == "main4cb" else 0)
