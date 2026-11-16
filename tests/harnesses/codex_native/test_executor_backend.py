@@ -639,6 +639,7 @@ async def test_same_connection_terminate_cancels_parked_start_before_late_allow(
 
         await send(1, "initialize", {"clientName": "original-protocol-cancel"})
         assert json.loads(await asyncio.wait_for(reader.readline(), 1))["id"] == 1
+        await send(None, "initialized", None)
         await send(
             2,
             "process/start",
@@ -659,7 +660,7 @@ async def test_same_connection_terminate_cancels_parked_start_before_late_allow(
         assert cancelled.is_set() and not records
         assert not backend.pending_starts and not backend.processes
         release.set()
-        await send(4, "environment/info", {})
+        await send(4, "environment/info", None)
         assert (
             json.loads(await asyncio.wait_for(reader.readline(), 1))["result"]["shell"]["name"]
             == "sh"
