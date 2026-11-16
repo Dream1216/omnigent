@@ -610,9 +610,6 @@ def _validate_fixed_product_controller_contract(workflow: str) -> list[str]:
     }
     for name in (
         "Verify wheel signature identity and revision",
-        "Stage signed wheel and bundle together",
-        "Upload signed wheel and checksum",
-        "Install hash-pinned Syft and Grype",
         "Verify image signatures and protected workflow identity",
         "Independently verify registry digests, source labels and signatures",
     ):
@@ -642,6 +639,9 @@ def _validate_fixed_product_controller_contract(workflow: str) -> list[str]:
         "Generate explicit fixed-product controller provenance",
         "Sign wheel provenance with GitHub OIDC",
         "Verify wheel signature identity and revision",
+        "Stage signed wheel and bundle together",
+        "Upload signed wheel and checksum",
+        "Install hash-pinned Syft and Grype",
         "Verify image signatures and protected workflow identity",
     )
     if (

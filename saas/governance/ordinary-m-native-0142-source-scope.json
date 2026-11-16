@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "64e6748df1cd60373204d80a6c7e65ee618caa942ab5c9df228f55cb9da36ddb",
+  "candidate_manifest_sha256": "069dd7aa2fb5e2f6a305ab6c695830e778d7457093522aecf7351739105b560d",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -224,7 +224,7 @@
     {
       "path": "saas/scripts/check_image_supply_chain.py",
       "bytes": 127217,
-      "sha256": "84925511f9ede448456e7563fa6d39817a47eeb3bfe3e11825e0bcd036fb8974"
+      "sha256": "01d3945eb6e53478b28e2ab885da655daf31a67b888f07b6a54fc73bb21fd607"
     },
     {
       "path": "saas/scripts/fixed_main16_ci_promotion.py",
@@ -394,7 +394,7 @@
     {
       "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json",
       "bytes": 297409,
-      "sha256": "8f2116a0261ff1fa09096c85bd792338cc9f34fa5b2cf098589827cc102e7ada"
+      "sha256": "2485b6112685113b6a79e89a991ac98441a9c6813ecb552a87be3b8e63f72e42"
     },
     {
       "path": "tests/saas/test_legacy_domain_discovery.py",
@@ -408,8 +408,8 @@
     },
     {
       "path": "tests/saas/test_oci_promotion.py",
-      "bytes": 67263,
-      "sha256": "7f58e53e44f7954e9ec592678cb17faaa702e2de16398abe1010c744682b4abf"
+      "bytes": 67679,
+      "sha256": "4c3cdae72452cceaebdec48990ecac4d5d8808bff8de14e6a86e21367528c470"
     },
     {
       "path": "tests/saas/test_platform_model_gateway.py",
@@ -699,9 +699,9 @@
     "runtime_and_original_file277_exception_preserved": true
   },
   "current_downstream_CI_maintenance_scope_authority": {
-    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main16-proof-materialization-order-R2-PREPARED-20261116/R2.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
-    "bytes": 4236,
-    "sha256": "28857d019590e0d74919ee332e3431bb5f0e6d09192e2fe961bab5d9a0cdcd54"
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-PR286-validator-step-classification-R3-PREPARED-20261116/R3.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
+    "bytes": 4249,
+    "sha256": "2b65dfd53ce4506fc4bb91e23f8609b4e211dc47fb76724ffee0cedd6c638448"
   },
   "previous_fixed16_ci_only_exact_scope": {
     "candidate_manifest_sha256": "af499e401a4c568f5b87f111c9842d022f020d71bbdd66ac7b40fc4d6b0bcc21",
@@ -731,6 +731,20 @@
     },
     "actual_Main": "15c353f93b97eae13b06a7dbd0d51d7ce341bfb8",
     "failed_publisher_run": 43877600196,
+    "failed_originals_retained": true
+  },
+  "previous_fixed16_proof_handoff_R2_exact_scope": {
+    "candidate_manifest_sha256": "64e6748df1cd60373204d80a6c7e65ee618caa942ab5c9df228f55cb9da36ddb",
+    "scope_sha256": "f76d26f56ec3b1ae3a58287ad252a8a44e2ec723392f64acd72165ed233ea1bb",
+    "approval": {
+      "candidate_manifest_sha256": "64e6748df1cd60373204d80a6c7e65ee618caa942ab5c9df228f55cb9da36ddb",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "28857d019590e0d74919ee332e3431bb5f0e6d09192e2fe961bab5d9a0cdcd54"
+    },
+    "actual_Main": "15c353f93b97eae13b06a7dbd0d51d7ce341bfb8",
+    "failed_required_PR_CI_run": 43887342279,
+    "failed_PR_head": "bd9578d4abfe91e362550118f0c87285d1a44389",
     "failed_originals_retained": true
   }
 }

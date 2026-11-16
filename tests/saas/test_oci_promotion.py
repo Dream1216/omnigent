@@ -901,10 +901,19 @@ def test_cross_run_policy_rejects_bypassed_origin_binding(tmp_path, target) -> N
         ("Install hash-pinned Syft and Grype", "gh release download v1.54.1"),
         ("Install hash-pinned Syft and Grype", "gh release download v0.120.1"),
         ("Install hash-pinned Syft and Grype", "sha256sum --check --strict"),
+        (
+            "Install hash-pinned Syft and Grype",
+            "c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47",
+        ),
+        (
+            "Install hash-pinned Syft and Grype",
+            "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d",
+        ),
     ],
 )
 def test_fixed_product_policy_rejects_erased_controller_boundary(tmp_path, step_name, target):
     repo = _candidate_contract_repo(tmp_path)
+    assert validate_candidate_build_contract(repo) == []
     path = repo / ".github/workflows/saas-image-candidate.yml"
     source = path.read_text()
     marker = f"      - name: {step_name}\n"
@@ -927,6 +936,7 @@ def test_fixed_product_policy_rejects_erased_controller_boundary(tmp_path, step_
 @pytest.mark.parametrize("fault", ["late", "duplicate", "early", "predicate-after-sign"])
 def test_fixed_product_policy_requires_proof_before_its_consumers(tmp_path, fault):
     repo = _candidate_contract_repo(tmp_path)
+    assert validate_candidate_build_contract(repo) == []
     path = repo / ".github/workflows/saas-image-candidate.yml"
     source = path.read_text()
     transfer = (
