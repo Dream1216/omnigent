@@ -168,13 +168,13 @@
     },
     {
       "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
-      "bytes": 264463,
-      "sha256": "bfd1ceaf6592850c518133ac143396c5a2ceaa37d449099e002e6ce85f987870"
+      "bytes": 264975,
+      "sha256": "cea27e5b504bce9e09d2dcb5cc6afb3ccc10916775faf33c3a8e126655320d44"
     },
     {
       "path": "saas/upstream-patches/README.md",
-      "bytes": 35650,
-      "sha256": "1224a9c2732698dd0fff9d4cee7ba3defe80e4d158ae54dc43dffd4c9a9c8fdc"
+      "bytes": 36553,
+      "sha256": "6e27d32b8187a0a3b72208f37a29457b45e85e1038a52d2d30acdcaf42c20228"
     },
     {
       "path": "tests/e2e/conftest.py",

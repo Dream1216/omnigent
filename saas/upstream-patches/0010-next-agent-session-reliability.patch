@@ -5877,3 +5877,15 @@ index 6a0d588c31c..e0e3f31c159 100644
 -            environment_spec is not None
 +            parent_environment is None
 +            and environment_spec is not None
+diff --git a/omnigent/inner/codex_native_executor.py b/omnigent/inner/codex_native_executor.py
+index 4373dc089a1..b694d722d4e 100644
+--- a/omnigent/inner/codex_native_executor.py
++++ b/omnigent/inner/codex_native_executor.py
+@@ -430,6 +430 @@ async def _start_codex_turn(
+-            "environments": [
+-                {
+-                    "environmentId": "local",
+-                    "cwd": state.cwd or str(Path.cwd()),
+-                }
+-            ],
++            "cwd": state.cwd or str(Path.cwd()),
