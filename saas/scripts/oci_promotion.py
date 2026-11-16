@@ -457,30 +457,11 @@ def resolve_trusted_main_source(
     run_attempt: int,
     artifact_id: int,
     zip_sha256: str,
-    controller_profile: str = "same-main",
-    manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Use authenticated source metadata independently in signer and readback jobs."""
-    require(
-        controller_profile in {"same-main", "fixed-main16-ci-only"}, "unknown controller profile"
+    repository_id = verify_promotion_controller(
+        dict(os.environ), repository=repository, revision=revision
     )
-    context = None
-    if controller_profile == "fixed-main16-ci-only":
-        from saas.scripts.fixed_main16_ci_promotion import controller_context
-
-        repository_id, context = controller_context(
-            repository=repository,
-            revision=revision,
-            run_id=run_id,
-            run_attempt=run_attempt,
-            artifact_id=artifact_id,
-            zip_sha256=zip_sha256,
-            manifest_sha256=manifest_sha256,
-        )
-    else:
-        repository_id = verify_promotion_controller(
-            dict(os.environ), repository=repository, revision=revision
-        )
     require(
         run_id > 0 and run_attempt > 0 and artifact_id > 0, "positive source coordinates required"
     )
@@ -496,7 +477,7 @@ def resolve_trusted_main_source(
             ["gh", "api", f"repos/{repository}/actions/artifacts/{artifact_id}"], text=True
         )
     )
-    source = verify_trusted_main_source(
+    return verify_trusted_main_source(
         run,
         [job for page in pages for job in page["jobs"]],
         artifact,
@@ -508,9 +489,6 @@ def resolve_trusted_main_source(
         artifact_id=artifact_id,
         zip_sha256=zip_sha256,
     )
-    if context is not None:
-        source["controller_context"] = context
-    return source
 
 
 def extract_artifact(archive: Path, root: Path, *, zip_sha256: str) -> None:
@@ -580,20 +558,12 @@ def main() -> int:
     parser.add_argument("--run-id", type=int)
     parser.add_argument("--run-attempt", type=int)
     parser.add_argument("--repository")
-    parser.add_argument(
-        "--controller-profile", choices=("same-main", "fixed-main16-ci-only"), default="same-main"
-    )
     parser.add_argument("--layout-root", type=Path)
     parser.add_argument("--current-scans", type=Path)
     parser.add_argument("--discard-transferred-archives", action="store_true")
     parser.add_argument("--server", type=Path)
     parser.add_argument("--host", type=Path)
     args = parser.parse_args()
-    require(
-        args.controller_profile == "same-main"
-        or args.command in {"download-trusted-main", "verify-trusted-main"},
-        "controller profile applies only to trusted Main intake",
-    )
     labels = expected_labels(Path.cwd(), args.revision)
     if args.command in {"download", "download-trusted-main", "verify-trusted-main"}:
         require(
@@ -616,8 +586,6 @@ def main() -> int:
                 run_attempt=args.run_attempt,
                 artifact_id=args.artifact_id,
                 zip_sha256=args.artifact_sha256,
-                controller_profile=args.controller_profile,
-                manifest_sha256=args.manifest_sha256,
             )
             require(args.manifest_sha256 is not None, "expected candidate seal is required")
             if args.command == "verify-trusted-main":

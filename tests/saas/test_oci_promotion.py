@@ -1331,13 +1331,13 @@ def test_fixed_controller_resolver_keeps_original_source_verifier(
         "controller_profile": fixed.MODE,
     }
     if fault is None:
-        proof = oci_promotion.resolve_trusted_main_source(**values)
+        proof = fixed.resolve_trusted_main_source(**values)
         assert proof["controller_context"] == context
         assert proof["product_revision"] == fixed.PRODUCT
         assert proof["source_run_id"] == fixed.SOURCE_RUN
     else:
         with pytest.raises(ValueError):
-            oci_promotion.resolve_trusted_main_source(**values)
+            fixed.resolve_trusted_main_source(**values)
 
 
 @pytest.mark.parametrize("fault", [None, "controller-commit", "epoch", "version"])
@@ -1429,3 +1429,133 @@ def test_fixed_main16_predicate_keeps_both_revisions_and_stable_native_facts(mai
         oci_promotion.TRUSTED_REPOSITORY, controller, oci_promotion.TRUSTED_WORKFLOW, "101", "1"
     )
     assert claims["sourceRepositoryDigest"] == controller
+
+
+@pytest.mark.parametrize(
+    ("command", "fault"),
+    [
+        ("download-trusted-main", None),
+        ("verify-trusted-main", None),
+        ("download-trusted-main", "seal"),
+        ("download-trusted-main", "platform"),
+        ("download-trusted-main", "epoch"),
+    ],
+)
+def test_fixed_main16_explicit_intake_cli_reuses_original_transfer_guards(
+    tmp_path, monkeypatch, capsys, command, fault
+):
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    labels = {"fixture": "product-labels"}
+    manifest = {
+        "product_revision": fixed.PRODUCT,
+        "source_date_epoch": fixed.PRODUCT_EPOCH,
+        "labels": labels,
+        "images": {
+            name: {
+                "facts": {
+                    "platforms": {platform: {} for platform in ("linux/amd64", "linux/arm64")}
+                }
+            }
+            for name in ("server", "host")
+        },
+    }
+    original = json.dumps(manifest, sort_keys=True).encode()
+    seal = hashlib.sha256(original).hexdigest()
+    proof = {
+        "repository": oci_promotion.TRUSTED_REPOSITORY,
+        "product_revision": fixed.PRODUCT,
+        "source_run_id": fixed.SOURCE_RUN,
+        "source_run_attempt": 1,
+        "source_producer_job_id": 133136433428,
+        "artifact_id": fixed.ARTIFACT,
+        "artifact_sha256": fixed.ZIP_SHA256,
+        "controller_context": {"mode": fixed.MODE},
+    }
+    calls = []
+
+    def native_source(**values):
+        assert values == {
+            "repository": oci_promotion.TRUSTED_REPOSITORY,
+            "revision": fixed.PRODUCT,
+            "run_id": fixed.SOURCE_RUN,
+            "run_attempt": 1,
+            "artifact_id": fixed.ARTIFACT,
+            "zip_sha256": fixed.ZIP_SHA256,
+            "manifest_sha256": seal,
+            "controller_profile": fixed.MODE,
+        }
+        calls.append("verified-source")
+        return copy.deepcopy(proof)
+
+    def transfer(endpoint, destination, *, zip_sha256):
+        assert (
+            endpoint
+            == f"repos/{oci_promotion.TRUSTED_REPOSITORY}/actions/artifacts/{fixed.ARTIFACT}"
+        )
+        assert zip_sha256 == fixed.ZIP_SHA256
+        calls.append("original-transfer")
+        destination.mkdir()
+        body = original
+        if fault == "seal":
+            body += b" "
+        elif fault == "platform":
+            changed = copy.deepcopy(manifest)
+            changed["images"]["host"]["facts"]["platforms"].pop("linux/arm64")
+            body = json.dumps(changed, sort_keys=True).encode()
+        (destination / oci_promotion.MANIFEST_NAME).write_bytes(body)
+
+    if fault == "platform":
+        changed = copy.deepcopy(manifest)
+        changed["images"]["host"]["facts"]["platforms"].pop("linux/arm64")
+        seal = hashlib.sha256(json.dumps(changed, sort_keys=True).encode()).hexdigest()
+    monkeypatch.setattr(fixed, "resolve_trusted_main_source", native_source)
+    monkeypatch.setattr(oci_promotion, "download_artifact", transfer)
+    monkeypatch.setattr(oci_promotion, "expected_labels", lambda *_: labels)
+    destination = tmp_path / "transferred"
+    epoch = fixed.PRODUCT_EPOCH + (1 if fault == "epoch" else 0)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fixed-main16",
+            command,
+            "--root",
+            str(destination),
+            "--revision",
+            fixed.PRODUCT,
+            "--source-date-epoch",
+            str(epoch),
+            "--repository",
+            oci_promotion.TRUSTED_REPOSITORY,
+            "--run-id",
+            str(fixed.SOURCE_RUN),
+            "--run-attempt",
+            "1",
+            "--artifact-id",
+            str(fixed.ARTIFACT),
+            "--artifact-sha256",
+            fixed.ZIP_SHA256,
+            "--manifest-sha256",
+            seal,
+            "--controller-profile",
+            fixed.MODE,
+        ],
+    )
+    if fault is not None:
+        with pytest.raises(ValueError):
+            fixed.main()
+        assert not (destination / "promotion-source.json").exists()
+        if fault == "epoch":
+            assert calls == []
+    else:
+        assert fixed.main() == 0
+        if command == "verify-trusted-main":
+            assert json.loads(capsys.readouterr().out) == proof
+            assert calls == ["verified-source"] and not destination.exists()
+        else:
+            saved = json.loads((destination / "promotion-source.json").read_text())
+            assert saved["controller_context"] == proof["controller_context"]
+            assert saved["state"] == "trusted_source_transferred_requires_current_prepare"
+            assert saved["candidate_manifest_sha256"] == seal
+            assert calls == ["verified-source", "original-transfer"]

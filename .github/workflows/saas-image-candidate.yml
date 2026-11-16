@@ -833,14 +833,24 @@ jobs:
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
           printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
           if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
-            python -m saas.scripts.oci_promotion download-trusted-main \
-              --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
-              --source-date-epoch "$source_epoch" \
-              --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
-              --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
-              --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
-              --controller-profile "$PROMOTION_CONTROLLER_PROFILE" \
-              --repository "$GITHUB_REPOSITORY"
+            if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+              python -m saas.scripts.fixed_main16_ci_promotion download-trusted-main \
+                --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+                --source-date-epoch "$source_epoch" \
+                --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+                --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+                --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+                --controller-profile "$PROMOTION_CONTROLLER_PROFILE" \
+                --repository "$GITHUB_REPOSITORY"
+            else
+              python -m saas.scripts.oci_promotion download-trusted-main \
+                --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+                --source-date-epoch "$source_epoch" \
+                --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+                --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+                --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+                --repository "$GITHUB_REPOSITORY"
+            fi
           else
             python -m saas.scripts.oci_promotion download \
               --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
@@ -1263,7 +1273,6 @@ jobs:
       CANDIDATE_MANIFEST_SHA256: ${{ needs.publish-signed.outputs.candidate-manifest-sha256 }}
       PROMOTION_CONTROLLER_PROFILE: ${{ inputs.promotion_controller_profile || 'same-main' }}
       SIGNING_POLICY_REVISION: ${{ github.sha }}
-      RELEASE_FACTS_DIRECTORY: ${{ runner.temp }}/release-facts
     steps:
       - name: Checkout immutable independent verifier
         if: inputs.promotion_controller_profile != 'fixed-main16-ci-only'
@@ -1278,6 +1287,8 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Select isolated independent release facts directory
+        run: echo "RELEASE_FACTS_DIRECTORY=$RUNNER_TEMP/release-facts" >> "$GITHUB_ENV"
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -1304,14 +1315,22 @@ jobs:
         run: |
           set -euo pipefail
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
-          python -m saas.scripts.oci_promotion verify-trusted-main \
-            --root "$RELEASE_FACTS_DIRECTORY" --revision "$PRODUCT_REVISION" \
-            --source-date-epoch "$source_epoch" --repository "$GITHUB_REPOSITORY" \
-            --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
-            --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
-            --controller-profile "$PROMOTION_CONTROLLER_PROFILE" \
-            --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
-            > "${RELEASE_FACTS_DIRECTORY}/independent-promotion-source.json"
+          if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+            python -m saas.scripts.fixed_main16_ci_promotion verify-trusted-main \
+              --root "$RELEASE_FACTS_DIRECTORY" --revision "$PRODUCT_REVISION" \
+              --source-date-epoch "$source_epoch" --repository "$GITHUB_REPOSITORY" \
+              --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+              --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+              --controller-profile "$PROMOTION_CONTROLLER_PROFILE" \
+              --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256"
+          else
+            python -m saas.scripts.oci_promotion verify-trusted-main \
+              --root "$RELEASE_FACTS_DIRECTORY" --revision "$PRODUCT_REVISION" \
+              --source-date-epoch "$source_epoch" --repository "$GITHUB_REPOSITORY" \
+              --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+              --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+              --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256"
+          fi > "${RELEASE_FACTS_DIRECTORY}/independent-promotion-source.json"
           jq -e --arg seal "$CANDIDATE_MANIFEST_SHA256" \
             '.state == "trusted_source_transferred_requires_current_prepare" and .candidate_manifest_sha256 == $seal' \
             "${RELEASE_FACTS_DIRECTORY}/promotion-source.json" >/dev/null

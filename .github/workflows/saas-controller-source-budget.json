@@ -32,11 +32,11 @@
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "10db6dc284784078acb9e80265461929c0f474bae1a5d986c0e67f2cdb80696f",
+    "current_controller_baseline_sha256": "d96a5452e0e8a3e7b3e8f345ce733c76c59cd3181de9bfca56d19ca96637d0fe",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 277,
     "reason": "Retain exactapproved b8 product16 runtime/caps; add exactCI-only controller withseparateownCI/OIDC andoriginalproductsource; no image relabel/runtimeinputchange.",
-    "authority": "Verifiedoriginal human workflow/gateinstruction; exactfixed16 CI-onlymaintainerrecord 2b31c649b469cb16f5609ebea4883efb5a30a0628e67b5c220602854f9efdc3a. Originalb8 runtime/file277 grant retained; limitsunchanged.",
+    "authority": "Existing verified human workflow/gate implementation; exact integration-R1 maintenance registration f5f5ca0c8276d62c67a80c000fbb41ec43c19a66a11b812d52c208cc65286131. Prior b8 runtime/file277 grant retained; all caps unchanged.",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,10 +47,10 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "af499e401a4c568f5b87f111c9842d022f020d71bbdd66ac7b40fc4d6b0bcc21",
+    "candidate_manifest_sha256": "35ab512a0de47137a2ffa0cdfbf7b379cf6e5e401780ffd5e3cb2e054b9b0e01",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "2b31c649b469cb16f5609ebea4883efb5a30a0628e67b5c220602854f9efdc3a"
+    "authority_record_sha256": "f5f5ca0c8276d62c67a80c000fbb41ec43c19a66a11b812d52c208cc65286131"
   },
   "fixed_main16_ci_promotion": {
     "mode": "fixed-main16-ci-only",

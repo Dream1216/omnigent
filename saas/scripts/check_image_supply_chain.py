@@ -565,7 +565,15 @@ def _validate_fixed_product_controller_contract(workflow: str) -> list[str]:
             "python -m saas.scripts.fixed_main16_ci_promotion predicate",
             "--source-proof artifacts/promotion-source.json",
         },
+        "Download and validate original admitted OCI artifact": {
+            'if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]',
+            "python -m saas.scripts.fixed_main16_ci_promotion download-trusted-main",
+            "python -m saas.scripts.oci_promotion download-trusted-main",
+        },
         "Independently verify cross-run producer origin": {
+            'if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]',
+            "python -m saas.scripts.fixed_main16_ci_promotion verify-trusted-main",
+            "python -m saas.scripts.oci_promotion verify-trusted-main",
             '--controller-profile "$PROMOTION_CONTROLLER_PROFILE"',
             ".controller_context == $origin[0].controller_context",
             ".signing_policy_revision == $policy",

@@ -42,6 +42,7 @@ def test_candidate_preflight_blocks_expensive_builds() -> None:
 
     assert preflight["timeout-minutes"] == 15
     assert build["needs"] == [
+        "source-context",
         "verify-candidate-preflight",
         "verify-production-migration-replay",
     ]

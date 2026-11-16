@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from saas.scripts import oci_promotion
 from saas.scripts.check_upstream_delta import _ordinary_m_candidate_matches
 from saas.scripts.oci_promotion import (
     TRUSTED_REPOSITORY,
@@ -58,6 +59,10 @@ CI_ONLY_PATHS = GOVERNANCE_PATHS | frozenset(
         "tests/saas/test_oci_promotion.py",
         "saas/scripts/check_image_supply_chain.py",
         "tests/saas/test_image_supply_chain.py",
+        "tests/saas/test_scan_oci_candidates.py",
+        "tests/saas/test_oci_candidate_build_capacity.py",
+        "tests/saas/test_legacy_domain_discovery.py",
+        "tests/saas/resources/native-domain-discovery-parent-hashes.json",
     )
 )
 PRODUCT_CORE = {
@@ -422,10 +427,111 @@ def check_wheel(path: Path) -> None:
         )
 
 
+def resolve_trusted_main_source(
+    *,
+    repository: str,
+    revision: str,
+    run_id: int,
+    run_attempt: int,
+    artifact_id: int,
+    zip_sha256: str,
+    controller_profile: str = MODE,
+    manifest_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Keep fixed-controller intake outside the unchanged legacy OCI module."""
+    require(controller_profile == MODE, "explicit fixed controller profile required")
+    repository_id, context = controller_context(
+        repository=repository,
+        revision=revision,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        artifact_id=artifact_id,
+        zip_sha256=zip_sha256,
+        manifest_sha256=manifest_sha256,
+    )
+    endpoint = f"repos/{repository}/actions/runs/{run_id}/attempts/{run_attempt}"
+    run = _api(endpoint)
+    pages = _api(endpoint + "/jobs?per_page=100", paginate=True)
+    artifact = _api(f"repos/{repository}/actions/artifacts/{artifact_id}")
+    source = oci_promotion.verify_trusted_main_source(
+        run,
+        [job for page in pages for job in page["jobs"]],
+        artifact,
+        repository=repository,
+        repository_id=repository_id,
+        revision=revision,
+        run_id=run_id,
+        run_attempt=run_attempt,
+        artifact_id=artifact_id,
+        zip_sha256=zip_sha256,
+    )
+    source["controller_context"] = context
+    return source
+
+
+def trusted_main_intake(args: argparse.Namespace) -> None:
+    """Reuse native source validation and transfer; never override signer identity."""
+    require(
+        args.root is not None
+        and args.revision == PRODUCT
+        and args.source_date_epoch == PRODUCT_EPOCH,
+        "fixed intake requires the original product and epoch",
+    )
+    source = resolve_trusted_main_source(
+        repository=args.repository,
+        revision=args.revision,
+        run_id=int(args.run_id),
+        run_attempt=args.run_attempt,
+        artifact_id=args.artifact_id,
+        zip_sha256=args.artifact_sha256,
+        manifest_sha256=args.manifest_sha256,
+        controller_profile=args.controller_profile,
+    )
+    if args.command == "verify-trusted-main":
+        print(json.dumps(source, sort_keys=True))
+        return
+    oci_promotion.download_artifact(
+        f"repos/{args.repository}/actions/artifacts/{args.artifact_id}",
+        args.root,
+        zip_sha256=args.artifact_sha256,
+    )
+    manifest_path = args.root / oci_promotion.MANIFEST_NAME
+    require(
+        oci_promotion.file_sha256(manifest_path) == args.manifest_sha256,
+        "candidate seal digest mismatch",
+    )
+    manifest = read_json(manifest_path)
+    labels = oci_promotion.expected_labels(Path.cwd(), PRODUCT)
+    require(
+        manifest.get("product_revision") == PRODUCT
+        and manifest.get("source_date_epoch") == PRODUCT_EPOCH
+        and manifest.get("labels") == labels
+        and set(manifest.get("images", {})) == set(oci_promotion.IMAGES)
+        and all(
+            set(manifest["images"][name]["facts"]["platforms"]) == set(oci_promotion.PLATFORMS)
+            for name in oci_promotion.IMAGES
+        ),
+        "transferred candidate source or platform set differs",
+    )
+    source["candidate_manifest_sha256"] = args.manifest_sha256
+    source["state"] = "trusted_source_transferred_requires_current_prepare"
+    (args.root / "promotion-source.json").write_text(
+        json.dumps(source, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("classify", "predicate", "verify-predicate", "check-wheel")
+        "command",
+        choices=(
+            "classify",
+            "predicate",
+            "verify-predicate",
+            "check-wheel",
+            "download-trusted-main",
+            "verify-trusted-main",
+        ),
     )
     parser.add_argument("--candidate-revision")
     parser.add_argument("--source-proof", type=Path)
@@ -438,7 +544,19 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--wheel", type=Path)
+    parser.add_argument("--root", type=Path)
+    parser.add_argument("--revision")
+    parser.add_argument("--source-date-epoch", type=int)
+    parser.add_argument("--manifest-sha256")
+    parser.add_argument("--artifact-id", type=int)
+    parser.add_argument("--artifact-sha256")
+    parser.add_argument("--run-attempt", type=int)
+    parser.add_argument("--repository")
+    parser.add_argument("--controller-profile", choices=(MODE,), default=MODE)
     args = parser.parse_args()
+    if args.command in {"download-trusted-main", "verify-trusted-main"}:
+        trusted_main_intake(args)
+        return 0
     if args.command == "classify":
         print(json.dumps(classify(Path.cwd(), args.candidate_revision), sort_keys=True))
         return 0

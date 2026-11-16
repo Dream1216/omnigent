@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "af499e401a4c568f5b87f111c9842d022f020d71bbdd66ac7b40fc4d6b0bcc21",
+  "candidate_manifest_sha256": "35ab512a0de47137a2ffa0cdfbf7b379cf6e5e401780ffd5e3cb2e054b9b0e01",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/saas-image-candidate.yml",
-      "bytes": 82067,
-      "sha256": "400c2ce0173b314c29b7c4ff751e957116799300a45780a474298be5eb71089d"
+      "bytes": 83434,
+      "sha256": "780329455d8a877984b5c0316f5deefa4ea05f308867fa3075085bb7057ddd45"
     },
     {
       "path": ".github/workflows/saas-m-current-evidence-renewal.yml",
@@ -223,18 +223,18 @@
     },
     {
       "path": "saas/scripts/check_image_supply_chain.py",
-      "bytes": 124108,
-      "sha256": "fe9a6f1b3bf0501b5e4f2e238de2b692fb2ff0bbf5bde597155145cec2c5865c"
+      "bytes": 124665,
+      "sha256": "b2492ea9f5a01deaa0c5ad33a48354a1e6e459ce11c5541e7100c95d73c9209d"
     },
     {
       "path": "saas/scripts/fixed_main16_ci_promotion.py",
-      "bytes": 17676,
-      "sha256": "540eb6af7ae23c3fc55d0a6eff314e5e3bbbfa927692b9252dcde2bd4e5787a3"
+      "bytes": 22104,
+      "sha256": "e94421006f0d952ca8c110cad37144edba338b229643002bd9464ff3f71da237"
     },
     {
       "path": "saas/scripts/oci_promotion.py",
-      "bytes": 29333,
-      "sha256": "51fbcc93a3b884c4f434a158202ba52ee6b1aa8fc1d1c1687641160cd96a5800"
+      "bytes": 28102,
+      "sha256": "d8b541095eaaaa0c027b0e3cd3f92e69c60d258cb363b79fda5024e245feff75"
     },
     {
       "path": "saas/supply_chain/wolfi-runtime-lock.json",
@@ -393,18 +393,23 @@
     },
     {
       "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json",
-      "bytes": 249366,
-      "sha256": "e5f1940ea273879f54bc22aa9a0e42ab7355fa6d83e978530e3d8becd8fdb2f1"
+      "bytes": 294723,
+      "sha256": "414e6fa3b83fb91b68884b85aec3649767efdddbe9a0632a2e4661ec1dd59dd5"
     },
     {
       "path": "tests/saas/test_legacy_domain_discovery.py",
-      "bytes": 45920,
-      "sha256": "bc1dd290e6de850dcf41db0e3e5b29a67bfa1c9ffd8cf0a115c2b4d5252116c8"
+      "bytes": 46111,
+      "sha256": "36839c8b8911e032d61b911182f0dcb1076fbcbaac2a2e9aad8cc7bd4421dbba"
+    },
+    {
+      "path": "tests/saas/test_oci_candidate_build_capacity.py",
+      "bytes": 4250,
+      "sha256": "14bc05f3510d4fbfb19fca32429001be4cc6dcbf1f0fd3e97a3c5c2051a54030"
     },
     {
       "path": "tests/saas/test_oci_promotion.py",
-      "bytes": 55957,
-      "sha256": "7362c54380c882cbe313ce3a1decb61c9ca5dc177544452446fa9809c5aadaf3"
+      "bytes": 60645,
+      "sha256": "84c912e3f5756aecf988c723e777f58ba48e727f725fdfecce75c79966a0abca"
     },
     {
       "path": "tests/saas/test_platform_model_gateway.py",
@@ -428,8 +433,8 @@
     },
     {
       "path": "tests/saas/test_scan_oci_candidates.py",
-      "bytes": 21918,
-      "sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011"
+      "bytes": 21985,
+      "sha256": "89e3e3cfe0a376686ae1daad747dab91b8c043f1e9faf9cc5886b246b596ecca"
     },
     {
       "path": "tests/saas/test_upgrade_benchmark_fixture.py",
@@ -694,13 +699,25 @@
     "runtime_and_original_file277_exception_preserved": true
   },
   "current_downstream_CI_maintenance_scope_authority": {
-    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main16-fixed-product-controller-mode-PREPARED-20261116/FIXED16-CI-ONLY.EXISTING-HUMAN-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
-    "bytes": 3685,
-    "sha256": "2b31c649b469cb16f5609ebea4883efb5a30a0628e67b5c220602854f9efdc3a"
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main16-fixed-controller-integration-R1-PREPARED-20261116/FIXED16-INTEGRATION-R1.EXISTING-HUMAN-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
+    "bytes": 3914,
+    "sha256": "f5f5ca0c8276d62c67a80c000fbb41ec43c19a66a11b812d52c208cc65286131"
   },
-  "normal_hook_format_derivation": {
-    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main16-fixed-product-controller-mode-PREPARED-20261116/NORMAL-HOOK-TEST-LITERAL-FORMAT.DERIVATION.ACTUAL.PUBLIC.json",
-    "bytes": 2336,
-    "sha256": "9dc1078a1776eb028932b62b1c52ccb3adaf3e06bdcd236534eb342a0ab70b19"
+  "previous_fixed16_ci_only_exact_scope": {
+    "candidate_manifest_sha256": "af499e401a4c568f5b87f111c9842d022f020d71bbdd66ac7b40fc4d6b0bcc21",
+    "scope_sha256": "e2eeaf0fc77b3ca9e38aca3c00e33075c77fddc8280e95162bfe52ad9ea33023",
+    "approval": {
+      "candidate_manifest_sha256": "af499e401a4c568f5b87f111c9842d022f020d71bbdd66ac7b40fc4d6b0bcc21",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "2b31c649b469cb16f5609ebea4883efb5a30a0628e67b5c220602854f9efdc3a"
+    },
+    "normal_hook_format_derivation": {
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main16-fixed-product-controller-mode-PREPARED-20261116/NORMAL-HOOK-TEST-LITERAL-FORMAT.DERIVATION.ACTUAL.PUBLIC.json",
+      "bytes": 2336,
+      "sha256": "9dc1078a1776eb028932b62b1c52ccb3adaf3e06bdcd236534eb342a0ab70b19"
+    },
+    "failed_actual_PR_head": "913501ef3b2d246d72e20a2d31a0d5125a17b73e",
+    "failed_native_evidence_preserved": true
   }
 }
