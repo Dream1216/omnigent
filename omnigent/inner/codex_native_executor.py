@@ -427,12 +427,7 @@ async def _start_codex_turn(
         {
             "threadId": state.thread_id,
             "input": input_items,
-            "environments": [
-                {
-                    "environmentId": "local",
-                    "cwd": state.cwd or str(Path.cwd()),
-                }
-            ],
+            "cwd": state.cwd or str(Path.cwd()),
         },
         state,
         bridge_dir=bridge_dir,

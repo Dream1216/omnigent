@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "5b87413a152ca4da086ee8026dd1d34312131216fb674a0184c5b417881be669",
+  "candidate_manifest_sha256": "b8c736524f02d24d18ad2d028c6ca81633929043697778f7ab54bd5ace7c0c16",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 275,
+    "max_direct_upstream_files": 277,
     "max_upstream_net_added_loc": 13650,
     "min_isolated_custom_code_ratio": 0.85
   },
@@ -435,6 +435,16 @@
       "path": "tests/saas/test_legacy_domain_discovery.py",
       "bytes": 45920,
       "sha256": "bc1dd290e6de850dcf41db0e3e5b29a67bfa1c9ffd8cf0a115c2b4d5252116c8"
+    },
+    {
+      "path": "omnigent/inner/codex_native_executor.py",
+      "bytes": 60575,
+      "sha256": "1ce885b532129db9863ffdc089a04272dfd5de1df75de438622556e33a730359"
+    },
+    {
+      "path": "tests/inner/test_codex_native_executor.py",
+      "bytes": 163582,
+      "sha256": "b99466b9b8b0a1b738d91bb75ba581306db006888ee9c1da260ea764c0f78b5a"
     }
   ],
   "governance_paths": [
@@ -446,7 +456,7 @@
   ],
   "manifest_controls_sha256": {
     "baseline": "5bfa71403c79219635c98449c44179019e248bf8a3d07d86954e8dc0938ca70f",
-    "controller": "b3242eeb5a09e6da7027c345e65814ede25f4ae0bcee8339c3ff926e32835569"
+    "controller": "d80b43f5da9e2f6f22f4b8f0f084ec37484120cafa513ed2b696af03ab0f58da"
   },
   "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
   "previous_fixed63_approved_scope": {
@@ -649,5 +659,22 @@
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-M4cb-normal-current-security-renewal-20261116/PR283-LEGACY-IMMUTABLE-GUARD.DIRECT-HUMAN-SCOPE-REGISTRATION.PUBLIC.json",
     "bytes": 2215,
     "sha256": "fdf1ec114056675b3cfe0bd24eab10e709f91312f0f56d746b522e8860c74c30"
+  },
+  "previous_legacy_inverse_guard_exact_scope": {
+    "candidate_manifest_sha256": "5b87413a152ca4da086ee8026dd1d34312131216fb674a0184c5b417881be669",
+    "scope_sha256": "56a0bbd42cb5794984bcc4310f3c3f368a29f8eac01c6d5f8d3c197c63be504e",
+    "approval": {
+      "candidate_manifest_sha256": "5b87413a152ca4da086ee8026dd1d34312131216fb674a0184c5b417881be669",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "fdf1ec114056675b3cfe0bd24eab10e709f91312f0f56d746b522e8860c74c30"
+    }
+  },
+  "native0142_turn_default_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/NATIVE0142-B8C73652-FIXED-TWO-FILE-DIRECT-HUMAN-APPROVAL-20261116.PUBLIC.json",
+    "bytes": 3406,
+    "sha256": "2e0e8b7bfe467223aec63840f315de4a31477ac50150e3f886db5b4f9fca5c94",
+    "human_root_thread": "01a1db4c-a4d7-7693-96b6-af294b9aed8b",
+    "human_message_id": "01a1e2c8-c7ae-77c1-a020-2e26cbd6cf7c"
   }
 }
