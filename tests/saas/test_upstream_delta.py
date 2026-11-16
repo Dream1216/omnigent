@@ -805,6 +805,8 @@ def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
         "previous-b8-turn-default-authority",
         "previous-two-line-CI-authority",
         "previous-fixed16-controller-authority",
+        "previous-fixed16-integration-authority",
+        "previous-fixed16-proof-handoff-authority",
         "scope-bytes",
         "protected-bytes",
         "other-source-bytes",
@@ -847,6 +849,14 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
     elif fault == "previous-fixed16-controller-authority":
         decision["authority_record_sha256"] = (
             "2b31c649b469cb16f5609ebea4883efb5a30a0628e67b5c220602854f9efdc3a"
+        )
+    elif fault == "previous-fixed16-integration-authority":
+        decision["authority_record_sha256"] = (
+            "f5f5ca0c8276d62c67a80c000fbb41ec43c19a66a11b812d52c208cc65286131"
+        )
+    elif fault == "previous-fixed16-proof-handoff-authority":
+        decision["authority_record_sha256"] = (
+            "28857d019590e0d74919ee332e3431bb5f0e6d09192e2fe961bab5d9a0cdcd54"
         )
     elif fault == "previous-47-authority":
         decision["authority_record_sha256"] = (

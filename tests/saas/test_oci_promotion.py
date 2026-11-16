@@ -866,6 +866,10 @@ def test_cross_run_policy_rejects_bypassed_origin_binding(tmp_path, target) -> N
         ),
         ("Build and verify the SaaS wheel", "fixed_main16_ci_promotion check-wheel"),
         (
+            "Download and validate original admitted OCI artifact",
+            'cp "${RUNNER_TEMP}/admitted-oci/promotion-source.json" artifacts/',
+        ),
+        (
             "Verify wheel signature identity and revision",
             '--source-digest "$SIGNING_POLICY_REVISION"',
         ),
@@ -891,10 +895,25 @@ def test_cross_run_policy_rejects_bypassed_origin_binding(tmp_path, target) -> N
         ),
         ("Scan exact OCI candidates on both architectures", "GH_TOKEN: ${{ github.token }}"),
         ("Scan signed image digests on both architectures", "GH_TOKEN: ${{ github.token }}"),
+        ("Stage signed wheel and bundle together", 'cp -- "$WHEEL_BUNDLE_PATH"'),
+        ("Upload signed wheel and checksum", "path: ${{ runner.temp }}/signed-wheel/"),
+        ("Install hash-pinned Syft and Grype", "GH_TOKEN: ${{ github.token }}"),
+        ("Install hash-pinned Syft and Grype", "gh release download v1.54.1"),
+        ("Install hash-pinned Syft and Grype", "gh release download v0.120.1"),
+        ("Install hash-pinned Syft and Grype", "sha256sum --check --strict"),
+        (
+            "Install hash-pinned Syft and Grype",
+            "c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47",
+        ),
+        (
+            "Install hash-pinned Syft and Grype",
+            "0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d",
+        ),
     ],
 )
 def test_fixed_product_policy_rejects_erased_controller_boundary(tmp_path, step_name, target):
     repo = _candidate_contract_repo(tmp_path)
+    assert validate_candidate_build_contract(repo) == []
     path = repo / ".github/workflows/saas-image-candidate.yml"
     source = path.read_text()
     marker = f"      - name: {step_name}\n"
@@ -912,6 +931,104 @@ def test_fixed_product_policy_rejects_erased_controller_boundary(tmp_path, step_
         "fixed-product controller promotion must keep exact source, "
         "signatures and build classification" in validate_candidate_build_contract(repo)
     )
+
+
+@pytest.mark.parametrize("fault", ["late", "duplicate", "early", "predicate-after-sign"])
+def test_fixed_product_policy_requires_proof_before_its_consumers(tmp_path, fault):
+    repo = _candidate_contract_repo(tmp_path)
+    assert validate_candidate_build_contract(repo) == []
+    path = repo / ".github/workflows/saas-image-candidate.yml"
+    source = path.read_text()
+    transfer = (
+        '          if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then\n'
+        '            cp "${RUNNER_TEMP}/admitted-oci/promotion-source.json" artifacts/\n'
+        "          fi\n"
+    )
+    assert source.count(transfer) == 1
+    if fault in {"late", "duplicate"}:
+        if fault == "late":
+            source = source.replace(transfer, "", 1)
+        anchor = (
+            '          cp "${RUNNER_TEMP}/admitted-oci/oci-promotion-manifest.json" artifacts/\n'
+        )
+        source = source.replace(anchor, anchor + transfer, 1)
+    elif fault == "early":
+        source = source.replace(transfer, "", 1)
+        anchor = '          source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")\n'
+        source = source.replace(anchor, anchor + transfer, 1)
+    else:
+        start = source.index(
+            "      - name: Generate explicit fixed-product controller provenance\n"
+        )
+        end = source.index("      - name: Sign wheel provenance with GitHub OIDC\n", start)
+        producer = source[start:end]
+        source = source[:start] + source[end:]
+        anchor = "      - name: Verify wheel signature identity and revision\n"
+        source = source.replace(anchor, producer + anchor, 1)
+    path.write_text(source)
+    assert (
+        "fixed-product controller promotion must keep exact source, "
+        "signatures and build classification" in validate_candidate_build_contract(repo)
+    )
+
+
+@pytest.mark.parametrize("wheel_count", [0, 1, 2])
+def test_signed_wheel_upload_stages_original_bytes_for_independent_consumer(tmp_path, wheel_count):
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/saas-image-candidate.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    publisher = {step.get("name"): step for step in workflow["jobs"]["publish-signed"]["steps"]}
+    independent = {
+        step.get("name"): step for step in workflow["jobs"]["verify-published-source"]["steps"]
+    }
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    for index in range(wheel_count):
+        (dist / f"original-{index}.whl").write_bytes(b"original-wheel-" + bytes([index]))
+    (dist / "SHA256SUMS").write_bytes(b"original-checksum-bytes\n")
+    bundle = tmp_path / "_temp/random-attestation-directory/attestation.json"
+    bundle.parent.mkdir(parents=True)
+    bundle.write_bytes(b'{"original":"attestation bytes"}\n')
+    result = subprocess.run(
+        ["bash", "-c", publisher["Stage signed wheel and bundle together"]["run"]],
+        cwd=tmp_path,
+        env={**os.environ, "RUNNER_TEMP": str(tmp_path), "WHEEL_BUNDLE_PATH": str(bundle)},
+        capture_output=True,
+        text=True,
+    )
+    if wheel_count != 1:
+        assert result.returncode != 0
+        assert not (tmp_path / "signed-wheel").exists()
+        return
+    assert result.returncode == 0, result.stderr
+    assert publisher["Upload signed wheel and checksum"]["with"]["path"] == (
+        "${{ runner.temp }}/signed-wheel/"
+    )
+    original = {
+        "original-0.whl": (dist / "original-0.whl").read_bytes(),
+        "SHA256SUMS": (dist / "SHA256SUMS").read_bytes(),
+        "attestation.json": bundle.read_bytes(),
+    }
+    archive = tmp_path / "uploaded-wheel.zip"
+    with zipfile.ZipFile(archive, "w") as output:
+        for member in (tmp_path / "signed-wheel").iterdir():
+            output.write(member, member.name)
+    with zipfile.ZipFile(archive) as uploaded:
+        assert uploaded.testzip() is None
+        assert {name: uploaded.read(name) for name in uploaded.namelist()} == original
+        uploaded.extractall(tmp_path / "independent-wheel")
+    consumer = independent["Independently verify fixed-product wheel and controller provenance"]
+    selection = consumer["run"].split(
+        "python -m saas.scripts.fixed_main16_ci_promotion check-wheel"
+    )[0]
+    selected = subprocess.run(
+        ["bash", "-c", selection + '\nprintf "%s" "$wheel"'],
+        env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
+    assert selected.returncode == 0, selected.stderr
+    assert Path(selected.stdout).read_bytes() == original["original-0.whl"]
 
 
 @pytest.mark.parametrize(
@@ -1363,7 +1480,9 @@ def test_fixed_main16_wheel_embeds_product_not_controller(tmp_path, fault):
             fixed.check_wheel(wheel)
 
 
-def test_fixed_main16_predicate_keeps_both_revisions_and_stable_native_facts(main_producer):
+def test_fixed_main16_predicate_keeps_both_revisions_and_stable_native_facts(
+    main_producer, tmp_path, monkeypatch
+):
     from saas.scripts import fixed_main16_ci_promotion as fixed
 
     controller = "c" * 40
@@ -1429,6 +1548,47 @@ def test_fixed_main16_predicate_keeps_both_revisions_and_stable_native_facts(mai
         oci_promotion.TRUSTED_REPOSITORY, controller, oci_promotion.TRUSTED_WORKFLOW, "101", "1"
     )
     assert claims["sourceRepositoryDigest"] == controller
+
+    admitted = tmp_path / "admitted-oci"
+    artifacts = tmp_path / "artifacts"
+    admitted.mkdir()
+    artifacts.mkdir()
+    (admitted / "promotion-source.json").write_text(json.dumps(source))
+    target = artifacts / "promotion-source.json"
+    output = artifacts / "predicate.json"
+    arguments = [
+        "fixed-controller",
+        "predicate",
+        "--source-proof",
+        str(target),
+        "--policy-revision",
+        controller,
+        "--run-id",
+        "101",
+        "--attempt",
+        "1",
+        "--output",
+        str(output),
+    ]
+    monkeypatch.setattr(sys, "argv", arguments)
+    with pytest.raises(ValueError, match="missing regular evidence file"):
+        fixed.main()
+    workflow = (
+        Path(__file__).resolve().parents[2] / ".github/workflows/saas-image-candidate.yml"
+    ).read_text()
+    marker = "      - name: Download and validate original admitted OCI artifact\n"
+    intake = workflow.split(marker, 1)[1].split("\n      - name:", 1)[0]
+    transfer = 'cp "${RUNNER_TEMP}/admitted-oci/promotion-source.json" artifacts/'
+    assert intake.count(transfer) == workflow.count(transfer) == 1
+    subprocess.run(
+        ["bash", "-eu", "-c", transfer],
+        cwd=tmp_path,
+        env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
+        check=True,
+    )
+    assert target.read_bytes() == (admitted / "promotion-source.json").read_bytes()
+    assert fixed.main() == 0
+    assert json.loads(output.read_text()) == predicate
 
 
 @pytest.mark.parametrize(

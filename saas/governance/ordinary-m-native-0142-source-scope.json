@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "35ab512a0de47137a2ffa0cdfbf7b379cf6e5e401780ffd5e3cb2e054b9b0e01",
+  "candidate_manifest_sha256": "069dd7aa2fb5e2f6a305ab6c695830e778d7457093522aecf7351739105b560d",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/saas-image-candidate.yml",
-      "bytes": 83434,
-      "sha256": "780329455d8a877984b5c0316f5deefa4ea05f308867fa3075085bb7057ddd45"
+      "bytes": 83832,
+      "sha256": "9e27dff0e62ba92b8a33f7e342f8d33076cc3ab1a48f7a559a348581b191583b"
     },
     {
       "path": ".github/workflows/saas-m-current-evidence-renewal.yml",
@@ -223,8 +223,8 @@
     },
     {
       "path": "saas/scripts/check_image_supply_chain.py",
-      "bytes": 124665,
-      "sha256": "b2492ea9f5a01deaa0c5ad33a48354a1e6e459ce11c5541e7100c95d73c9209d"
+      "bytes": 127217,
+      "sha256": "01d3945eb6e53478b28e2ab885da655daf31a67b888f07b6a54fc73bb21fd607"
     },
     {
       "path": "saas/scripts/fixed_main16_ci_promotion.py",
@@ -393,8 +393,8 @@
     },
     {
       "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json",
-      "bytes": 294723,
-      "sha256": "414e6fa3b83fb91b68884b85aec3649767efdddbe9a0632a2e4661ec1dd59dd5"
+      "bytes": 297409,
+      "sha256": "2485b6112685113b6a79e89a991ac98441a9c6813ecb552a87be3b8e63f72e42"
     },
     {
       "path": "tests/saas/test_legacy_domain_discovery.py",
@@ -408,8 +408,8 @@
     },
     {
       "path": "tests/saas/test_oci_promotion.py",
-      "bytes": 60645,
-      "sha256": "84c912e3f5756aecf988c723e777f58ba48e727f725fdfecce75c79966a0abca"
+      "bytes": 67679,
+      "sha256": "4c3cdae72452cceaebdec48990ecac4d5d8808bff8de14e6a86e21367528c470"
     },
     {
       "path": "tests/saas/test_platform_model_gateway.py",
@@ -699,9 +699,9 @@
     "runtime_and_original_file277_exception_preserved": true
   },
   "current_downstream_CI_maintenance_scope_authority": {
-    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main16-fixed-controller-integration-R1-PREPARED-20261116/FIXED16-INTEGRATION-R1.EXISTING-HUMAN-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
-    "bytes": 3914,
-    "sha256": "f5f5ca0c8276d62c67a80c000fbb41ec43c19a66a11b812d52c208cc65286131"
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-PR286-validator-step-classification-R3-PREPARED-20261116/R3.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
+    "bytes": 4249,
+    "sha256": "2b65dfd53ce4506fc4bb91e23f8609b4e211dc47fb76724ffee0cedd6c638448"
   },
   "previous_fixed16_ci_only_exact_scope": {
     "candidate_manifest_sha256": "af499e401a4c568f5b87f111c9842d022f020d71bbdd66ac7b40fc4d6b0bcc21",
@@ -719,5 +719,32 @@
     },
     "failed_actual_PR_head": "913501ef3b2d246d72e20a2d31a0d5125a17b73e",
     "failed_native_evidence_preserved": true
+  },
+  "previous_fixed16_integration_R1_exact_scope": {
+    "candidate_manifest_sha256": "35ab512a0de47137a2ffa0cdfbf7b379cf6e5e401780ffd5e3cb2e054b9b0e01",
+    "scope_sha256": "33677e2885fef5195e90d5adb60b2a436632ad3f5ce0be8b02052c7165cf090d",
+    "approval": {
+      "candidate_manifest_sha256": "35ab512a0de47137a2ffa0cdfbf7b379cf6e5e401780ffd5e3cb2e054b9b0e01",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "f5f5ca0c8276d62c67a80c000fbb41ec43c19a66a11b812d52c208cc65286131"
+    },
+    "actual_Main": "15c353f93b97eae13b06a7dbd0d51d7ce341bfb8",
+    "failed_publisher_run": 43877600196,
+    "failed_originals_retained": true
+  },
+  "previous_fixed16_proof_handoff_R2_exact_scope": {
+    "candidate_manifest_sha256": "64e6748df1cd60373204d80a6c7e65ee618caa942ab5c9df228f55cb9da36ddb",
+    "scope_sha256": "f76d26f56ec3b1ae3a58287ad252a8a44e2ec723392f64acd72165ed233ea1bb",
+    "approval": {
+      "candidate_manifest_sha256": "64e6748df1cd60373204d80a6c7e65ee618caa942ab5c9df228f55cb9da36ddb",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "28857d019590e0d74919ee332e3431bb5f0e6d09192e2fe961bab5d9a0cdcd54"
+    },
+    "actual_Main": "15c353f93b97eae13b06a7dbd0d51d7ce341bfb8",
+    "failed_required_PR_CI_run": 43887342279,
+    "failed_PR_head": "bd9578d4abfe91e362550118f0c87285d1a44389",
+    "failed_originals_retained": true
   }
 }

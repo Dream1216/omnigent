@@ -869,6 +869,9 @@ jobs:
             --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
             --current-scans artifacts/promotion-current-scans \
             --layout-root "${RUNNER_TEMP}/admitted-layouts" --discard-transferred-archives
+          if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
+            cp "${RUNNER_TEMP}/admitted-oci/promotion-source.json" artifacts/
+          fi
           printf 'manifest-sha256=%s\n' "$CANDIDATE_MANIFEST_SHA256" >> "$GITHUB_OUTPUT"
       - name: Retain current same-OCI scan evidence
         if: always()
@@ -939,14 +942,22 @@ jobs:
               --source-digest "$PRODUCT_REVISION" \
               --deny-self-hosted-runners
           fi
+      - name: Stage signed wheel and bundle together
+        env:
+          WHEEL_BUNDLE_PATH: ${{ steps.attest-wheel.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          wheels=(dist/*.whl)
+          [[ "${#wheels[@]}" == 1 && -f "${wheels[0]}" && ! -L "${wheels[0]}" ]] || exit 1
+          [[ -f "$WHEEL_BUNDLE_PATH" && ! -L "$WHEEL_BUNDLE_PATH" ]] || exit 1
+          mkdir "${RUNNER_TEMP}/signed-wheel"
+          cp -- "${wheels[0]}" dist/SHA256SUMS "${RUNNER_TEMP}/signed-wheel/"
+          cp -- "$WHEEL_BUNDLE_PATH" "${RUNNER_TEMP}/signed-wheel/attestation.json"
       - name: Upload signed wheel and checksum
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: omnigent-saas-wheel-${{ inputs.product_revision }}
-          path: |
-            dist/*.whl
-            dist/SHA256SUMS
-            ${{ steps.attest-wheel.outputs.bundle-path }}
+          path: ${{ runner.temp }}/signed-wheel/
           if-no-files-found: error
           retention-days: 90
       - name: Set up QEMU
@@ -1036,15 +1047,15 @@ jobs:
             --entrypoint /opt/venv/bin/python "$HOST_IMAGE" -B -I -c \
             'from omnigent.onboarding.harness_install import harness_cli_installed; keys=("anthropic", "openai", "pi", "kiro", "kimi", "qwen", "opencode", "gemini", "devin", "jcode"); failed=[key for key in keys if not harness_cli_installed(key)]; assert not failed, f"published Host image has missing or unsupported harness CLIs: {failed}"'
       - name: Install hash-pinned Syft and Grype
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/supply-chain-tools"
-          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
-            --output "${RUNNER_TEMP}/syft.tar.gz" \
-            https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz
-          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
-            --output "${RUNNER_TEMP}/grype.tar.gz" \
-            https://github.com/anchore/grype/releases/download/v0.120.1/grype_0.120.1_linux_amd64.tar.gz
+          gh release download v1.54.1 --repo anchore/syft \
+            --pattern syft_1.54.1_linux_amd64.tar.gz --output "${RUNNER_TEMP}/syft.tar.gz"
+          gh release download v0.120.1 --repo anchore/grype \
+            --pattern grype_0.120.1_linux_amd64.tar.gz --output "${RUNNER_TEMP}/grype.tar.gz"
           printf '%s  %s\n' \
             c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47 "${RUNNER_TEMP}/syft.tar.gz" \
             0a9ee97ef5ae2ee953b0a80098105052e846cdbe319a57d808b519c33cd1343d "${RUNNER_TEMP}/grype.tar.gz" \
@@ -1185,9 +1196,6 @@ jobs:
             --server "${RUNNER_TEMP}/server-signed.tar" --host "${RUNNER_TEMP}/host-signed.tar" \
             > artifacts/promotion-readback-after-signing.json
           cp "${RUNNER_TEMP}/admitted-oci/oci-promotion-manifest.json" artifacts/
-          if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
-            cp "${RUNNER_TEMP}/admitted-oci/promotion-source.json" artifacts/
-          fi
       - name: Upload exact signed-image scan reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1361,8 +1369,8 @@ jobs:
           SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
         run: |
           set -euo pipefail
-          mapfile -t wheels < <(find "${RUNNER_TEMP}/independent-wheel" -maxdepth 1 -type f -name '*.whl')
-          [[ "${#wheels[@]}" == 1 ]]
+          wheels=("${RUNNER_TEMP}/independent-wheel/"*.whl)
+          [[ "${#wheels[@]}" == 1 && -f "${wheels[0]}" && ! -L "${wheels[0]}" ]] || exit 1
           wheel="${wheels[0]}"
           python -m saas.scripts.fixed_main16_ci_promotion check-wheel --wheel "$wheel"
           gh attestation verify "$wheel" \
