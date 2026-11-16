@@ -727,7 +727,8 @@ def test_workflow_never_rebuilds_after_candidate_admission() -> None:
         "Sign server image provenance with GitHub OIDC"
     )
     assert workflow["jobs"]["verify-published-source"]["needs"] == ["publish-signed"]
-    assert publish["needs"] == "build-candidate"
+    assert publish["needs"] == ["source-context", "build-candidate"]
+    assert "needs.source-context.result == 'success'" in publish["if"]
     assert "!cancelled() &&" in publish["if"]
     assert "needs.build-candidate.result == 'success'" in publish["if"]
     assert "needs.build-candidate.result == 'skipped'" in publish["if"]
@@ -737,6 +738,7 @@ def test_workflow_never_rebuilds_after_candidate_admission() -> None:
         "build-candidate",
     ]:
         assert "inputs.promotion_source_run_id == ''" in workflow["jobs"][name]["if"]
+        assert "needs.source-context.outputs.mode == 'same-main'" in workflow["jobs"][name]["if"]
 
 
 @pytest.mark.parametrize(
@@ -813,10 +815,16 @@ def test_policy_rejects_reintroduced_post_admission_builder(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     "target",
     [
-        "!cancelled() &&\n      github.event_name == 'workflow_dispatch' &&",
+        (
+            "!cancelled() &&\n      needs.source-context.result == 'success' &&\n"
+            "      github.event_name == 'workflow_dispatch' &&"
+        ),
         "inputs.promotion_source_run_id == '' && needs.build-candidate.result == 'success'",
         "inputs.promotion_source_run_id != '' && needs.build-candidate.result == 'skipped'",
-        "if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}",
+        (
+            "if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' "
+            "&& needs.source-context.outputs.mode == 'same-main' }}"
+        ),
         "python -m saas.scripts.oci_promotion download-trusted-main",
         '[[ "$PROMOTION_ARTIFACT_SHA256" =~ ^[0-9a-f]{64}$ ]]',
         (
@@ -839,6 +847,126 @@ def test_cross_run_policy_rejects_bypassed_origin_binding(tmp_path, target) -> N
         "cross-run promotion must independently bind a qualified trusted Main producer"
         in validate_candidate_build_contract(repo)
     )
+
+
+@pytest.mark.parametrize(
+    ("step_name", "target"),
+    [
+        (
+            "Classify exact product and controller inputs before any build",
+            "fixed_main16_ci_promotion classify",
+        ),
+        (
+            "Validate protected release coordinates",
+            '[[ "$PROMOTION_ARTIFACT_ID" == "14210895004" ]] || exit 1',
+        ),
+        (
+            "Validate protected release coordinates",
+            '[[ "$PRODUCT_REVISION" == "$TRUSTED_REVISION" ]] || exit 1',
+        ),
+        ("Build and verify the SaaS wheel", "fixed_main16_ci_promotion check-wheel"),
+        (
+            "Verify wheel signature identity and revision",
+            '--source-digest "$SIGNING_POLICY_REVISION"',
+        ),
+        (
+            "Verify image signatures and protected workflow identity",
+            "fixed_main16_ci_promotion verify-predicate",
+        ),
+        (
+            "Independently verify fixed-product wheel and controller provenance",
+            "fixed_main16_ci_promotion check-wheel",
+        ),
+        (
+            "Independently verify registry digests, source labels and signatures",
+            "fixed_main16_ci_promotion verify-predicate",
+        ),
+        (
+            "Independently verify cross-run producer origin",
+            ".controller_context == $origin[0].controller_context",
+        ),
+        (
+            "Preflight scan exact server candidate on both architectures",
+            "GH_TOKEN: ${{ github.token }}",
+        ),
+        ("Scan exact OCI candidates on both architectures", "GH_TOKEN: ${{ github.token }}"),
+        ("Scan signed image digests on both architectures", "GH_TOKEN: ${{ github.token }}"),
+    ],
+)
+def test_fixed_product_policy_rejects_erased_controller_boundary(tmp_path, step_name, target):
+    repo = _candidate_contract_repo(tmp_path)
+    path = repo / ".github/workflows/saas-image-candidate.yml"
+    source = path.read_text()
+    marker = f"      - name: {step_name}\n"
+    before, tail = source.split(marker, 1)
+    step, separator, after = tail.partition("\n      - name:")
+    assert target in step
+    path.write_text(
+        before
+        + marker
+        + step.replace(target, "removed-controller-boundary", 1)
+        + separator
+        + after
+    )
+    assert (
+        "fixed-product controller promotion must keep exact source, "
+        "signatures and build classification" in validate_candidate_build_contract(repo)
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "product",
+        "controller",
+        "context",
+        "source",
+        "attempt",
+        "artifact",
+        "zip",
+        "seal",
+        "runtime-evidence",
+        "profile",
+    ],
+)
+def test_fixed_product_header_rejects_mixed_coordinates_before_transfer(fault):
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/saas-image-candidate.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    step = workflow["jobs"]["publish-signed"]["steps"][0]
+    environment = {
+        "TRUSTED_REF": "refs/heads/main",
+        "TRUSTED_REVISION": "a" * 40,
+        "PRODUCT_REVISION": fixed.PRODUCT,
+        "PROMOTION_CONTROLLER_PROFILE": fixed.MODE,
+        "SOURCE_CONTEXT_MODE": fixed.MODE,
+        "PROMOTION_SOURCE_RUN_ID": str(fixed.SOURCE_RUN),
+        "PROMOTION_SOURCE_RUN_ATTEMPT": "1",
+        "PROMOTION_ARTIFACT_ID": str(fixed.ARTIFACT),
+        "PROMOTION_ARTIFACT_SHA256": fixed.ZIP_SHA256,
+        "PROMOTION_MANIFEST_SHA256": fixed.SEAL_SHA256,
+        "PROMOTION_RUNTIME_EVIDENCE_REVISION": "",
+    }
+    key = {
+        "product": "PRODUCT_REVISION",
+        "context": "SOURCE_CONTEXT_MODE",
+        "source": "PROMOTION_SOURCE_RUN_ID",
+        "attempt": "PROMOTION_SOURCE_RUN_ATTEMPT",
+        "artifact": "PROMOTION_ARTIFACT_ID",
+        "zip": "PROMOTION_ARTIFACT_SHA256",
+        "seal": "PROMOTION_MANIFEST_SHA256",
+        "runtime-evidence": "PROMOTION_RUNTIME_EVIDENCE_REVISION",
+        "profile": "PROMOTION_CONTROLLER_PROFILE",
+    }.get(fault)
+    if key:
+        environment[key] = "different"
+    elif fault == "controller":
+        environment["TRUSTED_REVISION"] = fixed.PRODUCT
+    result = subprocess.run(["bash", "-c", step["run"]], capture_output=True, env=environment)
+    assert (result.returncode == 0) is (fault is None)
 
 
 def test_crane_promotes_and_reads_back_original_oci_index(tmp_path: Path) -> None:
@@ -950,3 +1078,484 @@ def test_crane_promotes_and_reads_back_original_oci_index(tmp_path: Path) -> Non
         finally:
             registry.terminate()
             registry.wait(timeout=5)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "runtime",
+        "lock",
+        "other-workflow",
+        "other-helper",
+        "unregistered",
+        "deleted",
+        "renamed",
+        "type-change",
+        "empty",
+    ],
+)
+def test_fixed_main16_controller_paths_fail_closed(fault) -> None:
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    changes = {oci_promotion.TRUSTED_WORKFLOW: "M"}
+    registered = set(fixed.CI_ONLY_PATHS)
+    invalid_paths = {
+        "runtime": "omnigent/inner/codex_native_executor.py",
+        "lock": "saas/supply_chain/wolfi-runtime-lock.json",
+        "other-workflow": ".github/workflows/ci.yml",
+        "other-helper": "saas/scripts/resume_oci_promotion.py",
+    }
+    if fault in invalid_paths:
+        changes[invalid_paths[fault]] = "M"
+        registered.add(invalid_paths[fault])
+    elif fault == "unregistered":
+        registered.clear()
+    elif fault in {"deleted", "renamed", "type-change"}:
+        changes[oci_promotion.TRUSTED_WORKFLOW] = {
+            "deleted": "D",
+            "renamed": "R100",
+            "type-change": "T",
+        }[fault]
+    elif fault == "empty":
+        changes.clear()
+    if fault is None:
+        fixed.validate_ci_only_paths(changes, registered)
+    else:
+        with pytest.raises(ValueError, match="registered CI-only"):
+            fixed.validate_ci_only_paths(changes, registered)
+
+
+@pytest.mark.parametrize("fault", [None, "finite", "profile", "product-tree", "baseline"])
+def test_fixed_main16_static_scope_keeps_full_guard(tmp_path, monkeypatch, fault) -> None:
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    revision = "c" * 40
+    budget = {fixed.PROFILE_KEY: {"mode": fixed.MODE, "product_revision": fixed.PRODUCT}}
+    if fault == "profile":
+        budget[fixed.PROFILE_KEY]["product_revision"] = "d" * 40
+    scope = {
+        "candidate_manifest_sha256": "e" * 64,
+        "files": [{"path": oci_promotion.TRUSTED_WORKFLOW}],
+        "governance_paths": sorted(fixed.GOVERNANCE_PATHS),
+    }
+    for path, value in (
+        (fixed.BUDGET_PATH, budget),
+        (fixed.SCOPE_PATH, scope),
+        ("saas/upstream-baseline.json", {"upstream_revision": "a" * 40}),
+    ):
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_json(target, value)
+    workflow = tmp_path / oci_promotion.TRUSTED_WORKFLOW
+    workflow.write_text("fixed workflow\n")
+    calls = []
+
+    def full_guard(repo, manifest):
+        calls.append((repo, manifest))
+        return fault != "finite"
+
+    def git(repo, *arguments):
+        if arguments == ("rev-parse", "HEAD"):
+            return revision
+        if arguments == ("rev-parse", f"{fixed.PRODUCT}^{{tree}}"):
+            return "f" * 40 if fault == "product-tree" else fixed.PRODUCT_TREE
+        if arguments[0] == "show":
+            return json.dumps({"upstream_revision": "b" * 40 if fault == "baseline" else "a" * 40})
+        if arguments[0] == "diff":
+            return "M\t" + oci_promotion.TRUSTED_WORKFLOW
+        if arguments == ("rev-parse", "HEAD^{tree}"):
+            return "1" * 40
+        assert arguments == ("merge-base", "--is-ancestor", fixed.PRODUCT, revision)
+        return ""
+
+    monkeypatch.setattr(fixed, "_ordinary_m_candidate_matches", full_guard)
+    monkeypatch.setattr(fixed, "_git", git)
+    if fault is None:
+        proof = fixed._classify_clean_tree(tmp_path, revision)
+        assert proof["product_revision"] == fixed.PRODUCT
+        assert proof["controller_revision"] == revision
+        assert proof["controller_changed_paths"][0]["sha256"] == file_sha256(workflow)
+        assert calls == [(tmp_path, budget)]
+    else:
+        with pytest.raises(ValueError):
+            fixed._classify_clean_tree(tmp_path, revision)
+        if fault != "profile":
+            assert calls == [(tmp_path, budget)]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "controller",
+        "substitute-product-run",
+        "mixed-head",
+        "fork",
+        "attempt",
+        "expired-created-recent-updated",
+        "future",
+        "job-failed",
+        "job-attempt",
+        "skipped-only",
+        "missing-workflow",
+    ],
+)
+def test_fixed_main16_dual_core_uses_native_identity_and_clocks(main_producer, fault) -> None:
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    now = datetime.now(UTC)
+    revision = "c" * 40 if fault == "controller" else fixed.PRODUCT
+    rows = []
+    for index, (path, identifier) in enumerate(fixed.PRODUCT_CORE.items()):
+        if fault == "controller":
+            identifier += 1000
+        run = {
+            **copy.deepcopy(main_producer["run"]),
+            "id": identifier,
+            "path": path,
+            "head_sha": revision,
+            "run_attempt": 1,
+            "created_at": (now - timedelta(minutes=5)).isoformat(),
+            "updated_at": (now - timedelta(minutes=1)).isoformat(),
+        }
+        job = {
+            **copy.deepcopy(main_producer["jobs"][0]),
+            "id": 1000 + index,
+            "run_id": identifier,
+            "run_attempt": 1,
+            "head_sha": revision,
+            "started_at": run["created_at"],
+            "completed_at": run["updated_at"],
+        }
+        rows.append({"run": run, "jobs": [job]})
+    run, job = rows[0]["run"], rows[0]["jobs"][0]
+    if fault == "substitute-product-run":
+        run["id"] += 1
+        job["run_id"] = run["id"]
+    elif fault == "mixed-head":
+        run["head_sha"] = "c" * 40
+    elif fault == "fork":
+        run["head_repository"]["id"] = 20
+    elif fault == "attempt":
+        run["run_attempt"] = 2
+    elif fault == "expired-created-recent-updated":
+        run["created_at"] = (now - timedelta(hours=25)).isoformat()
+    elif fault == "future":
+        run["updated_at"] = (now + timedelta(minutes=1)).isoformat()
+    elif fault == "job-failed":
+        job["conclusion"] = "failure"
+    elif fault == "job-attempt":
+        job["run_attempt"] = 2
+    elif fault == "skipped-only":
+        job["conclusion"] = "skipped"
+    elif fault == "missing-workflow":
+        rows.pop()
+    if fault in {None, "controller"}:
+        result = fixed.verify_core_ci(rows, revision=revision, repository_id=19, now=now)
+        assert result == fixed.verify_core_ci(
+            list(reversed(rows)),
+            revision=revision,
+            repository_id=19,
+            now=now + timedelta(seconds=1),
+        )
+        assert {row["run"]["head_sha"] for row in result} == {revision}
+    else:
+        with pytest.raises(ValueError):
+            fixed.verify_core_ci(rows, revision=revision, repository_id=19, now=now)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [None, "revision", "run_id", "run_attempt", "artifact_id", "zip_sha256", "manifest_sha256"],
+)
+def test_fixed_main16_source_coordinates_are_not_generalized(field) -> None:
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    values = {
+        "revision": fixed.PRODUCT,
+        "run_id": fixed.SOURCE_RUN,
+        "run_attempt": fixed.SOURCE_ATTEMPT,
+        "artifact_id": fixed.ARTIFACT,
+        "zip_sha256": fixed.ZIP_SHA256,
+        "manifest_sha256": fixed.SEAL_SHA256,
+    }
+    if field is None:
+        fixed.require_source_coordinates(**values)
+    else:
+        values[field] = 2 if type(values[field]) is int else "0" * len(values[field])
+        with pytest.raises(ValueError, match="original product/source/archive/seal"):
+            fixed.require_source_coordinates(**values)
+
+
+@pytest.mark.parametrize("fault", [None, "source-head", "source-prerequisite", "upload-time"])
+def test_fixed_controller_resolver_keeps_original_source_verifier(
+    main_producer, monkeypatch, fault
+):
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    run, jobs, artifact = (main_producer[key] for key in ("run", "jobs", "artifact"))
+    run.update(id=fixed.SOURCE_RUN, run_attempt=1, head_sha=fixed.PRODUCT)
+    for job in jobs:
+        job.update(run_id=fixed.SOURCE_RUN, run_attempt=1, head_sha=fixed.PRODUCT)
+    artifact.update(
+        id=fixed.ARTIFACT,
+        name=f"saas-oci-promotion-{fixed.PRODUCT}",
+        digest="sha256:" + fixed.ZIP_SHA256,
+    )
+    artifact["workflow_run"].update(id=fixed.SOURCE_RUN, head_sha=fixed.PRODUCT)
+    context = {"mode": fixed.MODE, "controller_revision": "c" * 40}
+    monkeypatch.setattr(fixed, "controller_context", lambda **kwargs: (19, context))
+
+    def native_metadata(arguments, **kwargs):
+        endpoint = arguments[-1]
+        if endpoint.endswith("/jobs?per_page=100"):
+            return json.dumps([{"jobs": jobs}])
+        return json.dumps(artifact if "/artifacts/" in endpoint else run)
+
+    monkeypatch.setattr(oci_promotion.subprocess, "check_output", native_metadata)
+    if fault == "source-head":
+        run["head_sha"] = "c" * 40
+    elif fault == "source-prerequisite":
+        jobs[0]["conclusion"] = "failure"
+    elif fault == "upload-time":
+        artifact["created_at"] = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    values = {
+        "repository": oci_promotion.TRUSTED_REPOSITORY,
+        "revision": fixed.PRODUCT,
+        "run_id": fixed.SOURCE_RUN,
+        "run_attempt": 1,
+        "artifact_id": fixed.ARTIFACT,
+        "zip_sha256": fixed.ZIP_SHA256,
+        "manifest_sha256": fixed.SEAL_SHA256,
+        "controller_profile": fixed.MODE,
+    }
+    if fault is None:
+        proof = fixed.resolve_trusted_main_source(**values)
+        assert proof["controller_context"] == context
+        assert proof["product_revision"] == fixed.PRODUCT
+        assert proof["source_run_id"] == fixed.SOURCE_RUN
+    else:
+        with pytest.raises(ValueError):
+            fixed.resolve_trusted_main_source(**values)
+
+
+@pytest.mark.parametrize("fault", [None, "controller-commit", "epoch", "version"])
+def test_fixed_main16_wheel_embeds_product_not_controller(tmp_path, fault):
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    revision = "c" * 40 if fault == "controller-commit" else fixed.PRODUCT
+    epoch = fixed.PRODUCT_EPOCH + 1 if fault == "epoch" else fixed.PRODUCT_EPOCH
+    version = "0.22.0" if fault == "version" else "0.21.0.dev20261031"
+    wheel = tmp_path / "product.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            "omnigent/_build_info.py",
+            f"COMMIT_SHA: str = {revision!r}\nBUILD_TIME_EPOCH: int = {epoch}\n",
+        )
+        archive.writestr(
+            "omnigent.dist-info/METADATA", f"Metadata-Version: 2.4\nVersion: {version}\n"
+        )
+    if fault is None:
+        fixed.check_wheel(wheel)
+    else:
+        with pytest.raises(ValueError, match="wheel"):
+            fixed.check_wheel(wheel)
+
+
+def test_fixed_main16_predicate_keeps_both_revisions_and_stable_native_facts(main_producer):
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    controller = "c" * 40
+    now = datetime.now(UTC)
+
+    def native_core(revision):
+        rows = []
+        for index, (path, identifier) in enumerate(fixed.PRODUCT_CORE.items()):
+            if revision == controller:
+                identifier += 1000
+            run = {
+                **copy.deepcopy(main_producer["run"]),
+                "id": identifier,
+                "path": path,
+                "head_sha": revision,
+                "run_attempt": 1,
+                "created_at": (now - timedelta(minutes=5)).isoformat(),
+                "updated_at": (now - timedelta(minutes=1)).isoformat(),
+            }
+            job = {
+                **copy.deepcopy(main_producer["jobs"][0]),
+                "id": 1000 + index,
+                "run_id": identifier,
+                "run_attempt": 1,
+                "head_sha": revision,
+                "started_at": run["created_at"],
+                "completed_at": run["updated_at"],
+            }
+            rows.append({"run": run, "jobs": [job]})
+        return fixed.verify_core_ci(rows, revision=revision, repository_id=19, now=now)
+
+    source = {
+        "repository": oci_promotion.TRUSTED_REPOSITORY,
+        "product_revision": fixed.PRODUCT,
+        "source_run_id": fixed.SOURCE_RUN,
+        "source_run_attempt": 1,
+        "source_producer_job_id": 133136433428,
+        "artifact_id": fixed.ARTIFACT,
+        "artifact_sha256": fixed.ZIP_SHA256,
+        "controller_context": {
+            "mode": fixed.MODE,
+            "product_revision": fixed.PRODUCT,
+            "product_tree": fixed.PRODUCT_TREE,
+            "controller_revision": controller,
+            "controller_tree": "d" * 40,
+            "repository_id": 19,
+            "product_core": native_core(fixed.PRODUCT),
+            "controller_core": native_core(controller),
+        },
+    }
+    binding = fixed.promotion_binding(source)
+    source["state"] = "trusted_source_transferred_requires_current_prepare"
+    source["candidate_manifest_sha256"] = fixed.SEAL_SHA256
+    assert binding == fixed.promotion_binding(source)
+    predicate = fixed.build_promotion_predicate(
+        binding, oci_promotion.TRUSTED_WORKFLOW, controller, "101", "1"
+    )
+    dependencies = predicate["buildDefinition"]["resolvedDependencies"]
+    assert dependencies[0]["digest"] == {"gitCommit": controller}
+    assert dependencies[1]["digest"] == {"gitCommit": fixed.PRODUCT}
+    assert dependencies[2]["digest"] == {"sha256": fixed.ZIP_SHA256}
+    claims = fixed.build_certificate_claims(
+        oci_promotion.TRUSTED_REPOSITORY, controller, oci_promotion.TRUSTED_WORKFLOW, "101", "1"
+    )
+    assert claims["sourceRepositoryDigest"] == controller
+
+
+@pytest.mark.parametrize(
+    ("command", "fault"),
+    [
+        ("download-trusted-main", None),
+        ("verify-trusted-main", None),
+        ("download-trusted-main", "seal"),
+        ("download-trusted-main", "platform"),
+        ("download-trusted-main", "epoch"),
+    ],
+)
+def test_fixed_main16_explicit_intake_cli_reuses_original_transfer_guards(
+    tmp_path, monkeypatch, capsys, command, fault
+):
+    from saas.scripts import fixed_main16_ci_promotion as fixed
+
+    labels = {"fixture": "product-labels"}
+    manifest = {
+        "product_revision": fixed.PRODUCT,
+        "source_date_epoch": fixed.PRODUCT_EPOCH,
+        "labels": labels,
+        "images": {
+            name: {
+                "facts": {
+                    "platforms": {platform: {} for platform in ("linux/amd64", "linux/arm64")}
+                }
+            }
+            for name in ("server", "host")
+        },
+    }
+    original = json.dumps(manifest, sort_keys=True).encode()
+    seal = hashlib.sha256(original).hexdigest()
+    proof = {
+        "repository": oci_promotion.TRUSTED_REPOSITORY,
+        "product_revision": fixed.PRODUCT,
+        "source_run_id": fixed.SOURCE_RUN,
+        "source_run_attempt": 1,
+        "source_producer_job_id": 133136433428,
+        "artifact_id": fixed.ARTIFACT,
+        "artifact_sha256": fixed.ZIP_SHA256,
+        "controller_context": {"mode": fixed.MODE},
+    }
+    calls = []
+
+    def native_source(**values):
+        assert values == {
+            "repository": oci_promotion.TRUSTED_REPOSITORY,
+            "revision": fixed.PRODUCT,
+            "run_id": fixed.SOURCE_RUN,
+            "run_attempt": 1,
+            "artifact_id": fixed.ARTIFACT,
+            "zip_sha256": fixed.ZIP_SHA256,
+            "manifest_sha256": seal,
+            "controller_profile": fixed.MODE,
+        }
+        calls.append("verified-source")
+        return copy.deepcopy(proof)
+
+    def transfer(endpoint, destination, *, zip_sha256):
+        assert (
+            endpoint
+            == f"repos/{oci_promotion.TRUSTED_REPOSITORY}/actions/artifacts/{fixed.ARTIFACT}"
+        )
+        assert zip_sha256 == fixed.ZIP_SHA256
+        calls.append("original-transfer")
+        destination.mkdir()
+        body = original
+        if fault == "seal":
+            body += b" "
+        elif fault == "platform":
+            changed = copy.deepcopy(manifest)
+            changed["images"]["host"]["facts"]["platforms"].pop("linux/arm64")
+            body = json.dumps(changed, sort_keys=True).encode()
+        (destination / oci_promotion.MANIFEST_NAME).write_bytes(body)
+
+    if fault == "platform":
+        changed = copy.deepcopy(manifest)
+        changed["images"]["host"]["facts"]["platforms"].pop("linux/arm64")
+        seal = hashlib.sha256(json.dumps(changed, sort_keys=True).encode()).hexdigest()
+    monkeypatch.setattr(fixed, "resolve_trusted_main_source", native_source)
+    monkeypatch.setattr(oci_promotion, "download_artifact", transfer)
+    monkeypatch.setattr(oci_promotion, "expected_labels", lambda *_: labels)
+    destination = tmp_path / "transferred"
+    epoch = fixed.PRODUCT_EPOCH + (1 if fault == "epoch" else 0)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fixed-main16",
+            command,
+            "--root",
+            str(destination),
+            "--revision",
+            fixed.PRODUCT,
+            "--source-date-epoch",
+            str(epoch),
+            "--repository",
+            oci_promotion.TRUSTED_REPOSITORY,
+            "--run-id",
+            str(fixed.SOURCE_RUN),
+            "--run-attempt",
+            "1",
+            "--artifact-id",
+            str(fixed.ARTIFACT),
+            "--artifact-sha256",
+            fixed.ZIP_SHA256,
+            "--manifest-sha256",
+            seal,
+            "--controller-profile",
+            fixed.MODE,
+        ],
+    )
+    if fault is not None:
+        with pytest.raises(ValueError):
+            fixed.main()
+        assert not (destination / "promotion-source.json").exists()
+        if fault == "epoch":
+            assert calls == []
+    else:
+        assert fixed.main() == 0
+        if command == "verify-trusted-main":
+            assert json.loads(capsys.readouterr().out) == proof
+            assert calls == ["verified-source"] and not destination.exists()
+        else:
+            saved = json.loads((destination / "promotion-source.json").read_text())
+            assert saved["controller_context"] == proof["controller_context"]
+            assert saved["state"] == "trusted_source_transferred_requires_current_prepare"
+            assert saved["candidate_manifest_sha256"] == seal
+            assert calls == ["verified-source", "original-transfer"]

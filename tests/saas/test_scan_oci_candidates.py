@@ -216,7 +216,8 @@ def test_fixed_host_diagnostic_cannot_enter_release_or_hide_raw_failures() -> No
         "build-candidate",
     ):
         assert workflow["jobs"][name]["if"] == (
-            "${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}"
+            "${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' "
+            "&& needs.source-context.outputs.mode == 'same-main' }}"
         )
     for name in ("publish-signed", "verify-published-source"):
         assert "!inputs.diagnostic_host_only &&" in workflow["jobs"][name]["if"]

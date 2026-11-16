@@ -32,11 +32,11 @@
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "336a7c4039a04c8626e3e945a0f12b82715c28deb9c9ac19f2c76b44f7bd3c5a",
+    "current_controller_baseline_sha256": "d96a5452e0e8a3e7b3e8f345ce733c76c59cd3181de9bfca56d19ca96637d0fe",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 277,
-    "reason": "Retain approved controller changes and add only the fixed native turn default-environment repair plus existing regression assertions: two new counted paths and three fewer net lines.",
-    "authority": "Direct human message01a1e2c8-c7ae-77c1-a020-2e26cbd6cf7c approves only fixed b8c73652 two new counted paths,275 to277; LOC13650/9patch/.85 and all runtime/release gates unchanged; authority 2e0e8b7bfe467223aec63840f315de4a31477ac50150e3f886db5b4f9fca5c94",
+    "reason": "Retain exactapproved b8 product16 runtime/caps; add exactCI-only controller withseparateownCI/OIDC andoriginalproductsource; no image relabel/runtimeinputchange.",
+    "authority": "Existing verified human workflow/gate implementation; exact integration-R1 maintenance registration f5f5ca0c8276d62c67a80c000fbb41ec43c19a66a11b812d52c208cc65286131. Prior b8 runtime/file277 grant retained; all caps unchanged.",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,9 +47,13 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "b8c736524f02d24d18ad2d028c6ca81633929043697778f7ab54bd5ace7c0c16",
+    "candidate_manifest_sha256": "35ab512a0de47137a2ffa0cdfbf7b379cf6e5e401780ffd5e3cb2e054b9b0e01",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "2e0e8b7bfe467223aec63840f315de4a31477ac50150e3f886db5b4f9fca5c94"
+    "authority_record_sha256": "f5f5ca0c8276d62c67a80c000fbb41ec43c19a66a11b812d52c208cc65286131"
+  },
+  "fixed_main16_ci_promotion": {
+    "mode": "fixed-main16-ci-only",
+    "product_revision": "16ab5ce0c7278205c2b4adebdaa49ed6e4cf8b45"
   }
 }

@@ -508,6 +508,123 @@ def _named_workflow_step(source: str, name: str) -> str | None:
     return source.split(marker, 1)[1].split("\n      - name:", 1)[0]
 
 
+def _validate_fixed_product_controller_contract(workflow: str) -> list[str]:
+    """Keep the fixed reuse mode explicit without weakening the default release."""
+    mode = "inputs.promotion_controller_profile == 'fixed-main16-ci-only'"
+    predicate_type = (
+        "predicate-type: ${{ " + mode + " && 'https://slsa.dev/provenance/v1' || '' }}"
+    )
+    predicate_path = (
+        "predicate-path: ${{ "
+        + mode
+        + " && 'artifacts/fixed-main16-promotion-provenance.json' || '' }}"
+    )
+    steps = {
+        "Classify exact product and controller inputs before any build": {
+            "python -m saas.scripts.fixed_main16_ci_promotion classify",
+            '--candidate-revision "$CANDIDATE_REVISION"',
+            'assert context["mode"] in {"same-main", "fixed-main16-ci-only"}',
+        },
+        "Validate protected release coordinates": {
+            '[[ "$PRODUCT_REVISION" == "$TRUSTED_REVISION" ]] || exit 1',
+            '[[ "$PROMOTION_CONTROLLER_PROFILE" == "same-main" ]] || exit 1',
+            '[[ "$SOURCE_CONTEXT_MODE" == "fixed-main16-ci-only" ]] || exit 1',
+            '[[ "$PRODUCT_REVISION" == "16ab5ce0c7278205c2b4adebdaa49ed6e4cf8b45" ]] || exit 1',
+            '[[ "$PROMOTION_SOURCE_RUN_ID" == "43818055404" ]] || exit 1',
+            '[[ "$PROMOTION_SOURCE_RUN_ATTEMPT" == "1" ]] || exit 1',
+            '[[ "$PROMOTION_ARTIFACT_ID" == "14210895004" ]] || exit 1',
+            (
+                '[[ "$PROMOTION_ARTIFACT_SHA256" == "'
+                '756131b12e619508dd6285b5be91590e9ecf67858dd0cfe4a3ce38a43b13c458" ]] || exit 1'
+            ),
+            (
+                '[[ "$PROMOTION_MANIFEST_SHA256" == "'
+                'd87424bdb17b2ed985df07d6dc3f03afc545285abbd16ef8973e20963ecb9023" ]] || exit 1'
+            ),
+        },
+        "Checkout exact CI-only release controller": {
+            "if: " + mode,
+            "ref: ${{ github.sha }}",
+            "fetch-depth: 0",
+            "persist-credentials: false",
+        },
+        "Checkout exact independent CI-only controller": {
+            "if: " + mode,
+            "ref: ${{ github.sha }}",
+            "fetch-depth: 0",
+            "persist-credentials: false",
+        },
+        "Build and verify the SaaS wheel": {
+            'git worktree add --detach "$product_checkout" "$PRODUCT_REVISION"',
+            '[[ "$(git -C "$product_checkout" rev-parse HEAD)" == "$PRODUCT_REVISION" ]]',
+            "python -m saas.scripts.fixed_main16_ci_promotion check-wheel",
+            "uv build --wheel --out-dir dist",
+        },
+        "Generate explicit fixed-product controller provenance": {
+            "if: " + mode,
+            "python -m saas.scripts.fixed_main16_ci_promotion predicate",
+            "--source-proof artifacts/promotion-source.json",
+        },
+        "Download and validate original admitted OCI artifact": {
+            'if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]',
+            "python -m saas.scripts.fixed_main16_ci_promotion download-trusted-main",
+            "python -m saas.scripts.oci_promotion download-trusted-main",
+        },
+        "Independently verify cross-run producer origin": {
+            'if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]',
+            "python -m saas.scripts.fixed_main16_ci_promotion verify-trusted-main",
+            "python -m saas.scripts.oci_promotion verify-trusted-main",
+            '--controller-profile "$PROMOTION_CONTROLLER_PROFILE"',
+            ".controller_context == $origin[0].controller_context",
+            ".signing_policy_revision == $policy",
+        },
+        "Independently verify fixed-product wheel and controller provenance": {
+            "if: " + mode,
+            "fixed_main16_ci_promotion check-wheel",
+            "fixed_main16_ci_promotion verify-predicate",
+            '--source-digest "$SIGNING_POLICY_REVISION"',
+        },
+    }
+    for name in (
+        "Verify wheel signature identity and revision",
+        "Verify image signatures and protected workflow identity",
+        "Independently verify registry digests, source labels and signatures",
+    ):
+        steps[name] = {
+            'if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]',
+            '--source-digest "$SIGNING_POLICY_REVISION"',
+            '--source-digest "$PRODUCT_REVISION"',
+            "fixed_main16_ci_promotion verify-predicate",
+            "--format json",
+        }
+    for name in (
+        "Preflight scan exact server candidate on both architectures",
+        "Scan exact OCI candidates on both architectures",
+        "Scan signed image digests on both architectures",
+    ):
+        steps[name] = {"env:", "GH_TOKEN: ${{ github.token }}"}
+    profile_input = workflow.partition("      promotion_controller_profile:\n")[2].partition(
+        "\npermissions:"
+    )[0]
+    if (
+        "options: [same-main, fixed-main16-ci-only]" not in profile_input
+        or "default: same-main" not in profile_input
+        or workflow.count(predicate_type) != 3
+        or workflow.count(predicate_path) != 3
+        or workflow.count('--controller-profile "$PROMOTION_CONTROLLER_PROFILE"') != 2
+        or any(
+            (step := _named_workflow_step(workflow, name)) is None
+            or any(fragment not in step for fragment in required)
+            for name, required in steps.items()
+        )
+    ):
+        return [
+            "fixed-product controller promotion must keep exact source, "
+            "signatures and build classification"
+        ]
+    return []
+
+
 def validate_candidate_build_contract(repo: Path) -> list[str]:
     """Validate the workflow and its fixed local composite build action together."""
 
@@ -520,6 +637,7 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
     )
     if workflow is None:
         return violations
+    violations.extend(_validate_fixed_product_controller_contract(workflow))
 
     candidate_steps = [
         (
@@ -542,11 +660,17 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         '[[ "$CANDIDATE_REVISION" =~ ^[0-9a-f]{40}$ ]]',
         '[[ "$(git rev-parse HEAD)" == "$CANDIDATE_REVISION" ]]',
     }
+    context_checkout = _named_workflow_step(
+        workflow, "Checkout exact controller source for classification"
+    )
     if (
         workflow.count(
             "CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}"
         )
         != 1
+        or context_checkout is None
+        or context_checkout.count("ref: ${{ env.CANDIDATE_REVISION }}") != 1
+        or context_checkout.count("persist-credentials: false") != 1
         or any(
             checkout is None
             or checkout.count("ref: ${{ env.CANDIDATE_REVISION }}") != 1
@@ -676,7 +800,8 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "!cancelled() &&",
         "inputs.promotion_source_run_id == '' && needs.build-candidate.result == 'success'",
         "inputs.promotion_source_run_id != '' && needs.build-candidate.result == 'skipped'",
-        "needs: build-candidate",
+        "needs: [source-context, build-candidate]",
+        "needs.source-context.result == 'success'",
         "candidate-manifest-sha256: ${{ steps.admitted.outputs.manifest-sha256 }}",
         "python -m saas.scripts.oci_promotion download-trusted-main",
         '--run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT"',
@@ -700,14 +825,15 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
         "name: Independently verify cross-run producer origin",
         "if: inputs.promotion_source_run_id != ''",
         "python -m saas.scripts.oci_promotion verify-trusted-main",
-        "source_proof_sha256=$(sha256sum release-facts/promotion-source.json",
+        'source_proof_sha256=$(sha256sum "${RELEASE_FACTS_DIRECTORY}/promotion-source.json"',
         ".[0] == (.[1] | del(.state, .candidate_manifest_sha256))",
         ".promotion.source_proof_sha256 == $proof",
-        "release-facts/independent-promotion-source.json",
+        '"${RELEASE_FACTS_DIRECTORY}/independent-promotion-source.json"',
     }
     if (
         workflow.count(
-            "if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}"
+            "if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' "
+            "&& needs.source-context.outputs.mode == 'same-main' }}"
         )
         != 3
         or any(fragment not in publication for fragment in cross_run_publication)

@@ -666,6 +666,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "fixed_main16_controller_workflow_correction",
         "trusted_main_crossrun_correction",
         "registered_validation_base_correction",
         "compat018_recovered_publication_correction",
@@ -721,6 +722,10 @@ def reviewed_source_bytes(root, relative, expected):
         ),
         ("saas/scripts/check_image_supply_chain.py", "runtime_condition_admission_correction"),
         ("saas/scripts/scan_oci_candidates.py", "runtime_condition_admission_correction"),
+        (
+            "saas/scripts/check_image_supply_chain.py",
+            "fixed_main16_controller_workflow_correction",
+        ),
         ("saas/scripts/oci_promotion.py", "trusted_main_crossrun_correction"),
         ("saas/scripts/check_image_supply_chain.py", "trusted_main_crossrun_correction"),
     ],

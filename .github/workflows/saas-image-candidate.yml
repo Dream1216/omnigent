@@ -105,6 +105,12 @@ on:
         description: Original sealed candidate manifest SHA256
         required: false
         type: string
+      promotion_controller_profile:
+        description: Explicit controller contract; the fixed profile retains the real Main16ab product
+        required: false
+        type: choice
+        default: same-main
+        options: [same-main, fixed-main16-ci-only]
 
 permissions:
   contents: read
@@ -121,8 +127,42 @@ env:
   CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
+  source-context:
+    if: ${{ !inputs.diagnostic_host_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.context.outputs.mode }}
+    steps:
+      - name: Checkout exact controller source for classification
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.CANDIDATE_REVISION }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Classify exact product and controller inputs before any build
+        id: context
+        run: |
+          set -euo pipefail
+          python -m saas.scripts.fixed_main16_ci_promotion classify \
+            --candidate-revision "$CANDIDATE_REVISION" > "${RUNNER_TEMP}/source-context.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          context = json.loads((Path(os.environ["RUNNER_TEMP"]) / "source-context.json").read_text())
+          assert context["mode"] in {"same-main", "fixed-main16-ci-only"}
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write("mode=" + context["mode"] + "\n")
+          PY
+
   verify-candidate-preflight:
-    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}
+    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' && needs.source-context.outputs.mode == 'same-main' }}
+    needs: source-context
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -165,7 +205,8 @@ jobs:
         run: uv run python -m saas.scripts.check_image_supply_chain
 
   verify-production-migration-replay:
-    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}
+    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' && needs.source-context.outputs.mode == 'same-main' }}
+    needs: source-context
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -222,8 +263,9 @@ jobs:
           if-no-files-found: error
 
   build-candidate:
-    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' }}
+    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' && needs.source-context.outputs.mode == 'same-main' }}
     needs:
+      - source-context
       - verify-candidate-preflight
       - verify-production-migration-replay
     runs-on: ubuntu-24.04
@@ -535,6 +577,8 @@ jobs:
           PY
       - name: Preflight scan exact server candidate on both architectures
         id: server_preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
           python -m saas.scripts.scan_oci_candidates
           --scope server-preflight
@@ -604,6 +648,8 @@ jobs:
           --image omnigent-saas-host=${{ runner.temp }}/host-1.tar,${{ runner.temp }}/host-2.tar
           --output artifacts/oci-layer-drift.json
       - name: Scan exact OCI candidates on both architectures
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
           python -m saas.scripts.scan_oci_candidates
           --image server=${{ runner.temp }}/server-1.tar
@@ -682,13 +728,14 @@ jobs:
   publish-signed:
     if: >-
       !cancelled() &&
+      needs.source-context.result == 'success' &&
       github.event_name == 'workflow_dispatch' &&
       !inputs.diagnostic_host_only &&
       inputs.publish_signed &&
       github.ref == 'refs/heads/main' &&
       ((inputs.promotion_source_run_id == '' && needs.build-candidate.result == 'success') ||
        (inputs.promotion_source_run_id != '' && needs.build-candidate.result == 'skipped'))
-    needs: build-candidate
+    needs: [source-context, build-candidate]
     environment: production-image
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -710,11 +757,14 @@ jobs:
       OCI_ARTIFACT_SHA256: ${{ inputs.promotion_source_run_id != '' && inputs.promotion_artifact_sha256 || needs.build-candidate.outputs.oci-artifact-sha256 }}
       PROMOTION_SOURCE_RUN_ID: ${{ inputs.promotion_source_run_id }}
       PROMOTION_SOURCE_RUN_ATTEMPT: ${{ inputs.promotion_source_run_attempt }}
+      PROMOTION_CONTROLLER_PROFILE: ${{ inputs.promotion_controller_profile || 'same-main' }}
+      SIGNING_POLICY_REVISION: ${{ github.sha }}
     steps:
       - name: Validate protected release coordinates
         env:
           TRUSTED_REF: ${{ github.ref }}
           TRUSTED_REVISION: ${{ github.sha }}
+          SOURCE_CONTEXT_MODE: ${{ needs.source-context.outputs.mode }}
           PROMOTION_ARTIFACT_ID: ${{ inputs.promotion_artifact_id }}
           PROMOTION_ARTIFACT_SHA256: ${{ inputs.promotion_artifact_sha256 }}
           PROMOTION_MANIFEST_SHA256: ${{ inputs.promotion_manifest_sha256 }}
@@ -723,7 +773,21 @@ jobs:
           set -euo pipefail
           [[ "$TRUSTED_REF" == "refs/heads/main" ]] || exit 1
           [[ "$PRODUCT_REVISION" =~ ^[0-9a-f]{40}$ ]] || exit 1
-          [[ "$PRODUCT_REVISION" == "$TRUSTED_REVISION" ]] || exit 1
+          PROMOTION_CONTROLLER_PROFILE="${PROMOTION_CONTROLLER_PROFILE:-same-main}"
+          if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+            [[ "$SOURCE_CONTEXT_MODE" == "fixed-main16-ci-only" ]] || exit 1
+            [[ "$TRUSTED_REVISION" =~ ^[0-9a-f]{40}$ ]] || exit 1
+            [[ "$TRUSTED_REVISION" != "$PRODUCT_REVISION" ]] || exit 1
+            [[ "$PRODUCT_REVISION" == "16ab5ce0c7278205c2b4adebdaa49ed6e4cf8b45" ]] || exit 1
+            [[ "$PROMOTION_SOURCE_RUN_ID" == "43818055404" ]] || exit 1
+            [[ "$PROMOTION_SOURCE_RUN_ATTEMPT" == "1" ]] || exit 1
+            [[ "$PROMOTION_ARTIFACT_ID" == "14210895004" ]] || exit 1
+            [[ "$PROMOTION_ARTIFACT_SHA256" == "756131b12e619508dd6285b5be91590e9ecf67858dd0cfe4a3ce38a43b13c458" ]] || exit 1
+            [[ "$PROMOTION_MANIFEST_SHA256" == "d87424bdb17b2ed985df07d6dc3f03afc545285abbd16ef8973e20963ecb9023" ]] || exit 1
+          else
+            [[ "$PROMOTION_CONTROLLER_PROFILE" == "same-main" ]] || exit 1
+            [[ "$PRODUCT_REVISION" == "$TRUSTED_REVISION" ]] || exit 1
+          fi
           if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
             [[ -z "$PROMOTION_RUNTIME_EVIDENCE_REVISION" ]] || exit 1
             [[ "$PROMOTION_SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
@@ -735,10 +799,18 @@ jobs:
             [[ -z "$PROMOTION_SOURCE_RUN_ATTEMPT$PROMOTION_ARTIFACT_ID$PROMOTION_ARTIFACT_SHA256$PROMOTION_MANIFEST_SHA256" ]] || exit 1
           fi
       - name: Checkout immutable release candidate
+        if: inputs.promotion_controller_profile != 'fixed-main16-ci-only'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.product_revision }}
           fetch-depth: 1
+          persist-credentials: false
+      - name: Checkout exact CI-only release controller
+        if: inputs.promotion_controller_profile == 'fixed-main16-ci-only'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -761,13 +833,24 @@ jobs:
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
           printf '%s\n' "SOURCE_DATE_EPOCH=${source_epoch}" >> "$GITHUB_ENV"
           if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
-            python -m saas.scripts.oci_promotion download-trusted-main \
-              --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
-              --source-date-epoch "$source_epoch" \
-              --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
-              --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
-              --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
-              --repository "$GITHUB_REPOSITORY"
+            if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+              python -m saas.scripts.fixed_main16_ci_promotion download-trusted-main \
+                --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+                --source-date-epoch "$source_epoch" \
+                --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+                --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+                --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+                --controller-profile "$PROMOTION_CONTROLLER_PROFILE" \
+                --repository "$GITHUB_REPOSITORY"
+            else
+              python -m saas.scripts.oci_promotion download-trusted-main \
+                --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
+                --source-date-epoch "$source_epoch" \
+                --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
+                --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+                --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+                --repository "$GITHUB_REPOSITORY"
+            fi
           else
             python -m saas.scripts.oci_promotion download \
               --root "${RUNNER_TEMP}/admitted-oci" --revision "$PRODUCT_REVISION" \
@@ -799,14 +882,37 @@ jobs:
         run: |
           set -euo pipefail
           uv sync --frozen --extra saas
-          uv build --wheel --out-dir dist
+          if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+            product_checkout="${RUNNER_TEMP}/wheel-product"
+            git worktree add --detach "$product_checkout" "$PRODUCT_REVISION"
+            [[ "$(git -C "$product_checkout" rev-parse HEAD)" == "$PRODUCT_REVISION" ]]
+            [[ -z "$(git -C "$product_checkout" status --porcelain)" ]]
+            (cd "$product_checkout" && uv build --wheel --out-dir "${GITHUB_WORKSPACE}/dist")
+            git worktree remove "$product_checkout"
+          else
+            uv build --wheel --out-dir dist
+          fi
           uv run python -m saas.scripts.check_wheel_contents dist
+          if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+            wheel=$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)
+            python -m saas.scripts.fixed_main16_ci_promotion check-wheel --wheel "$wheel"
+          fi
           sha256sum dist/*.whl > dist/SHA256SUMS
+      - name: Generate explicit fixed-product controller provenance
+        if: inputs.promotion_controller_profile == 'fixed-main16-ci-only'
+        run: >-
+          python -m saas.scripts.fixed_main16_ci_promotion predicate
+          --source-proof artifacts/promotion-source.json
+          --policy-revision "$SIGNING_POLICY_REVISION"
+          --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+          --output artifacts/fixed-main16-promotion-provenance.json
       - name: Sign wheel provenance with GitHub OIDC
         id: attest-wheel
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
         with:
           subject-path: dist/*.whl
+          predicate-type: ${{ inputs.promotion_controller_profile == 'fixed-main16-ci-only' && 'https://slsa.dev/provenance/v1' || '' }}
+          predicate-path: ${{ inputs.promotion_controller_profile == 'fixed-main16-ci-only' && 'artifacts/fixed-main16-promotion-provenance.json' || '' }}
       - name: Verify wheel signature identity and revision
         env:
           GH_TOKEN: ${{ github.token }}
@@ -814,12 +920,25 @@ jobs:
           set -euo pipefail
           wheel=$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)
           test -n "$wheel"
-          gh attestation verify "$wheel" \
-            --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$SIGNER_WORKFLOW" \
-            --source-ref refs/heads/main \
-            --source-digest "$PRODUCT_REVISION" \
-            --deny-self-hosted-runners
+          if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+            gh attestation verify "$wheel" \
+              --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-ref refs/heads/main --source-digest "$SIGNING_POLICY_REVISION" \
+              --deny-self-hosted-runners --format json > artifacts/fixed-main16-wheel-verification.json
+            python -m saas.scripts.fixed_main16_ci_promotion verify-predicate \
+              --source-proof artifacts/promotion-source.json \
+              --verification artifacts/fixed-main16-wheel-verification.json \
+              --subject "sha256:$(sha256sum "$wheel" | cut -d' ' -f1)" \
+              --policy-revision "$SIGNING_POLICY_REVISION" \
+              --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+          else
+            gh attestation verify "$wheel" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$SIGNER_WORKFLOW" \
+              --source-ref refs/heads/main \
+              --source-digest "$PRODUCT_REVISION" \
+              --deny-self-hosted-runners
+          fi
       - name: Upload signed wheel and checksum
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -996,6 +1115,8 @@ jobs:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-server
           subject-digest: ${{ steps.build-server.outputs.digest }}
           push-to-registry: true
+          predicate-type: ${{ inputs.promotion_controller_profile == 'fixed-main16-ci-only' && 'https://slsa.dev/provenance/v1' || '' }}
+          predicate-path: ${{ inputs.promotion_controller_profile == 'fixed-main16-ci-only' && 'artifacts/fixed-main16-promotion-provenance.json' || '' }}
       - name: Sign host image provenance with GitHub OIDC
         id: attest-host
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4 # v4.0.0
@@ -1003,6 +1124,8 @@ jobs:
           subject-name: ${{ steps.release.outputs.prefix }}/omnigent-saas-host
           subject-digest: ${{ steps.build-host.outputs.digest }}
           push-to-registry: true
+          predicate-type: ${{ inputs.promotion_controller_profile == 'fixed-main16-ci-only' && 'https://slsa.dev/provenance/v1' || '' }}
+          predicate-path: ${{ inputs.promotion_controller_profile == 'fixed-main16-ci-only' && 'artifacts/fixed-main16-promotion-provenance.json' || '' }}
       - name: Verify image signatures and protected workflow identity
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1011,12 +1134,24 @@ jobs:
         run: |
           set -euo pipefail
           for image in "$SERVER_IMAGE" "$HOST_IMAGE"; do
-            gh attestation verify "oci://${image}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow "$SIGNER_WORKFLOW" \
-              --source-ref refs/heads/main \
-              --source-digest "$PRODUCT_REVISION" \
-              --deny-self-hosted-runners
+            if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+              verification="artifacts/$(basename "${image%@*}")-fixed-main16-verification.json"
+              gh attestation verify "oci://${image}" \
+                --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER_WORKFLOW" \
+                --source-ref refs/heads/main --source-digest "$SIGNING_POLICY_REVISION" \
+                --deny-self-hosted-runners --format json > "$verification"
+              python -m saas.scripts.fixed_main16_ci_promotion verify-predicate \
+                --source-proof artifacts/promotion-source.json --verification "$verification" \
+                --subject "${image#*@}" --policy-revision "$SIGNING_POLICY_REVISION" \
+                --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+            else
+              gh attestation verify "oci://${image}" \
+                --repo "$GITHUB_REPOSITORY" \
+                --signer-workflow "$SIGNER_WORKFLOW" \
+                --source-ref refs/heads/main \
+                --source-digest "$PRODUCT_REVISION" \
+                --deny-self-hosted-runners
+            fi
           done
       - name: Pull signed images by digest as exact OCI archives
         env:
@@ -1033,6 +1168,8 @@ jobs:
             rm -r -- "${RUNNER_TEMP:?}/${artifact}-signed-layout"
           done
       - name: Scan signed image digests on both architectures
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: >-
           python -m saas.scripts.scan_oci_candidates
           --image server=${{ runner.temp }}/server-signed.tar
@@ -1072,8 +1209,12 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           source_proof_sha256=""
+          controller_context="null"
           if [[ -n "$PROMOTION_SOURCE_RUN_ID" ]]; then
             source_proof_sha256=$(sha256sum artifacts/promotion-source.json | cut -d' ' -f1)
+          fi
+          if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+            controller_context=$(jq -cer .controller_context artifacts/promotion-source.json)
           fi
           jq -n \
             --arg revision "$PRODUCT_REVISION" \
@@ -1090,7 +1231,11 @@ jobs:
             --arg source_run_id "${PROMOTION_SOURCE_RUN_ID:-$GITHUB_RUN_ID}" \
             --arg source_run_attempt "${PROMOTION_SOURCE_RUN_ATTEMPT:-$GITHUB_RUN_ATTEMPT}" \
             --arg source_proof_sha256 "$source_proof_sha256" \
-            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, source_run_id: ($source_run_id | tonumber), source_run_attempt: ($source_run_attempt | tonumber), source_proof_sha256: $source_proof_sha256, rebuilt: false}, production_deployment_receipt: null}' \
+            --arg controller_profile "$PROMOTION_CONTROLLER_PROFILE" \
+            --arg signing_policy_revision "$SIGNING_POLICY_REVISION" \
+            --arg signing_run_id "$GITHUB_RUN_ID" --arg signing_run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson controller_context "$controller_context" \
+            '{schema_version: 1, evidence_kind: "protected_ci_signed_release_candidate", product_revision: $revision, workflow_identity: $workflow, wheel_attestation: $wheel_attestation, images: [{name: $server_image, digest: $server_digest, attestation: $server_attestation}, {name: $host_image, digest: $host_digest, attestation: $host_attestation}], promotion: {candidate_manifest_sha256: $manifest_sha256, original_artifact_id: $artifact_id, original_artifact_sha256: $artifact_sha256, source_run_id: ($source_run_id | tonumber), source_run_attempt: ($source_run_attempt | tonumber), source_proof_sha256: $source_proof_sha256, rebuilt: false}, production_deployment_receipt: null} + (if $controller_profile == "fixed-main16-ci-only" then {controller_profile: $controller_profile, signing_policy_revision: $signing_policy_revision, signing_run_id: ($signing_run_id | tonumber), signing_run_attempt: ($signing_run_attempt | tonumber), controller_context: $controller_context} else {} end)' \
             > artifacts/signed-release-candidate.json
       - name: Upload signed release candidate facts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1101,6 +1246,8 @@ jobs:
             artifacts/oci-promotion-manifest.json
             artifacts/promotion-source.json
             artifacts/promotion-readback-*.json
+            artifacts/fixed-main16-*.json
+            artifacts/*-fixed-main16-verification.json
             artifacts/promotion-current-scans/
             artifacts/supply-chain/
           if-no-files-found: error
@@ -1124,12 +1271,24 @@ jobs:
     env:
       PRODUCT_REVISION: ${{ inputs.product_revision }}
       CANDIDATE_MANIFEST_SHA256: ${{ needs.publish-signed.outputs.candidate-manifest-sha256 }}
+      PROMOTION_CONTROLLER_PROFILE: ${{ inputs.promotion_controller_profile || 'same-main' }}
+      SIGNING_POLICY_REVISION: ${{ github.sha }}
     steps:
       - name: Checkout immutable independent verifier
+        if: inputs.promotion_controller_profile != 'fixed-main16-ci-only'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.product_revision }}
           persist-credentials: false
+      - name: Checkout exact independent CI-only controller
+        if: inputs.promotion_controller_profile == 'fixed-main16-ci-only'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select isolated independent release facts directory
+        run: echo "RELEASE_FACTS_DIRECTORY=$RUNNER_TEMP/release-facts" >> "$GITHUB_ENV"
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
@@ -1144,7 +1303,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: signed-release-candidate-${{ inputs.product_revision }}
-          path: release-facts
+          path: ${{ env.RELEASE_FACTS_DIRECTORY }}
       - name: Independently verify cross-run producer origin
         if: inputs.promotion_source_run_id != ''
         env:
@@ -1156,23 +1315,67 @@ jobs:
         run: |
           set -euo pipefail
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
-          python -m saas.scripts.oci_promotion verify-trusted-main \
-            --root release-facts --revision "$PRODUCT_REVISION" \
-            --source-date-epoch "$source_epoch" --repository "$GITHUB_REPOSITORY" \
-            --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
-            --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
-            --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
-            > release-facts/independent-promotion-source.json
+          if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+            python -m saas.scripts.fixed_main16_ci_promotion verify-trusted-main \
+              --root "$RELEASE_FACTS_DIRECTORY" --revision "$PRODUCT_REVISION" \
+              --source-date-epoch "$source_epoch" --repository "$GITHUB_REPOSITORY" \
+              --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+              --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+              --controller-profile "$PROMOTION_CONTROLLER_PROFILE" \
+              --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256"
+          else
+            python -m saas.scripts.oci_promotion verify-trusted-main \
+              --root "$RELEASE_FACTS_DIRECTORY" --revision "$PRODUCT_REVISION" \
+              --source-date-epoch "$source_epoch" --repository "$GITHUB_REPOSITORY" \
+              --run-id "$PROMOTION_SOURCE_RUN_ID" --run-attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
+              --artifact-id "$OCI_ARTIFACT_ID" --artifact-sha256 "$OCI_ARTIFACT_SHA256" \
+              --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256"
+          fi > "${RELEASE_FACTS_DIRECTORY}/independent-promotion-source.json"
           jq -e --arg seal "$CANDIDATE_MANIFEST_SHA256" \
             '.state == "trusted_source_transferred_requires_current_prepare" and .candidate_manifest_sha256 == $seal' \
-            release-facts/promotion-source.json >/dev/null
+            "${RELEASE_FACTS_DIRECTORY}/promotion-source.json" >/dev/null
           jq -e -s '.[0] == (.[1] | del(.state, .candidate_manifest_sha256))' \
-            release-facts/independent-promotion-source.json release-facts/promotion-source.json >/dev/null
-          source_proof_sha256=$(sha256sum release-facts/promotion-source.json | cut -d' ' -f1)
+            ${{ env.RELEASE_FACTS_DIRECTORY }}/independent-promotion-source.json "${RELEASE_FACTS_DIRECTORY}/promotion-source.json" >/dev/null
+          source_proof_sha256=$(sha256sum "${RELEASE_FACTS_DIRECTORY}/promotion-source.json" | cut -d' ' -f1)
           jq -e --arg proof "$source_proof_sha256" \
             --arg run "$PROMOTION_SOURCE_RUN_ID" --arg attempt "$PROMOTION_SOURCE_RUN_ATTEMPT" \
             '.promotion.source_run_id == ($run | tonumber) and .promotion.source_run_attempt == ($attempt | tonumber) and .promotion.source_proof_sha256 == $proof' \
-            release-facts/signed-release-candidate.json >/dev/null
+            "${RELEASE_FACTS_DIRECTORY}/signed-release-candidate.json" >/dev/null
+          if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+            jq -e --arg policy "$SIGNING_POLICY_REVISION" --arg run "$GITHUB_RUN_ID" \
+              --arg attempt "$GITHUB_RUN_ATTEMPT" \
+              --slurpfile origin "${RELEASE_FACTS_DIRECTORY}/independent-promotion-source.json" \
+              '.controller_profile == "fixed-main16-ci-only" and .signing_policy_revision == $policy and .signing_run_id == ($run | tonumber) and .signing_run_attempt == ($attempt | tonumber) and .controller_context == $origin[0].controller_context' \
+              "${RELEASE_FACTS_DIRECTORY}/signed-release-candidate.json" >/dev/null
+          fi
+      - name: Download the actual fixed-product wheel for independent verification
+        if: inputs.promotion_controller_profile == 'fixed-main16-ci-only'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: omnigent-saas-wheel-${{ inputs.product_revision }}
+          path: ${{ runner.temp }}/independent-wheel
+      - name: Independently verify fixed-product wheel and controller provenance
+        if: inputs.promotion_controller_profile == 'fixed-main16-ci-only'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
+        run: |
+          set -euo pipefail
+          mapfile -t wheels < <(find "${RUNNER_TEMP}/independent-wheel" -maxdepth 1 -type f -name '*.whl')
+          [[ "${#wheels[@]}" == 1 ]]
+          wheel="${wheels[0]}"
+          python -m saas.scripts.fixed_main16_ci_promotion check-wheel --wheel "$wheel"
+          gh attestation verify "$wheel" \
+            --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER_WORKFLOW" \
+            --source-ref refs/heads/main --source-digest "$SIGNING_POLICY_REVISION" \
+            --deny-self-hosted-runners --format json \
+            > "${RELEASE_FACTS_DIRECTORY}/independent-fixed-main16-wheel-verification.json"
+          python -m saas.scripts.fixed_main16_ci_promotion verify-predicate \
+            --source-proof "${RELEASE_FACTS_DIRECTORY}/promotion-source.json" \
+            --verification "${RELEASE_FACTS_DIRECTORY}/independent-fixed-main16-wheel-verification.json" \
+            --subject "sha256:$(sha256sum "$wheel" | cut -d' ' -f1)" \
+            --policy-revision "$SIGNING_POLICY_REVISION" \
+            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
       - name: Set up crane
         uses: ./saas/actions/setup-pinned-crane
         timeout-minutes: 3
@@ -1189,7 +1392,7 @@ jobs:
           SIGNER_WORKFLOW: ${{ github.repository }}/.github/workflows/saas-image-candidate.yml
         run: |
           set -euo pipefail
-          facts=release-facts/signed-release-candidate.json
+          facts="${RELEASE_FACTS_DIRECTORY}/signed-release-candidate.json"
           jq -e --arg revision "$PRODUCT_REVISION" \
             '.schema_version == 1 and .product_revision == $revision and (.images | length) == 2' \
             "$facts" >/dev/null
@@ -1211,18 +1414,31 @@ jobs:
                 jq -e --arg revision "$PRODUCT_REVISION" \
                   '.config.Labels["org.opencontainers.image.revision"] == $revision' >/dev/null
             done
-            gh attestation verify "oci://${image}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow "$SIGNER_WORKFLOW" \
-              --source-ref refs/heads/main \
-              --source-digest "$PRODUCT_REVISION" \
-              --deny-self-hosted-runners
+            if [[ "$PROMOTION_CONTROLLER_PROFILE" == "fixed-main16-ci-only" ]]; then
+              verification="${RELEASE_FACTS_DIRECTORY}/independent-$(basename "$name")-fixed-main16-verification.json"
+              gh attestation verify "oci://${image}" \
+                --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER_WORKFLOW" \
+                --source-ref refs/heads/main --source-digest "$SIGNING_POLICY_REVISION" \
+                --deny-self-hosted-runners --format json > "$verification"
+              python -m saas.scripts.fixed_main16_ci_promotion verify-predicate \
+                --source-proof "${RELEASE_FACTS_DIRECTORY}/promotion-source.json" \
+                --verification "$verification" --subject "$digest" \
+                --policy-revision "$SIGNING_POLICY_REVISION" \
+                --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+            else
+              gh attestation verify "oci://${image}" \
+                --repo "$GITHUB_REPOSITORY" \
+                --signer-workflow "$SIGNER_WORKFLOW" \
+                --source-ref refs/heads/main \
+                --source-digest "$PRODUCT_REVISION" \
+                --deny-self-hosted-runners
+            fi
           done < <(jq -r '.images[] | [.name, .digest] | @tsv' "$facts")
           [[ "$server_seen" == 1 && "$host_seen" == 1 ]]
       - name: Independently read back exact accepted OCI contents
         run: |
           set -euo pipefail
-          facts=release-facts/signed-release-candidate.json
+          facts="${RELEASE_FACTS_DIRECTORY}/signed-release-candidate.json"
           source_epoch=$(git show -s --format=%ct "$PRODUCT_REVISION")
           for artifact in server host; do
             image=$(jq -er --arg suffix "/omnigent-saas-${artifact}" \
@@ -1234,18 +1450,20 @@ jobs:
             rm -r -- "${RUNNER_TEMP:?}/${artifact}-readback-layout"
           done
           python -m saas.scripts.oci_promotion readback \
-            --root release-facts --revision "$PRODUCT_REVISION" \
+            --root "$RELEASE_FACTS_DIRECTORY" --revision "$PRODUCT_REVISION" \
             --source-date-epoch "$source_epoch" \
             --manifest-sha256 "$CANDIDATE_MANIFEST_SHA256" \
             --server "${RUNNER_TEMP}/server-readback.tar" --host "${RUNNER_TEMP}/host-readback.tar" \
-            > release-facts/independent-oci-readback.json
+            > "${RELEASE_FACTS_DIRECTORY}/independent-oci-readback.json"
       - name: Upload independent OCI readback receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: independent-oci-readback-${{ inputs.product_revision }}
           path: |
-            release-facts/independent-oci-readback.json
-            release-facts/independent-promotion-source.json
+            ${{ env.RELEASE_FACTS_DIRECTORY }}/independent-oci-readback.json
+            ${{ env.RELEASE_FACTS_DIRECTORY }}/independent-promotion-source.json
+            ${{ env.RELEASE_FACTS_DIRECTORY }}/independent-*-fixed-main16-verification.json
+            ${{ env.RELEASE_FACTS_DIRECTORY }}/independent-fixed-main16-wheel-verification.json
           if-no-files-found: error
           retention-days: 90
 
