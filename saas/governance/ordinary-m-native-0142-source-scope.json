@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "b8c736524f02d24d18ad2d028c6ca81633929043697778f7ab54bd5ace7c0c16",
+  "candidate_manifest_sha256": "af499e401a4c568f5b87f111c9842d022f020d71bbdd66ac7b40fc4d6b0bcc21",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -11,6 +11,51 @@
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json",
+      "bytes": 3102,
+      "sha256": "f5e5bfd1045eef2677483ade372474ca814ce173bab17319808a994a43ef0532"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/origin.json",
+      "bytes": 2176,
+      "sha256": "ede48e984113d0b14c2f4e621cb393594cc9639cbc4c3af07c3a849581577a59"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/renewal.py",
+      "bytes": 19015,
+      "sha256": "73c73680922b7d604068f4635a29c5c9a68495fb446e99723f2d354320607f99"
+    },
+    {
+      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py",
+      "bytes": 11756,
+      "sha256": "146ae8493b64d6b3e6d54562d82d890aef2e6d01af94ba1a2e115eb59ec5d534"
+    },
+    {
+      "path": ".github/actions/e2e-run/action.yml",
+      "bytes": 13478,
+      "sha256": "19b575961bb7b74ceca4305cadfdc39030162929b4e7b1b528c70a5d825d17e0"
+    },
+    {
+      "path": ".github/workflows/e2e.yml",
+      "bytes": 7377,
+      "sha256": "b64ea7d37f43c9331a1e2f0e77b24fce660f1c63fa18ff1289e3425b0546fb20"
+    },
+    {
+      "path": ".github/workflows/saas-image-candidate.yml",
+      "bytes": 82067,
+      "sha256": "400c2ce0173b314c29b7c4ff751e957116799300a45780a474298be5eb71089d"
+    },
+    {
+      "path": ".github/workflows/saas-m-current-evidence-renewal.yml",
+      "bytes": 6837,
+      "sha256": "e5c10dd45525bad0eaa7ce8693f8f6251ac6bb08874bd2f0c4622ca15cfa52b4"
+    },
+    {
+      "path": ".github/workflows/saas-m2c-evidence-renewal.yml",
+      "bytes": 6715,
+      "sha256": "fe76ec364ebb6789a640874ccf2b1b6d766dd4a2b9b7ac8b2fefd94764645574"
+    },
     {
       "path": ".github/workflows/saas-upgrade-benchmark.yml",
       "bytes": 6551,
@@ -102,6 +147,11 @@
       "sha256": "dc22eae3f94df2eebb3f895c78910b8ddc253555a4c56f5ca6990bf6a5e2d2e2"
     },
     {
+      "path": "omnigent/inner/codex_native_executor.py",
+      "bytes": 60575,
+      "sha256": "1ce885b532129db9863ffdc089a04272dfd5de1df75de438622556e33a730359"
+    },
+    {
       "path": "omnigent/inner/sandbox.py",
       "bytes": 72443,
       "sha256": "bcb79066869dd7b83e9c1c41a49414401d051d6cc8e186c4853aa948ee3af356"
@@ -137,6 +187,16 @@
       "sha256": "85e9844e822339b73fb56f5c33f6f161621b8b2484c7447e634eefc59105a1b5"
     },
     {
+      "path": "omnigent/server/routes/_sessions/orchestration.py",
+      "bytes": 653240,
+      "sha256": "c02b1b2f1ed11a44db39c45005bc4eefccd4147ecb49d0644b6f264eb5ef7da4"
+    },
+    {
+      "path": "omnigent/terminals/registry.py",
+      "bytes": 35885,
+      "sha256": "4836e6c184a2e426d20f911389d231afb017cd095166eb6524707f3e2aeb2e04"
+    },
+    {
       "path": "saas/deployment/aliyun/Dockerfile.host",
       "bytes": 10702,
       "sha256": "23bcc36a686d083381a15c0f45f5de32d6ae5a62fc43f4b1a5a2a469a72b3cdc"
@@ -162,6 +222,21 @@
       "sha256": "002f99cf1cc843c30257e878eff3eee3dd885628f07d64aaca784cb9978ddff6"
     },
     {
+      "path": "saas/scripts/check_image_supply_chain.py",
+      "bytes": 124108,
+      "sha256": "fe9a6f1b3bf0501b5e4f2e238de2b692fb2ff0bbf5bde597155145cec2c5865c"
+    },
+    {
+      "path": "saas/scripts/fixed_main16_ci_promotion.py",
+      "bytes": 17676,
+      "sha256": "540eb6af7ae23c3fc55d0a6eff314e5e3bbbfa927692b9252dcde2bd4e5787a3"
+    },
+    {
+      "path": "saas/scripts/oci_promotion.py",
+      "bytes": 29333,
+      "sha256": "51fbcc93a3b884c4f434a158202ba52ee6b1aa8fc1d1c1687641160cd96a5800"
+    },
+    {
       "path": "saas/supply_chain/wolfi-runtime-lock.json",
       "bytes": 4464,
       "sha256": "42ba9063969a9474d54220b06e5cdc772f0ea866330d42c45fb2fbf7a7f0081f"
@@ -180,6 +255,16 @@
       "path": "tests/e2e/conftest.py",
       "bytes": 81538,
       "sha256": "e736ff8c5ad08d3e08a2afe17429f3595e0599c2ea00e917b80b4c789bb8f971"
+    },
+    {
+      "path": "tests/e2e/resilience/lab/observe.py",
+      "bytes": 7560,
+      "sha256": "4f51470933fcd18f7f617f3978e428a3850607fc4741bebaf07bb5fd55ca2037"
+    },
+    {
+      "path": "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py",
+      "bytes": 24479,
+      "sha256": "70d2fb5970e3782a6ceda69aadb919626ef5016e1a58be7b22aa61be186c3f2b"
     },
     {
       "path": "tests/e2e/test_codex_native_parent_independent_child_wake_e2e.py",
@@ -257,9 +342,19 @@
       "sha256": "3c4899d068e85156c80dbb7d748e5924150670b6ac379990dcc1a0be6316f2f8"
     },
     {
+      "path": "tests/inner/test_codex_native_executor.py",
+      "bytes": 163582,
+      "sha256": "b99466b9b8b0a1b738d91bb75ba581306db006888ee9c1da260ea764c0f78b5a"
+    },
+    {
       "path": "tests/inner/test_sandbox.py",
       "bytes": 30340,
       "sha256": "4c5ad48f42f49af565b0521570c2d9b9ef5cd8ecdc583d194dff95fb5420b480"
+    },
+    {
+      "path": "tests/runner/test_app_sessions_native_supervision.py",
+      "bytes": 127451,
+      "sha256": "e6aa0e105e8b37cbd266b7b6a16544c7c638c7ea380cf43d3b6664e82ed846e2"
     },
     {
       "path": "tests/runner/test_app_sessions_native_terminals_autocreate.py",
@@ -297,6 +392,21 @@
       "sha256": "23d44315f3e296bd92783da77bf1ad16d0591e0deb83888e042132b8a46faff3"
     },
     {
+      "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json",
+      "bytes": 249366,
+      "sha256": "e5f1940ea273879f54bc22aa9a0e42ab7355fa6d83e978530e3d8becd8fdb2f1"
+    },
+    {
+      "path": "tests/saas/test_legacy_domain_discovery.py",
+      "bytes": 45920,
+      "sha256": "bc1dd290e6de850dcf41db0e3e5b29a67bfa1c9ffd8cf0a115c2b4d5252116c8"
+    },
+    {
+      "path": "tests/saas/test_oci_promotion.py",
+      "bytes": 55957,
+      "sha256": "7362c54380c882cbe313ce3a1decb61c9ca5dc177544452446fa9809c5aadaf3"
+    },
+    {
       "path": "tests/saas/test_platform_model_gateway.py",
       "bytes": 58200,
       "sha256": "e3fdaeeeb79abdc2eebe2db1a2f0e7f32e068f2c9aaa5b808fe36a63faa7a119"
@@ -317,6 +427,11 @@
       "sha256": "80606c1efee8531bdfb01283330a9dc2836d216babd766ea922d7c55a55bfccc"
     },
     {
+      "path": "tests/saas/test_scan_oci_candidates.py",
+      "bytes": 21918,
+      "sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011"
+    },
+    {
       "path": "tests/saas/test_upgrade_benchmark_fixture.py",
       "bytes": 9217,
       "sha256": "d5badd325cedca1b7da380a5c5feebea14e346cc2de800d3b828f226d3462791"
@@ -327,124 +442,14 @@
       "sha256": "941d548c3e18e37fb310039e8136d966e7a33a08d33d49ff461cee2f94d75e85"
     },
     {
-      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/origin.json",
-      "bytes": 2176,
-      "sha256": "ede48e984113d0b14c2f4e621cb393594cc9639cbc4c3af07c3a849581577a59"
-    },
-    {
-      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/renewal.py",
-      "bytes": 19015,
-      "sha256": "73c73680922b7d604068f4635a29c5c9a68495fb446e99723f2d354320607f99"
-    },
-    {
-      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py",
-      "bytes": 11756,
-      "sha256": "146ae8493b64d6b3e6d54562d82d890aef2e6d01af94ba1a2e115eb59ec5d534"
-    },
-    {
-      "path": ".github/workflows/saas-m2c-evidence-renewal.yml",
-      "bytes": 6715,
-      "sha256": "fe76ec364ebb6789a640874ccf2b1b6d766dd4a2b9b7ac8b2fefd94764645574"
-    },
-    {
-      "path": ".github/actions/e2e-run/action.yml",
-      "bytes": 13478,
-      "sha256": "19b575961bb7b74ceca4305cadfdc39030162929b4e7b1b528c70a5d825d17e0"
-    },
-    {
-      "path": ".github/workflows/e2e.yml",
-      "bytes": 7377,
-      "sha256": "b64ea7d37f43c9331a1e2f0e77b24fce660f1c63fa18ff1289e3425b0546fb20"
-    },
-    {
-      "path": "tests/e2e/resilience/scenarios/test_s5_host_offline_user_acts.py",
-      "bytes": 24479,
-      "sha256": "70d2fb5970e3782a6ceda69aadb919626ef5016e1a58be7b22aa61be186c3f2b"
-    },
-    {
-      "path": "omnigent/server/routes/_sessions/orchestration.py",
-      "bytes": 653240,
-      "sha256": "c02b1b2f1ed11a44db39c45005bc4eefccd4147ecb49d0644b6f264eb5ef7da4"
-    },
-    {
       "path": "tests/server/routes/test_sessions_runner_relay.py",
       "bytes": 175440,
       "sha256": "499b569e6245a2fc59a19ff929e50e8cbe4c722023c6d3df2ce9d3f999b61780"
     },
     {
-      "path": "tests/runner/test_app_sessions_native_supervision.py",
-      "bytes": 127451,
-      "sha256": "e6aa0e105e8b37cbd266b7b6a16544c7c638c7ea380cf43d3b6664e82ed846e2"
-    },
-    {
-      "path": "tests/e2e/resilience/lab/observe.py",
-      "bytes": 7560,
-      "sha256": "4f51470933fcd18f7f617f3978e428a3850607fc4741bebaf07bb5fd55ca2037"
-    },
-    {
-      "path": "omnigent/terminals/registry.py",
-      "bytes": 35885,
-      "sha256": "4836e6c184a2e426d20f911389d231afb017cd095166eb6524707f3e2aeb2e04"
-    },
-    {
       "path": "tests/terminals/test_registry.py",
       "bytes": 42595,
       "sha256": "9b637da04f18960f4aff2ecf31aa18a7103ef2dd950264bc30e0b19d83f0b838"
-    },
-    {
-      "path": "saas/scripts/oci_promotion.py",
-      "bytes": 28102,
-      "sha256": "d8b541095eaaaa0c027b0e3cd3f92e69c60d258cb363b79fda5024e245feff75"
-    },
-    {
-      "path": "tests/saas/test_oci_promotion.py",
-      "bytes": 37634,
-      "sha256": "dbaf8b36b132ed49a0aa0eb36fb6035268784152ac50bb925ffd07b8c2ca4dc7"
-    },
-    {
-      "path": ".github/workflows/saas-image-candidate.yml",
-      "bytes": 68982,
-      "sha256": "74184d3780556ebd3be74e4b7083dc6961c14acb7ef83e92c5859e501017ef44"
-    },
-    {
-      "path": "saas/scripts/check_image_supply_chain.py",
-      "bytes": 118577,
-      "sha256": "920af2729cc8cb265d4a301831d451b3f73ca12d86fbdfc564c910ba94c1dd9e"
-    },
-    {
-      "path": ".github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json",
-      "bytes": 3102,
-      "sha256": "f5e5bfd1045eef2677483ade372474ca814ce173bab17319808a994a43ef0532"
-    },
-    {
-      "path": ".github/workflows/saas-m-current-evidence-renewal.yml",
-      "bytes": 6837,
-      "sha256": "e5c10dd45525bad0eaa7ce8693f8f6251ac6bb08874bd2f0c4622ca15cfa52b4"
-    },
-    {
-      "path": "tests/saas/test_scan_oci_candidates.py",
-      "bytes": 21918,
-      "sha256": "0e3e1ec31d99aff70991b1473da76c88e4f3b0c4037b871b456d816583fb4011"
-    },
-    {
-      "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json",
-      "bytes": 249366,
-      "sha256": "e5f1940ea273879f54bc22aa9a0e42ab7355fa6d83e978530e3d8becd8fdb2f1"
-    },
-    {
-      "path": "tests/saas/test_legacy_domain_discovery.py",
-      "bytes": 45920,
-      "sha256": "bc1dd290e6de850dcf41db0e3e5b29a67bfa1c9ffd8cf0a115c2b4d5252116c8"
-    },
-    {
-      "path": "omnigent/inner/codex_native_executor.py",
-      "bytes": 60575,
-      "sha256": "1ce885b532129db9863ffdc089a04272dfd5de1df75de438622556e33a730359"
-    },
-    {
-      "path": "tests/inner/test_codex_native_executor.py",
-      "bytes": 163582,
-      "sha256": "b99466b9b8b0a1b738d91bb75ba581306db006888ee9c1da260ea764c0f78b5a"
     }
   ],
   "governance_paths": [
@@ -456,7 +461,7 @@
   ],
   "manifest_controls_sha256": {
     "baseline": "5bfa71403c79219635c98449c44179019e248bf8a3d07d86954e8dc0938ca70f",
-    "controller": "d80b43f5da9e2f6f22f4b8f0f084ec37484120cafa513ed2b696af03ab0f58da"
+    "controller": "7eb6283d1c6342e2394ab37eb1f6cf58284724af5389e1b8828c3797327da487"
   },
   "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
   "previous_fixed63_approved_scope": {
@@ -676,5 +681,26 @@
     "sha256": "2e0e8b7bfe467223aec63840f315de4a31477ac50150e3f886db5b4f9fca5c94",
     "human_root_thread": "01a1db4c-a4d7-7693-96b6-af294b9aed8b",
     "human_message_id": "01a1e2c8-c7ae-77c1-a020-2e26cbd6cf7c"
+  },
+  "previous_b8_turn_default_exact_approved_scope": {
+    "candidate_manifest_sha256": "b8c736524f02d24d18ad2d028c6ca81633929043697778f7ab54bd5ace7c0c16",
+    "scope_sha256": "7961209b8eb8a04a73b82834799d92bcef41405f5b9d1ebf863ac919f819cf4a",
+    "approval": {
+      "candidate_manifest_sha256": "b8c736524f02d24d18ad2d028c6ca81633929043697778f7ab54bd5ace7c0c16",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "2e0e8b7bfe467223aec63840f315de4a31477ac50150e3f886db5b4f9fca5c94"
+    },
+    "runtime_and_original_file277_exception_preserved": true
+  },
+  "current_downstream_CI_maintenance_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main16-fixed-product-controller-mode-PREPARED-20261116/FIXED16-CI-ONLY.EXISTING-HUMAN-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
+    "bytes": 3685,
+    "sha256": "2b31c649b469cb16f5609ebea4883efb5a30a0628e67b5c220602854f9efdc3a"
+  },
+  "normal_hook_format_derivation": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main16-fixed-product-controller-mode-PREPARED-20261116/NORMAL-HOOK-TEST-LITERAL-FORMAT.DERIVATION.ACTUAL.PUBLIC.json",
+    "bytes": 2336,
+    "sha256": "9dc1078a1776eb028932b62b1c52ccb3adaf3e06bdcd236534eb342a0ab70b19"
   }
 }

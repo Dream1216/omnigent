@@ -802,6 +802,8 @@ def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
         "previous-current-security-authority",
         "previous-diagnostic-guard-authority",
         "previous-legacy-inverse-authority",
+        "previous-b8-turn-default-authority",
+        "previous-two-line-CI-authority",
         "scope-bytes",
         "protected-bytes",
         "other-source-bytes",
@@ -832,6 +834,14 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
     elif fault == "previous-legacy-inverse-authority":
         decision["authority_record_sha256"] = (
             "fdf1ec114056675b3cfe0bd24eab10e709f91312f0f56d746b522e8860c74c30"
+        )
+    elif fault == "previous-b8-turn-default-authority":
+        decision["authority_record_sha256"] = (
+            "2e0e8b7bfe467223aec63840f315de4a31477ac50150e3f886db5b4f9fca5c94"
+        )
+    elif fault == "previous-two-line-CI-authority":
+        decision["authority_record_sha256"] = (
+            "67802c9718372157ec6255866b58a1ddd9d9f9aed3bfd95938fd3fb5f860f504"
         )
     elif fault == "previous-47-authority":
         decision["authority_record_sha256"] = (
