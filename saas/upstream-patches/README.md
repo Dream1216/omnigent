@@ -506,3 +506,9 @@ budget/protected-path rules. Its final commit still requires its own existing
 source-budget, full patch replay and Linux qualification before adoption.
 Local unit contracts and prior-head receipts do not grant release or QA business
 qualification.
+
+The 2026-11-17 receiver correction treats JSON null parameters as the existing
+empty parameter object at both protocol boundaries. Other malformed values keep
+their existing handling. The same-connection regression covers a null notification
+and no-argument request while retaining approval, cancellation and cleanup checks.
+Remove this extension when upstream handles these null parameters equivalently.

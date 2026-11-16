@@ -32,11 +32,11 @@
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "bd994ca0bc23cca226f5fad7b984f3225fe5db5124bc05deb818afab6aeab13a",
+    "current_controller_baseline_sha256": "726f66b78a28d0cda24e09a6e2e13e4067d6d445330c59639f5e2f7f36b3bf28",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 277,
-    "reason": "Retain exactapproved b8 product16 runtime/caps; add exactCI-only controller withseparateownCI/OIDC andoriginalproductsource; no image relabel/runtimeinputchange.",
-    "authority": "Existing verified human workflow/gate implementation; exact R3 maintenance registration 2b65dfd53ce4506fc4bb91e23f8609b4e211dc47fb76724ffee0cedd6c638448. Prior b8 runtime/file277 grant and all other budgets and release gates retained.",
+    "reason": "Exact within-budget native executor null-params runtime repair follows normal same-main source/artifact qualification. Frozen product fields are historical budget ancestry; no fixed16 artifact reuse for new runtime.",
+    "authority": "Existing continuous necessary release implementation; exact runtime maintainer registration 52bea424aaca8cd7e2807148918e0576db3757e783eb160793d655311108f6cb. Prior b8 ceiling/original bytes retained as ancestry; no new human hash approval or budget increase.",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,13 +47,9 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "069dd7aa2fb5e2f6a305ab6c695830e778d7457093522aecf7351739105b560d",
+    "candidate_manifest_sha256": "1d0f8f4f4aa20304a45f0dc60427e73d8f2b5691258a3ffb40dd06b2be7bc543",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "2b65dfd53ce4506fc4bb91e23f8609b4e211dc47fb76724ffee0cedd6c638448"
-  },
-  "fixed_main16_ci_promotion": {
-    "mode": "fixed-main16-ci-only",
-    "product_revision": "16ab5ce0c7278205c2b4adebdaa49ed6e4cf8b45"
+    "authority_record_sha256": "52bea424aaca8cd7e2807148918e0576db3757e783eb160793d655311108f6cb"
   }
 }

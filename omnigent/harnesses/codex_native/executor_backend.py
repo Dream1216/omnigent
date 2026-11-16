@@ -757,6 +757,8 @@ class SessionExecutorBackend:
                 while line := await reader.readline():
                     request = json.loads(line)
                     method, params = request.get("method"), request.get("params", {})
+                    if params is None:
+                        params = {}
                     key = params.get("processId")
                     if (
                         initialized
@@ -812,6 +814,8 @@ class SessionExecutorBackend:
                     break
                 request, pending = next_line.result()
                 method, params = request["method"], request.get("params", {})
+                if params is None:
+                    params = {}
                 request_id = request.get("id")
                 if method == "initialized" and request_id is None:
                     continue

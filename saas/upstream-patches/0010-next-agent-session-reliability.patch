@@ -2856,9 +2856,10 @@ new file mode 100644
 +    main()
 diff --git a/omnigent/harnesses/codex_native/executor_backend.py b/omnigent/harnesses/codex_native/executor_backend.py
 new file mode 100644
+index 00000000000..124a42264d4
 --- /dev/null
 +++ b/omnigent/harnesses/codex_native/executor_backend.py
-@@ -0,0 +1,909 @@
+@@ -0,0 +1,913 @@
 +"""Session-bound required execution backend for the fixed native protocol."""
 +
 +from __future__ import annotations
@@ -3618,6 +3619,8 @@ new file mode 100644
 +                while line := await reader.readline():
 +                    request = json.loads(line)
 +                    method, params = request.get("method"), request.get("params", {})
++                    if params is None:
++                        params = {}
 +                    key = params.get("processId")
 +                    if (
 +                        initialized
@@ -3673,6 +3676,8 @@ new file mode 100644
 +                    break
 +                request, pending = next_line.result()
 +                method, params = request["method"], request.get("params", {})
++                if params is None:
++                    params = {}
 +                request_id = request.get("id")
 +                if method == "initialized" and request_id is None:
 +                    continue
