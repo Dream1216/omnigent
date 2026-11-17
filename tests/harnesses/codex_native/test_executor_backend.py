@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 from omnigent.harnesses.codex_native import executor_worker
+from omnigent.harnesses.codex_native.app_server import CodexAppServerResponseError
 from omnigent.harnesses.codex_native.executor_backend import SessionExecutorBackend
 from omnigent.harnesses.codex_native.executor_bwrap import required_bwrap_argv
 from omnigent.harnesses.codex_native.executor_policy import SessionExecutionPolicy
@@ -597,9 +598,11 @@ async def test_registry_bootstrap_binds_executor_before_parent_and_retires_owner
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_fails", [False, True])
 async def test_same_connection_terminate_cancels_parked_start_before_late_allow(
     monkeypatch: pytest.MonkeyPatch,
     authority,
+    cleanup_fails: bool,
 ) -> None:
     bound, channels = authority
     executor, records, _ = make_executor(monkeypatch)
@@ -667,6 +670,42 @@ async def test_same_connection_terminate_cancels_parked_start_before_late_allow(
         )
         assert not writer.is_closing() and not backend._closed
         assert not [record for record in records if record[0] == "process/start"]
+        original_request = executor.request.side_effect
+        primary = CodexAppServerResponseError(
+            {"code": -32001, "message": "secret-command-url", "data": {"token": "secret-token"}}
+        )
+
+        async def reject_start(method, params):
+            if method == "process/start":
+                raise primary
+            if method == "process/terminate" and cleanup_fails:
+                raise CodexAppServerResponseError({"code": -32602, "message": "secret-cleanup"})
+            return await original_request(method, params)
+
+        executor.request.side_effect = reject_start
+        await send(
+            5,
+            "process/start",
+            {"processId": "owned-rejected", "argv": ["/bin/true"], "cwd": bound.cwd.as_uri()},
+        )
+        reply = json.loads(await asyncio.wait_for(reader.readline(), 1))
+        assert reply == {
+            "id": 5,
+            "error": {
+                "code": -32001,
+                "message": "Required Session executor request failed",
+                "data": {"errorType": "CodexAppServerResponseError"},
+            },
+        }
+        assert "secret" not in json.dumps(reply)
+        assert bool(backend.processes) is cleanup_fails
+        if cleanup_fails:
+            assert primary.__notes__ == ["Executor cleanup failed: CodexAppServerResponseError"]
+            assert all(path.exists() for path in backend.plans.values())
+        await send(6, "environment/info", None)
+        assert json.loads(await asyncio.wait_for(reader.readline(), 1))["id"] == 6
+        assert not writer.is_closing() and not backend._closed
+        executor.request.side_effect = original_request
         writer.close()
         await writer.wait_closed()
         await asyncio.wait_for(closed.wait(), 1)

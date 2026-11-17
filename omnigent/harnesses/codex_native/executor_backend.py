@@ -20,7 +20,10 @@ from uuid import uuid4
 
 import httpx
 
-from omnigent.harnesses.codex_native.app_server import CodexAppServerClient
+from omnigent.harnesses.codex_native.app_server import (
+    CodexAppServerClient,
+    CodexAppServerResponseError,
+)
 from omnigent.harnesses.codex_native.executor_policy import (
     FS_RESPONSE_LIMIT_BYTES,
     SessionExecutionPolicy,
@@ -526,8 +529,11 @@ class SessionExecutorBackend:
                 json.dump(plan, output)
             self.processes[key] = internal
             return await self.executor.request("process/start", request)
-        except BaseException:
-            await self._terminate(key)
+        except BaseException as error:
+            try:
+                await self._terminate(key)
+            except Exception as cleanup_error:  # noqa: BLE001 - preserve the primary launch failure
+                error.add_note(f"Executor cleanup failed: {type(cleanup_error).__name__}")
             raise
 
     async def _terminate(self, key: str) -> None:
@@ -865,9 +871,27 @@ class SessionExecutorBackend:
                             },
                         }
                     )
-                except (ValueError, PermissionError, OSError, httpx.HTTPError) as error:
+                except (
+                    CodexAppServerResponseError,
+                    ValueError,
+                    PermissionError,
+                    OSError,
+                    httpx.HTTPError,
+                ) as error:
+                    code = (
+                        (error.code if error.code is not None else -32603)
+                        if isinstance(error, CodexAppServerResponseError)
+                        else -32602
+                    )
                     await emit(
-                        {"id": request_id, "error": {"code": -32602, "message": str(error)}}
+                        {
+                            "id": request_id,
+                            "error": {
+                                "code": code,
+                                "message": "Required Session executor request failed",
+                                "data": {"errorType": type(error).__name__},
+                            },
+                        }
                     )
         except (ConnectionError, OSError):
             pass

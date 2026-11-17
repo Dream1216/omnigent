@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "83e26b36a6bd8eac288154f4f259d4b4ef4adaa4b750798a15ebec358c557738",
+  "candidate_manifest_sha256": "077d95b3844c49d84d5dbf2c42a234ecea656a56da5a0b03c3218bd44689a418",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 277,
-    "max_upstream_net_added_loc": 13650,
+    "max_direct_upstream_files": 279,
+    "max_upstream_net_added_loc": 13719,
     "min_isolated_custom_code_ratio": 0.85
   },
   "files": [
@@ -118,8 +118,8 @@
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_backend.py",
-      "bytes": 38653,
-      "sha256": "a1757bfbf5e8238acc1708fb9a9ec6e44ab0f69f5a8c2783cf3f65feab81895f"
+      "bytes": 39586,
+      "sha256": "e4d35a992c413dbeedb7a6131128055f7bacabf2708e2870b630d39554687e50"
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_bwrap.py",
@@ -140,6 +140,11 @@
       "path": "omnigent/harnesses/codex_native/executor_worker.py",
       "bytes": 5913,
       "sha256": "2d2c8be6fae28fb786caeedc5cc2fa5cf2839b65746e5c2456cf57d368346baa"
+    },
+    {
+      "path": "omnigent/harnesses/codex_native/forwarder.py",
+      "bytes": 367989,
+      "sha256": "dd199d0f6a26448a4500f8c62ee732149059d37b2d2666ec99f886f508c6986b"
     },
     {
       "path": "omnigent/harnesses/codex_native/hook.py",
@@ -273,8 +278,8 @@
     },
     {
       "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
-      "bytes": 265173,
-      "sha256": "a098e0128b459d3d26784db0136898ce8a54023a216b71f0df46719888022f7a"
+      "bytes": 266679,
+      "sha256": "7866e354793294728ddcafb8a106c96fe9038b46203e58bf555b652a226921d2"
     },
     {
       "path": "saas/upstream-patches/README.md",
@@ -342,6 +347,11 @@
       "sha256": "4cb5a1af5f581935b886a3d177fb7b7e560ed048888fb395a6515aa843dbf169"
     },
     {
+      "path": "tests/harnesses/codex_native/session/test_tools.py",
+      "bytes": 28129,
+      "sha256": "d45260766248a423d16a893ccc1ef68dd72bdacc4fe37341e752e38a44443eca"
+    },
+    {
       "path": "tests/harnesses/codex_native/test_codex_native_bridge.py",
       "bytes": 63669,
       "sha256": "fac185d2ab6d619fc76a11a25eb2cd5fcaa5306d0fc8512a8da2525f7887c6b1"
@@ -358,8 +368,8 @@
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_backend.py",
-      "bytes": 34202,
-      "sha256": "574cfa359604ca98c47b2031832504ff59c081dad156152709fd9c9cc1ed0e35"
+      "bytes": 36031,
+      "sha256": "63b0cf0319eada427513b319cc7ffa145b44a19f95f51c80721d0be04b2207ee"
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_transport.py",
@@ -515,8 +525,8 @@
     ".github/workflows/saas-controller-source-budget.json"
   ],
   "manifest_controls_sha256": {
-    "baseline": "5bfa71403c79219635c98449c44179019e248bf8a3d07d86954e8dc0938ca70f",
-    "controller": "9e86f9b2a719acd7bc08a0a9546dfe120c320b771b3935dd2076647aa49e3b9e"
+    "baseline": "c339dc8f3232b24cb78b2da4160ff0243bc714b24b30a2f9a77b1fd5eed7ec97",
+    "controller": "4a1c43807ddbacf350134f139553cc98638ffb6e202572ef9984497786c6d042"
   },
   "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
   "previous_fixed63_approved_scope": {
@@ -845,5 +855,59 @@
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main22-retained-scan-recovery-20261117/MAIN22-RECOVERY.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
     "bytes": 2882,
     "sha256": "ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94"
+  },
+  "previous_Main22_retained_recovery_exact_scope": {
+    "path": "/Users/dream/Projects/omnigent-main22-retained-scan-recovery-20261117/saas/governance/ordinary-m-native-0142-source-scope.json",
+    "bytes": 38777,
+    "sha256": "4fb8cf24c613af24d19e2d295332770cad7ebd7c3a8b98ef847495569e4115b8"
+  },
+  "current_fixed077_error_propagation_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/production-availability-20261115/ROOT-FIXED-077D95.DIRECT-HUMAN-NEW-SCOPE-AND-SAME-SOURCE-CONTINUATION.ACTUAL.PUBLIC.json",
+    "bytes": 4776,
+    "sha256": "a5587947a36d9be00a266120e8bbbf75b4dae5bc453eb932cb52eb7acd887e40"
+  },
+  "fixed077_error_propagation": {
+    "base_main": "645788d290d0ac32b9ed71f9d511352c78928a2d",
+    "fixed_candidate": "077d95b3844c49d84d5dbf2c42a234ecea656a56da5a0b03c3218bd44689a418",
+    "fixed_files": [
+      {
+        "repository_path": "omnigent/harnesses/codex_native/executor_backend.py",
+        "bytes": 39586,
+        "sha256": "e4d35a992c413dbeedb7a6131128055f7bacabf2708e2870b630d39554687e50"
+      },
+      {
+        "repository_path": "omnigent/harnesses/codex_native/forwarder.py",
+        "bytes": 367989,
+        "sha256": "dd199d0f6a26448a4500f8c62ee732149059d37b2d2666ec99f886f508c6986b"
+      },
+      {
+        "repository_path": "tests/harnesses/codex_native/session/test_tools.py",
+        "bytes": 28129,
+        "sha256": "d45260766248a423d16a893ccc1ef68dd72bdacc4fe37341e752e38a44443eca"
+      },
+      {
+        "repository_path": "tests/harnesses/codex_native/test_executor_backend.py",
+        "bytes": 36031,
+        "sha256": "63b0cf0319eada427513b319cc7ffa145b44a19f95f51c80721d0be04b2207ee"
+      }
+    ],
+    "patch": {
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main22-retained-scan-recovery-20261117/READONLY-SAME133E-FAILURE-20261118/executor-errors-and-native-status.UNCOMMITTED.patch",
+      "bytes": 9534,
+      "sha256": "501ea8fc65559a444d1e91ab3f5aa2a9f43f963f0bef012145cd2d2236c60060"
+    },
+    "independent_review": {
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/MAIN22E-EXECUTOR-ERROR-AND-NATIVE-STATUS.FIXED-077D95.INDEPENDENT-REVIEW-CLOSED.PUBLIC.json",
+      "bytes": 6412,
+      "sha256": "3cbe6616d6aca0735ef21df7308b72ce45589bae6491bb16ea014926b20ef3f3"
+    },
+    "closed_local_checks": {
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main22-retained-scan-recovery-20261117/READONLY-SAME133E-FAILURE-20261118/FIXED-CANDIDATE.FINAL-LOCAL-CHECKS.PUBLIC.json",
+      "bytes": 2774,
+      "sha256": "2dac6d45c990ee1ec6bbbf3617b9f3c8507673e09663cd8ff19482fa5c477d48"
+    },
+    "previous_candidate": "83e26b36a6bd8eac288154f4f259d4b4ef4adaa4b750798a15ebec358c557738",
+    "previous_authority_record_sha256": "ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94",
+    "no_new_protected_source_changes": true
   }
 }

@@ -333,13 +333,19 @@ def test_forwarder_streams_codex_command_output_before_completed_item(tmp_path: 
     }
 
 
-def test_forwarder_surfaces_failed_command_exit_code() -> None:
+@pytest.mark.parametrize(
+    "status, output, exit_code, expected",
+    [
+        ("failed", "boom\n", 3, "boom\n\n[exit code: 3]"),
+        ("failed", "", None, "[native command failed]"),
+        ("declined", None, None, "[native command declined]"),
+        ("cancelled", "", None, "[native command cancelled]"),
+        ("completed", "", None, ""),
+    ],
+)
+def test_forwarder_surfaces_failed_command_exit_code(status, output, exit_code, expected) -> None:
     """
-    A non-zero command exit is surfaced in the mirrored output.
-
-    Codex reports ``exitCode`` separately from ``aggregatedOutput``, so a
-    failed command would look successful in the UI unless the forwarder
-    folds the exit code into the output text.
+    A failed command stays visible without captured output or an exit code.
     """
     posted: list[dict[str, Any]] = []
     asyncio.run(
@@ -349,9 +355,10 @@ def test_forwarder_surfaces_failed_command_exit_code() -> None:
                 "id": "call_fail",
                 "command": "/bin/zsh -lc 'exit 3'",
                 "cwd": "/repo",
-                "status": "failed",
-                "aggregatedOutput": "boom\n",
-                "exitCode": 3,
+                "status": status,
+                "aggregatedOutput": output,
+                "exitCode": exit_code,
+                "error": {"message": "secret-command-url-token"},
                 "durationMs": 1,
             },
             _capture_handler(posted),
@@ -363,11 +370,7 @@ def test_forwarder_surfaces_failed_command_exit_code() -> None:
         for p in posted
         if p["data"]["item_type"] == "function_call_output"
     ]
-    # The exit code (3, from the replayed item above) must appear appended
-    # to the captured stderr/stdout. If the suffix were missing the output
-    # would be just "boom\n" — a failed command indistinguishable from a
-    # successful one in the UI.
-    assert outputs == ["boom\n\n[exit code: 3]"]
+    assert outputs == [expected]
 
 
 def test_forwarder_posts_codex_file_change_tool_call() -> None:
