@@ -2856,7 +2856,7 @@ new file mode 100644
 +    main()
 diff --git a/omnigent/harnesses/codex_native/executor_backend.py b/omnigent/harnesses/codex_native/executor_backend.py
 new file mode 100644
-index 00000000000..552634c334e
+index 00000000000..c0da2c48ebd
 --- /dev/null
 +++ b/omnigent/harnesses/codex_native/executor_backend.py
 @@ -0,0 +1,937 @@
@@ -3558,7 +3558,7 @@ index 00000000000..552634c334e
 +                                raise ValueError("Use the bounded filesystem stream for this file")
 +                            output.write(data)
 +                            output_bytes += len(data)
-+                    after = result["nextSeq"]
++                    after = max(0, result["nextSeq"] - 1)
 +                    if result["exited"]:
 +                        if result["exitCode"] != 0 or result.get("failure"):
 +                            raise OSError("Sandboxed filesystem worker failed")
@@ -3598,7 +3598,7 @@ index 00000000000..552634c334e
 +            for chunk in result["chunks"]:
 +                if chunk["stream"] == "stdout":
 +                    output.extend(base64.b64decode(chunk["chunk"], validate=True))
-+            owned.after_seq = result["nextSeq"]
++            owned.after_seq = max(0, result["nextSeq"] - 1)
 +            if len(output) > 2 * 1048576:
 +                raise OSError("File worker response exceeded its bounded frame")
 +            if output.endswith(b"\n"):

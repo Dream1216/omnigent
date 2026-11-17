@@ -32,11 +32,11 @@
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "2eea836d7dbf79f69164617c75bd393614f323ca12929ef5f81ca7f871078d88",
+    "current_controller_baseline_sha256": "6cf687f889aee30c0dd989f15120d2a9fc28570dd26817e77d8f33d311d54c9b",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 279,
-    "reason": "Direct human approved fixed077 four-file executor error propagation and native failure display correction; exact scope and original patch mirror only. Product changed bytes require their own normal qualification.",
-    "authority": "Direct human exact +2 files/+69 net lines, fixed077 only, Root receipt a5587947a36d9be00a266120e8bbbf75b4dae5bc453eb932cb52eb7acd887e40; standing unchanged protected-source authority ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94 retained. No new orchestration change or release exception.",
+    "reason": "Fixedf11 existing-file cursor correction derives from reviewed fixed077 and stays within original279/13719 budget; exact new product postimages require their own normal qualification.",
+    "authority": "Root normal existing-scope registration 1b991405e25be134c9579398ab76b889ff1b6eca786fc966e1ff23176968e27c; fixedf11 two-file cursor delta net-2, no new budget. Historical fixed077 direct-human a558 grant remains077-only; standing unchanged protected-source ff54 authority retained. No new orchestration, safety, CI, rebuild-origin or release exception.",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,9 +47,9 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "077d95b3844c49d84d5dbf2c42a234ecea656a56da5a0b03c3218bd44689a418",
+    "candidate_manifest_sha256": "f11a5e890164080f6ab5496aae688c6ea266d61ace3562a2dd940420acc5827c",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "a5587947a36d9be00a266120e8bbbf75b4dae5bc453eb932cb52eb7acd887e40"
+    "authority_record_sha256": "1b991405e25be134c9579398ab76b889ff1b6eca786fc966e1ff23176968e27c"
   }
 }

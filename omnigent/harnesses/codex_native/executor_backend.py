@@ -696,7 +696,7 @@ class SessionExecutorBackend:
                                 raise ValueError("Use the bounded filesystem stream for this file")
                             output.write(data)
                             output_bytes += len(data)
-                    after = result["nextSeq"]
+                    after = max(0, result["nextSeq"] - 1)
                     if result["exited"]:
                         if result["exitCode"] != 0 or result.get("failure"):
                             raise OSError("Sandboxed filesystem worker failed")
@@ -736,7 +736,7 @@ class SessionExecutorBackend:
             for chunk in result["chunks"]:
                 if chunk["stream"] == "stdout":
                     output.extend(base64.b64decode(chunk["chunk"], validate=True))
-            owned.after_seq = result["nextSeq"]
+            owned.after_seq = max(0, result["nextSeq"] - 1)
             if len(output) > 2 * 1048576:
                 raise OSError("File worker response exceeded its bounded frame")
             if output.endswith(b"\n"):

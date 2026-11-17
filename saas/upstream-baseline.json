@@ -1533,15 +1533,36 @@
         "tests/harnesses/codex_native/test_executor_backend.py"
       ],
       "mechanical_only": "Exact original 0010 patch mirror and finite source/controller registration. Original protected source bytes unchanged. No new runtime, privilege, model, quota, resource or release-gate exception."
+    },
+    "fixed0142_cursor_protocol_repair_20261118": {
+      "candidate_manifest_sha256": "f11a5e890164080f6ab5496aae688c6ea266d61ace3562a2dd940420acc5827c",
+      "ordinary_existing_scope_registration": {
+        "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/production-availability-20261115/ROOT-F11A5E.CURSOR-TWO-LINE.EXISTING-BUDGET-REGISTRATION.ACTUAL.PUBLIC.json",
+        "bytes": 4444,
+        "sha256": "1b991405e25be134c9579398ab76b889ff1b6eca786fc966e1ff23176968e27c"
+      },
+      "inherited_fixed077_authority": {
+        "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/production-availability-20261115/ROOT-FIXED-077D95.DIRECT-HUMAN-NEW-SCOPE-AND-SAME-SOURCE-CONTINUATION.ACTUAL.PUBLIC.json",
+        "bytes": 4776,
+        "sha256": "a5587947a36d9be00a266120e8bbbf75b4dae5bc453eb932cb52eb7acd887e40"
+      },
+      "actual_direct_upstream_files": 279,
+      "actual_net_added_loc": 13717,
+      "additional_budget": 0,
+      "scope_paths": [
+        "omnigent/harnesses/codex_native/executor_backend.py",
+        "tests/harnesses/codex_native/test_executor_backend.py"
+      ],
+      "reason": "Two existing fixed0142 filesystem consumers use last-seen nextSeq-1. Production net0 and original strict-sequence regression net-2; retain279/13719 caps,9patches,.85 floor and every normal admission/signing/business/data/rollback gate. Original077 fixed grant and postimages remain historical authority only; no new protected source or runtime safety change."
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "upstream_version": "0.21.0.dev20261031",
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "077d95b3844c49d84d5dbf2c42a234ecea656a56da5a0b03c3218bd44689a418",
+    "candidate_manifest_sha256": "f11a5e890164080f6ab5496aae688c6ea266d61ace3562a2dd940420acc5827c",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "a5587947a36d9be00a266120e8bbbf75b4dae5bc453eb932cb52eb7acd887e40"
+    "authority_record_sha256": "1b991405e25be134c9579398ab76b889ff1b6eca786fc966e1ff23176968e27c"
   }
 }

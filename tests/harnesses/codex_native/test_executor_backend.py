@@ -80,7 +80,7 @@ def authority(tmp_path: Path):
 def make_executor(monkeypatch: pytest.MonkeyPatch):
     """Keep the fixed executor/kernel mock visible; actual worker FS I/O remains real."""
     client = Mock()
-    records, outputs = [], {}
+    records, outputs, read_started = [], {}, set()
     activated = []
 
     async def request(method, params):
@@ -102,24 +102,23 @@ def make_executor(monkeypatch: pytest.MonkeyPatch):
                     result = executor_worker.run_plan(plan)
                 outputs[params["processId"]] = json.dumps(result).encode()
             else:
-                outputs[params["processId"]] = b""
+                outputs[params["processId"]] = (
+                    b'{"opened":true}\n' if plan["operation"] == "fs/open" else b""
+                )
             return {"result": {"processId": params["processId"]}}
         if method == "process/read":
-            return {
-                "result": {
-                    "chunks": [
-                        {
-                            "seq": 1,
-                            "stream": "stdout",
-                            "chunk": base64.b64encode(outputs[params["processId"]]).decode(),
-                        }
-                    ],
-                    "nextSeq": 1,
-                    "exited": True,
-                    "exitCode": 0,
-                    "failure": None,
-                }
+            first_read = params["processId"] not in read_started
+            read_started.add(params["processId"])
+            payload = base64.b64encode(outputs[params["processId"]]).decode()
+            chunk = {"seq": 1, "stream": "stdout", "chunk": payload}
+            result = {
+                "chunks": [] if first_read or params.get("afterSeq", 0) >= 1 else [chunk],
+                "nextSeq": 1 if first_read else 2,
+                "exited": not first_read,
+                "exitCode": None if first_read else 0,
+                "failure": None,
             }
+            return {"result": result}
         if method == "process/terminate":
             return {"result": {"running": False}}
         if method == "environment/info":
@@ -170,12 +169,14 @@ async def test_bound_backend_workspace_write_and_metadata_outside_refusal(
             with pytest.raises(PermissionError):
                 await backend.dispatch("fs/writeFile", {"path": path.as_uri(), "dataBase64": ""})
             assert not path.exists()
-        assert [p["_omnigent_elicitation_id"][:16] for p in requests] == ["elicit_evaluate_"] * 2
         assert not list(backend.plan_root.iterdir())
+        opened = await backend.dispatch("fs/open", {"path": file.as_uri(), "handleId": "owned"})
+        assert opened == {"handleId": "owned"}
+        assert [p["_omnigent_elicitation_id"][:16] for p in requests] == ["elicit_evaluate_"] * 3
         await backend.close()
         executor.close.assert_awaited_once()
         assert not root.exists()
-    assert len([method for method, _ in records if method == "process/start"]) == 2
+    assert len([method for method, _ in records if method == "process/start"]) == 3
 
 
 @pytest.mark.asyncio
@@ -809,28 +810,25 @@ async def test_filesystem_response_limit_precedes_read_encoding_and_spool_growth
 
     executor, _, _ = make_executor(monkeypatch)
     original_request = executor.request.side_effect
+    data = b""
 
     async def split_output(method, params):
+        nonlocal data
         response = await original_request(method, params)
         if method == "process/read":
-            data = base64.b64decode(response["result"]["chunks"][0]["chunk"])
-            start = params.get("afterSeq") or 0
+            if response["result"]["chunks"]:
+                data = base64.b64decode(response["result"]["chunks"][0]["chunk"])
+            elif not data:
+                return response
+            start = (params.get("afterSeq") or 0) * 32
             end = min(start + 32, len(data))
-            return {
-                "result": {
-                    "chunks": [
-                        {
-                            "seq": end,
-                            "stream": "stdout",
-                            "chunk": base64.b64encode(data[start:end]).decode(),
-                        }
-                    ],
-                    "nextSeq": end,
-                    "exited": end == len(data),
-                    "exitCode": 0,
-                    "failure": None,
-                }
-            }
+            payload = base64.b64encode(data[start:end]).decode()
+            response["result"].update(
+                chunks=[{"seq": start // 32 + 1, "stream": "stdout", "chunk": payload}],
+                nextSeq=start // 32 + 2,
+                exited=end == len(data),
+                exitCode=0,
+            )
         return response
 
     executor.request.side_effect = split_output

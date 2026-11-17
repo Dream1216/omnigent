@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "077d95b3844c49d84d5dbf2c42a234ecea656a56da5a0b03c3218bd44689a418",
+  "candidate_manifest_sha256": "f11a5e890164080f6ab5496aae688c6ea266d61ace3562a2dd940420acc5827c",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -118,8 +118,8 @@
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_backend.py",
-      "bytes": 39586,
-      "sha256": "e4d35a992c413dbeedb7a6131128055f7bacabf2708e2870b630d39554687e50"
+      "bytes": 39610,
+      "sha256": "180ae967a12614befb2e804c3f6d44e13065173ba0d7e799de08acac60d96436"
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_bwrap.py",
@@ -278,8 +278,8 @@
     },
     {
       "path": "saas/upstream-patches/0010-next-agent-session-reliability.patch",
-      "bytes": 266679,
-      "sha256": "7866e354793294728ddcafb8a106c96fe9038b46203e58bf555b652a226921d2"
+      "bytes": 266703,
+      "sha256": "f67cc80e277a309248f99df8fbc2ad53f64601ff4066384e4aad52200d92f6c2"
     },
     {
       "path": "saas/upstream-patches/README.md",
@@ -368,8 +368,8 @@
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_backend.py",
-      "bytes": 36031,
-      "sha256": "63b0cf0319eada427513b319cc7ffa145b44a19f95f51c80721d0be04b2207ee"
+      "bytes": 36351,
+      "sha256": "645fdd0da26bd6e61a1230408dfb8d08a9b4051b8e475e38bb284abff557d9c5"
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_transport.py",
@@ -525,8 +525,8 @@
     ".github/workflows/saas-controller-source-budget.json"
   ],
   "manifest_controls_sha256": {
-    "baseline": "c339dc8f3232b24cb78b2da4160ff0243bc714b24b30a2f9a77b1fd5eed7ec97",
-    "controller": "4a1c43807ddbacf350134f139553cc98638ffb6e202572ef9984497786c6d042"
+    "baseline": "c394b15fb62835c8291be8276180c331fcf332e81c38af646f330c552dcdad61",
+    "controller": "314e2e5014cf1f6f6dad0dc04e0dbb80c293ed7fa7a8a0be210449e4b0e43a6a"
   },
   "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
   "previous_fixed63_approved_scope": {
@@ -922,5 +922,39 @@
     "fixed077_four_blobs_unchanged": true,
     "original_failure_preserved": true,
     "OCI_builds_or_scans_in_failed_run": 0
+  },
+  "previous_fixed077_approved_scope": {
+    "candidate_manifest_sha256": "077d95b3844c49d84d5dbf2c42a234ecea656a56da5a0b03c3218bd44689a418",
+    "scope_sha256": "ae4aee1f7a8a9fe30c3a091803857b5548aa93335e76e145af8a32ae10a692a6",
+    "approval": {
+      "candidate_manifest_sha256": "077d95b3844c49d84d5dbf2c42a234ecea656a56da5a0b03c3218bd44689a418",
+      "decision": "approved",
+      "approver": "Dream1216",
+      "authority_record_sha256": "a5587947a36d9be00a266120e8bbbf75b4dae5bc453eb932cb52eb7acd887e40"
+    },
+    "product_head": "e07ce10dda08724e9929828958f1a87d903411be",
+    "historical_four_postimages_retained_under_fixed077_error_propagation": true
+  },
+  "current_fixedf11_cursor_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/production-availability-20261115/ROOT-F11A5E.CURSOR-TWO-LINE.EXISTING-BUDGET-REGISTRATION.ACTUAL.PUBLIC.json",
+    "bytes": 4444,
+    "sha256": "1b991405e25be134c9579398ab76b889ff1b6eca786fc966e1ff23176968e27c"
+  },
+  "fixedf11_cursor_protocol_repair": {
+    "base_head": "e07ce10dda08724e9929828958f1a87d903411be",
+    "candidate_manifest_sha256": "f11a5e890164080f6ab5496aae688c6ea266d61ace3562a2dd940420acc5827c",
+    "independent_review": {
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/F11A5E-PRODUCT-CURSOR-TWO-LINE-AND-REGRESSION.INCREMENT.REVIEW-CLOSED.PUBLIC.json",
+      "bytes": 7875,
+      "sha256": "840d27b8fbbc07c44aba3739cdc8abbbe0ae46eb7c16edf547d503705347e9a5"
+    },
+    "actual_direct_upstream_files": 279,
+    "actual_net_added_loc": 13717,
+    "additional_budget": 0,
+    "production_delta": "exact2assignments nextSeq-1,net0",
+    "test_delta": "same owning test file strict native first-empty/seq1 semantics and fs/open coverage,net-2",
+    "protected_orchestration_and_previous077_other_two_blobs_unchanged": true,
+    "final_target": "newcursorhead only; PR292/e07 stage evidence preserved and superseded, not an intermediate Main or final QA target",
+    "not_a_fix_for_fresh_proc_mount_or429": true
   }
 }
