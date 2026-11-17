@@ -100,16 +100,16 @@
         "sha256": "a328aa8478c3e5ef92d8dbd0459eaba335b172f6375bfb560c054c1024008b04"
       },
       ".github/workflows/saas-upstream-compat.yml": {
-        "bytes": 12329,
-        "sha256": "8697c63281cba14d70a853c89ead7e37a64fef128b1ceebce38f2093f412ec6e"
+        "bytes": 16039,
+        "sha256": "8e7fd27112203eddd8ba4a33c1d14e21b439147683c75a7a4dc4d9d93e95f8ab"
       }
     },
     "authority": {
       "thread": "01a1db4c-a4d7-7693-96b6-af294b9aed8b",
       "Source_handoff_sha256": "f6cc2d86c6bdb4d3d62fb1e24b3dabce4adbbd8c1279e5f529ee79d2a0172187",
       "decision": "MAINTAINER_REGISTERED_EXACT_CI_ONLY_INCREMENT",
-      "registration_sha256": "4bad0b35ce5d2ce70efb245eb52c1e7d51892a356770548f44c2da8db69c75df",
-      "independent_review_sha256": "3fcd906540f2c030d44b194a20cec12989d18744e2471dff6eeaeb8176680897"
+      "registration_sha256": "1ccdea1f833359bce3b770131af0a0cd2110b69c0b1002f0965e646286c99e21",
+      "independent_review_sha256": "aa8c31215bf86ef9d1731ae1f7c4d0559e9e39b4494077c13e5e82061a752d54"
     }
   }
 }

@@ -40,6 +40,7 @@ jobs:
           --health-retries 10
     env:
       SHARD_ID: ${{ matrix.shard }}
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv
       OMNIGENT_SKIP_WEB_UI: "true"
       # CI transport recovery; product locks, Ubuntu trust and tests stay fixed.
       OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
@@ -49,21 +50,62 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
+      - name: Select actual product compatibility checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          product_root="$GITHUB_WORKSPACE"
+          registry=.github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json
+          if jq -e '.product_revision == "34201d054c563b1760e6990cdcaa8a71da097471" and .controller_scope != null' "$registry" >/dev/null; then
+            product_root="$RUNNER_TEMP/saas-compat-product-342"
+            git worktree add --detach "$product_root" 34201d054c563b1760e6990cdcaa8a71da097471
+            test "$(git -C "$product_root" rev-parse HEAD^{tree})" = 25e90c8c4b284f1282b309bbe33bae388f8d5a98
+          fi
+          echo "SAAS_TEST_ROOT=$product_root" >> "$GITHUB_ENV"
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - name: Install locked dependencies
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         run: uv sync --frozen --extra all --group dev --extra saas --extra e2b
+      - name: Verify actual editable product import roots
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
+        run: |
+          uv run --no-sync python - <<'PY_CHECKOUT'
+          import json
+          import os
+          import sysconfig
+          from importlib.metadata import distributions
+          from pathlib import Path
+          from urllib.parse import unquote, urlsplit
+          import omnigent
+          from saas.scripts import check_upstream_delta
+          root = Path(os.environ["SAAS_TEST_ROOT"]).resolve()
+          assert Path.cwd().resolve() == root
+          installed = [d for d in distributions(path=[sysconfig.get_path("purelib")])
+                       if d.metadata["Name"] == "omnigent"]
+          assert len(installed) == 1
+          editable = json.loads(installed[0].read_text("direct_url.json"))
+          assert editable["dir_info"]["editable"] is True
+          location = urlsplit(editable["url"])
+          assert location.scheme == "file" and location.netloc in {"", "localhost"}
+          assert Path(unquote(location.path)).resolve() == root
+          assert Path(check_upstream_delta.__file__).resolve() == root / "saas/scripts/check_upstream_delta.py"
+          assert Path(omnigent.__file__).resolve() == root / "omnigent/__init__.py"
+          PY_CHECKOUT
       - name: Type-check SaaS compatibility code
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         run: uv run pyrefly check saas
       - name: Configure exact PostgreSQL 18 runner contract
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         env:
           PGPASSWORD: postgres
           PGCONNECT_TIMEOUT: "3"
           POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: bash saas/scripts/configure_postgresql_18_test_service.sh
       - name: Bootstrap PostgreSQL principal and database authority
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         env:
           PGPASSWORD: postgres
         run: |
@@ -73,6 +115,7 @@ jobs:
           psql --host localhost --username postgres --dbname postgres \
             --file saas/control_plane/postgresql_database.psql
       - name: Install P2 browser runtime
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         run: |
           bash saas/scripts/ci_install_ubuntu_packages.sh --playwright-chromium
           uv run --no-sync playwright install chromium
@@ -81,11 +124,12 @@ jobs:
         with:
           node-version: "22"
       - name: Build React 18 login export
-        working-directory: saas/login_web
+        working-directory: ${{ env.SAAS_TEST_ROOT }}/saas/login_web
         env:
           NEXT_TELEMETRY_DISABLED: "1"
         run: npm ci --no-audit --no-fund && npm run build && npm run format:check
       - name: Install hard sandbox runtime
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         run: |
           bash saas/scripts/ci_install_ubuntu_packages.sh bubblewrap
           # ubuntu-latest enables AppArmor's unprivileged-userns restriction;
@@ -93,6 +137,7 @@ jobs:
           # the ephemeral runner so bwrap can create its user/network namespaces.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run SaaS compatibility tests
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         run: >-
           uv run pytest
           --num-shards=2 --shard-id="$SHARD_ID"
@@ -104,12 +149,14 @@ jobs:
           tests/server/integration/test_sessions_archive.py
           tests/saas
       - name: Run isolated PostgreSQL logical restore contract
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         if: matrix.shard == 0
         run: >-
           uv run python -m saas.scripts.run_postgresql_restore_contract
           --allow-disposable-databases
           --output artifacts/postgresql-restore-contract.json
       - name: Run official zygote and query-context compatibility tests
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         if: matrix.shard == 0
         run: >-
           uv run pytest
@@ -140,6 +187,7 @@ jobs:
           tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_arena_max_zero_disables_cap
           tests/inner/test_proc_and_platform.py::test_malloc_tuning_env_honors_overrides
       - name: Run official hard-sandbox and credential-proxy acceptance
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         if: matrix.shard == 0
         run: >-
           uv run pytest
@@ -158,25 +206,30 @@ jobs:
           tests/inner/egress/test_proxy.py::test_s5_connect_rejects_unsafe_host_before_dns
           tests/inner/egress/test_proxy.py::test_s5_http_rejects_unsafe_host_before_dns
       - name: Verify SaaS migration CLI
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         if: matrix.shard == 0
         env:
           OMNIGENT_SAAS_DB_URL: sqlite:///${{ runner.temp }}/saas-control-plane.db
         run: |
           uv run python -m saas.scripts.check_control_plane_migration_cli
       - name: Verify SaaS wheel contents
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         if: matrix.shard == 0
         run: |
           uv build --wheel --out-dir artifacts/saas-wheel
           uv run python -m saas.scripts.check_wheel_contents artifacts/saas-wheel
       - name: Replay downstream patch queue
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         if: matrix.shard == 0
         run: >-
           uv run python saas/scripts/check_patch_queue.py
           --output artifacts/patch-replay-report.json
       - name: Validate P0-P6 acceptance ledger
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         if: matrix.shard == 0
         run: uv run python -m saas.scripts.check_acceptance_manifest
       - name: Validate P0 production baselines
+        working-directory: ${{ env.SAAS_TEST_ROOT }}
         if: matrix.shard == 0
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -195,6 +248,15 @@ jobs:
             --output artifacts/image-supply-chain-report.json
           uv run python -m saas.scripts.check_production_readiness \
             --output artifacts/production-readiness-report.json
+      - name: Retain product compatibility evidence at existing paths
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${SAAS_TEST_ROOT:-}" ] && [ "$SAAS_TEST_ROOT" != "$GITHUB_WORKSPACE" ] && [ -d "$SAAS_TEST_ROOT/artifacts" ]; then
+            mkdir -p "$GITHUB_WORKSPACE/artifacts"
+            cp -a "$SAAS_TEST_ROOT/artifacts/." "$GITHUB_WORKSPACE/artifacts/"
+          fi
       - name: Enforce source-intrusion budget
         if: matrix.shard == 0
         run: |
@@ -236,6 +298,14 @@ jobs:
           name: saas-compatibility-${{ matrix.shard }}-${{ github.run_id }}
           path: artifacts/saas-compatibility-${{ matrix.shard }}.xml
           if-no-files-found: error
+      - name: Remove only the disposable product compatibility checkout
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${SAAS_TEST_ROOT:-}" = "$RUNNER_TEMP/saas-compat-product-342" ] && [ -e "$SAAS_TEST_ROOT/.git" ]; then
+            git worktree remove --force "$SAAS_TEST_ROOT"
+          fi
 
   compatibility-gate:
     if: always()
