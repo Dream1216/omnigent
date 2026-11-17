@@ -17,6 +17,7 @@ from typing import Any
 
 from saas.scripts import accepted_m165_clean_context as clean
 from saas.scripts import accepted_oci_recovery as recovery
+from saas.scripts import main22_retained_recovery as main22
 from saas.scripts import scan_oci_candidates as scan
 from saas.scripts.legacy_artifact_download import download_artifact_bytes
 from saas.scripts.oci_promotion import (
@@ -57,15 +58,26 @@ CI_PATHS = (
 def configure_product_profile(name: str) -> None:
     global PRODUCT, EPOCH, PROFILE
     require(
-        name in {"M165", "M8c-retained-first", "M8c-clean-context"},
+        name in {"M165", "M8c-retained-first", "M8c-clean-context", main22.PROFILE},
         "unapproved accepted product profile",
     )
     PROFILE = name
+    if name == main22.PROFILE:
+        PRODUCT, EPOCH = main22.PRODUCT, main22.EPOCH
+        return
     PRODUCT, EPOCH = (
         (recovery.M8C_PRODUCT, recovery.M8C_EPOCH)
         if name != "M165"
         else (recovery.PRODUCT, recovery.EPOCH)
     )
+
+
+def _main22() -> bool:
+    return PRODUCT == main22.PRODUCT and PROFILE == main22.PROFILE
+
+
+def _current_scan_product() -> bool:
+    return _m8c() or _main22()
 
 
 def _m8c() -> bool:
@@ -446,6 +458,8 @@ def report_binding(root: Path, completed_at: str) -> dict[str, Any]:
 
 
 def preflight(root: Path, policy: str) -> dict[str, Any]:
+    if _main22():
+        return main22.preflight(root, policy, producer_run_id())
     require(
         re.fullmatch(r"[0-9a-f]{40}", policy) is not None and policy != PRODUCT,
         "explicit signing controller required",
@@ -653,6 +667,9 @@ def binding_path() -> Path:
 
 def binding() -> dict[str, Any]:
     value = read_json(binding_path())
+    if _main22():
+        main22.validate_binding(value, producer_run_id())
+        return value
     require(
         value.get("schema_version") == 1
         and value.get("repository") == REPOSITORY
@@ -723,6 +740,9 @@ def binding() -> dict[str, Any]:
 
 def download(root: Path) -> None:
     value = binding()
+    if _main22():
+        main22.download(root, value)
+        return
     metadata = api(f"repos/{REPOSITORY}/actions/artifacts/{value['oci_artifact_id']}")
     require(
         metadata == value["artifacts"]["oci"], "immutable OCI metadata changed after preflight"
@@ -807,7 +827,7 @@ def predicate(
     value["buildDefinition"]["externalParameters"]["oci_rebuild_performed"] = False
     if wheel:
         value["buildDefinition"]["externalParameters"]["wheel_build_performed"] = True
-    elif _m8c():
+    elif _current_scan_product():
         require(
             isinstance(current_scans, dict)
             and current_scans.get("product_revision") == PRODUCT
@@ -1065,7 +1085,7 @@ def current_scan_evidence(
     value = binding()
     manifest = read_json(root / MANIFEST_NAME)
     require(
-        _m8c()
+        _current_scan_product()
         and set(images) == {"server", "host"}
         and re.fullmatch(r"[0-9a-f]{40}", policy) is not None
         and re.fullmatch(r"[1-9][0-9]*", run) is not None
@@ -1303,7 +1323,7 @@ def main() -> None:
                     wheel=args.command == "wheel-predicate",
                     current_scans=(
                         read_json(args.current_scans)
-                        if _m8c() and args.command != "wheel-predicate"
+                        if _current_scan_product() and args.command != "wheel-predicate"
                         else None
                     ),
                 )
@@ -1334,7 +1354,7 @@ def main() -> None:
                     wheel=args.command == "verify-wheel",
                     current_scans=(
                         read_json(args.current_scans)
-                        if _m8c() and args.command != "verify-wheel"
+                        if _current_scan_product() and args.command != "verify-wheel"
                         else None
                     ),
                 ),

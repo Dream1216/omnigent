@@ -1,0 +1,142 @@
+name: Recover retained Main22 OCI scan
+
+on:
+  pull_request:
+    paths:
+      - "saas/scripts/main22_retained_recovery.py"
+      - "tests/saas/test_main22_retained_recovery.py"
+      - ".github/workflows/saas-main22-retained-scan-recovery.yml"
+  push:
+    branches: [main]
+    paths:
+      - "saas/scripts/main22_retained_recovery.py"
+      - "tests/saas/test_main22_retained_recovery.py"
+      - ".github/workflows/saas-main22-retained-scan-recovery.yml"
+  workflow_dispatch:
+    inputs:
+      policy_revision:
+        description: Exact protected Main controller SHA; product remains Main22
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main22-retained-scan-recovery
+  cancel-in-progress: false
+
+env:
+  PRODUCT_REVISION: 22e237f61246ec0b041ddc604b8d41422804c7a8
+  SOURCE_DATE_EPOCH: "1794888040"
+
+jobs:
+  verify-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+      - run: uv sync --frozen --group dev --extra saas
+      - run: uv run pytest tests/saas/test_main22_retained_recovery.py --reruns 0 -q
+
+  retain-original-four:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'Dream1216/omnigent' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha
+    needs: verify-contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.raw.outputs.artifact-id }}
+      artifact-sha256: ${{ steps.raw.outputs.artifact-digest }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Reclaim unused hosted runner SDKs for retained archive transfer
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h "$RUNNER_TEMP"
+      - name: Authenticate original failure and retain exact original four archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m saas.scripts.main22_retained_recovery retain --root "$RUNNER_TEMP/main22-raw"
+      - name: Preserve complete raw checkpoint before scanning
+        id: raw
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: accepted-raw-${{ env.PRODUCT_REVISION }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/main22-raw/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+  scan-and-admit-main22:
+    needs: [verify-contract, retain-original-four]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Reclaim unused hosted runner SDKs for retained archive transfer
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+      - name: Independently bind exact retained checkpoint and original tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RAW_ID: ${{ needs.retain-original-four.outputs.artifact-id }}
+          RAW_SHA: ${{ needs.retain-original-four.outputs.artifact-sha256 }}
+        run: |
+          python -m saas.scripts.main22_retained_recovery checkpoint --root "$RUNNER_TEMP/main22-admit" \
+            --run-id "$GITHUB_RUN_ID" --artifact-id "$RAW_ID" --sha256 "$RAW_SHA"
+          rm "$RUNNER_TEMP/main22-admit/server-2.tar" "$RUNNER_TEMP/main22-admit/host-2.tar"
+      - name: Complete four normal 24 hour raw scans and seal the original OCI
+        run: |
+          python -m saas.scripts.scan_oci_candidates \
+            --image "server=$RUNNER_TEMP/main22-admit/server-1.tar" \
+            --image "host=$RUNNER_TEMP/main22-admit/host-1.tar" --output "$RUNNER_TEMP/main22-admit/grype"
+          python -m saas.scripts.oci_promotion seal --root "$RUNNER_TEMP/main22-admit" \
+            --revision "$PRODUCT_REVISION" --source-date-epoch "$SOURCE_DATE_EPOCH"
+      - name: Retain actually admitted immutable OCI
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: saas-oci-promotion-${{ env.PRODUCT_REVISION }}
+          path: ${{ runner.temp }}/main22-admit/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve scan outcome and original lineage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: main22-retained-scan-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/main22-admit/grype/
+            ${{ runner.temp }}/main22-admit/oci-promotion-manifest.json
+            ${{ runner.temp }}/main22-admit/saas-image-candidate.json
+            ${{ runner.temp }}/main22-admit/server-candidate-runtime.json
+            ${{ runner.temp }}/main22-admit/server-regressions.junit.xml
+            ${{ runner.temp }}/main22-admit/main22-retained-origin.json
+          if-no-files-found: warn
+          retention-days: 30

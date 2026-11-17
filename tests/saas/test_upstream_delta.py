@@ -866,7 +866,7 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
         )
     elif fault == "previous-null-params-authority":
         decision["authority_record_sha256"] = (
-            "52bea424aaca8cd7e2807148918e0576db3757e783eb160793d655311108f6cb"
+            "ec5f5b4a1d3dea9ae45ec4f6928877a35c5640dbc444217f040f2a70477ce9e5"
         )
     elif fault == "previous-47-authority":
         decision["authority_record_sha256"] = (

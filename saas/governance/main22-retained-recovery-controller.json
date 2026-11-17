@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "recovery_profile": "Main22e-retained-failed-scan/v1",
+  "producer_binding_mode": "exact_main22_retained_failed_scan_v1",
+  "product_revision": "22e237f61246ec0b041ddc604b8d41422804c7a8",
+  "product_tree": "72def792f42279fbf4d91cb756a6479ee3091be7",
+  "source_date_epoch": 1794888040,
+  "original_parent": {
+    "run_id": 44014148143,
+    "attempt": 1,
+    "job_id": 133810193394,
+    "conclusion": "failure"
+  },
+  "source_thread": "01a1bb0b-1a2b-75b3-bbb3-5e28a8a4271a",
+  "handback_sha256": "cf1cf1f4850ebe2b6a70ab82d516be83f644b6520ffdf9ad4d921edf469d1e9e",
+  "postimages": [
+    {
+      "path": ".github/workflows/saas-image-candidate.yml",
+      "bytes": 84156,
+      "sha256": "ad7e29061a8743dd4765ef55b51cbc5249eaf572c956099391f4e9e6cafb4ad3"
+    },
+    {
+      "path": ".github/workflows/saas-main22-retained-scan-recovery.yml",
+      "bytes": 5963,
+      "sha256": "8e860ace7eeb8c2d81907182b44ca8abbc3acb2eb2d979066b464ad85c71173c"
+    },
+    {
+      "path": ".github/workflows/saas-oci-promotion-accepted-m165.yml",
+      "bytes": 53374,
+      "sha256": "b20287895b24f01cb2a0e3abf1b5fd2dfe3a81ed2c20a42d38450a245ef5f2c2"
+    },
+    {
+      "path": "saas/scripts/accepted_m165_promotion.py",
+      "bytes": 57633,
+      "sha256": "35be3e69b476e7453558e4e38565779043465e3d7ab824acea52dddf9161241d"
+    },
+    {
+      "path": "saas/scripts/check_image_supply_chain.py",
+      "bytes": 127470,
+      "sha256": "ef308c7b90a9a50035acbdefe02d22e21bb7724d994a646dc1d3787adb5ea0eb"
+    },
+    {
+      "path": "saas/scripts/main22_retained_recovery.py",
+      "bytes": 30882,
+      "sha256": "b05d176e0c813a78340deebd14517433c38ae428498ec11f8c3f489f54f3c2c0"
+    },
+    {
+      "path": "tests/saas/test_accepted_m165_promotion.py",
+      "bytes": 79356,
+      "sha256": "ca96446f67803a03a570246f8a71997a714f6b784c78ba7f3207f539ba5cce1d"
+    },
+    {
+      "path": "tests/saas/test_main22_retained_recovery.py",
+      "bytes": 18286,
+      "sha256": "753a9a22dba0a5a85b0e57976ad9265b336787b49ed8684099a359829d147b5b"
+    },
+    {
+      "path": "tests/saas/test_oci_promotion.py",
+      "bytes": 68014,
+      "sha256": "34df1ba592437c7459a71f7abf0a69c1b9d0613be1a26a2f25a06ce1d9fd1753"
+    }
+  ]
+}

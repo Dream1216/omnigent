@@ -147,15 +147,20 @@ jobs:
         id: context
         run: |
           set -euo pipefail
-          python -m saas.scripts.fixed_main16_ci_promotion classify \
-            --candidate-revision "$CANDIDATE_REVISION" > "${RUNNER_TEMP}/source-context.json"
+          if [[ -f saas/governance/main22-retained-recovery-controller.json ]]; then
+            python -m saas.scripts.main22_retained_recovery classify \
+              --candidate-revision "$CANDIDATE_REVISION" > "${RUNNER_TEMP}/source-context.json"
+          else
+            python -m saas.scripts.fixed_main16_ci_promotion classify \
+              --candidate-revision "$CANDIDATE_REVISION" > "${RUNNER_TEMP}/source-context.json"
+          fi
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
           context = json.loads((Path(os.environ["RUNNER_TEMP"]) / "source-context.json").read_text())
-          assert context["mode"] in {"same-main", "fixed-main16-ci-only"}
+          assert context["mode"] in {"same-main", "fixed-main16-ci-only", "exact_main22_retained_failed_scan_v1"}
           with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
               output.write("mode=" + context["mode"] + "\n")
           PY

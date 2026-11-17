@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "376912048fd07cbd9030f596a9b4eaa45a00b7ddc7ee2cdefa8287f8aa1fd482",
+  "candidate_manifest_sha256": "4b4f45b7256a13b7810f5d220e873c77cee820b64231f6457102271b5d6d1271",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -43,8 +43,8 @@
     },
     {
       "path": ".github/workflows/saas-image-candidate.yml",
-      "bytes": 83832,
-      "sha256": "9e27dff0e62ba92b8a33f7e342f8d33076cc3ab1a48f7a559a348581b191583b"
+      "bytes": 84156,
+      "sha256": "ad7e29061a8743dd4765ef55b51cbc5249eaf572c956099391f4e9e6cafb4ad3"
     },
     {
       "path": ".github/workflows/saas-m-current-evidence-renewal.yml",
@@ -55,6 +55,16 @@
       "path": ".github/workflows/saas-m2c-evidence-renewal.yml",
       "bytes": 6715,
       "sha256": "fe76ec364ebb6789a640874ccf2b1b6d766dd4a2b9b7ac8b2fefd94764645574"
+    },
+    {
+      "path": ".github/workflows/saas-main22-retained-scan-recovery.yml",
+      "bytes": 5963,
+      "sha256": "8e860ace7eeb8c2d81907182b44ca8abbc3acb2eb2d979066b464ad85c71173c"
+    },
+    {
+      "path": ".github/workflows/saas-oci-promotion-accepted-m165.yml",
+      "bytes": 53374,
+      "sha256": "b20287895b24f01cb2a0e3abf1b5fd2dfe3a81ed2c20a42d38450a245ef5f2c2"
     },
     {
       "path": ".github/workflows/saas-upgrade-benchmark.yml",
@@ -202,6 +212,11 @@
       "sha256": "23bcc36a686d083381a15c0f45f5de32d6ae5a62fc43f4b1a5a2a469a72b3cdc"
     },
     {
+      "path": "saas/governance/main22-retained-recovery-controller.json",
+      "bytes": 2224,
+      "sha256": "4b4f45b7256a13b7810f5d220e873c77cee820b64231f6457102271b5d6d1271"
+    },
+    {
       "path": "saas/production/platform_model_host.py",
       "bytes": 11439,
       "sha256": "d8f83fc2136a6c50805d0702e096079b22736a06aae0a3134cf3538a5f507c96"
@@ -217,19 +232,29 @@
       "sha256": "05904c734b950f3143196807311d7823319581539429e21c5a3e580fc2e088bb"
     },
     {
+      "path": "saas/scripts/accepted_m165_promotion.py",
+      "bytes": 57633,
+      "sha256": "35be3e69b476e7453558e4e38565779043465e3d7ab824acea52dddf9161241d"
+    },
+    {
       "path": "saas/scripts/benchmark_fork_diagnostics.py",
       "bytes": 17151,
       "sha256": "002f99cf1cc843c30257e878eff3eee3dd885628f07d64aaca784cb9978ddff6"
     },
     {
       "path": "saas/scripts/check_image_supply_chain.py",
-      "bytes": 127217,
-      "sha256": "01d3945eb6e53478b28e2ab885da655daf31a67b888f07b6a54fc73bb21fd607"
+      "bytes": 127470,
+      "sha256": "ef308c7b90a9a50035acbdefe02d22e21bb7724d994a646dc1d3787adb5ea0eb"
     },
     {
       "path": "saas/scripts/fixed_main16_ci_promotion.py",
       "bytes": 22104,
       "sha256": "e94421006f0d952ca8c110cad37144edba338b229643002bd9464ff3f71da237"
+    },
+    {
+      "path": "saas/scripts/main22_retained_recovery.py",
+      "bytes": 30882,
+      "sha256": "b05d176e0c813a78340deebd14517433c38ae428498ec11f8c3f489f54f3c2c0"
     },
     {
       "path": "saas/scripts/oci_promotion.py",
@@ -397,9 +422,19 @@
       "sha256": "2485b6112685113b6a79e89a991ac98441a9c6813ecb552a87be3b8e63f72e42"
     },
     {
+      "path": "tests/saas/test_accepted_m165_promotion.py",
+      "bytes": 79356,
+      "sha256": "ca96446f67803a03a570246f8a71997a714f6b784c78ba7f3207f539ba5cce1d"
+    },
+    {
       "path": "tests/saas/test_legacy_domain_discovery.py",
       "bytes": 46111,
       "sha256": "36839c8b8911e032d61b911182f0dcb1076fbcbaac2a2e9aad8cc7bd4421dbba"
+    },
+    {
+      "path": "tests/saas/test_main22_retained_recovery.py",
+      "bytes": 18286,
+      "sha256": "753a9a22dba0a5a85b0e57976ad9265b336787b49ed8684099a359829d147b5b"
     },
     {
       "path": "tests/saas/test_oci_candidate_build_capacity.py",
@@ -408,8 +443,8 @@
     },
     {
       "path": "tests/saas/test_oci_promotion.py",
-      "bytes": 67679,
-      "sha256": "4c3cdae72452cceaebdec48990ecac4d5d8808bff8de14e6a86e21367528c470"
+      "bytes": 68014,
+      "sha256": "34df1ba592437c7459a71f7abf0a69c1b9d0613be1a26a2f25a06ce1d9fd1753"
     },
     {
       "path": "tests/saas/test_platform_model_gateway.py",
@@ -466,7 +501,7 @@
   ],
   "manifest_controls_sha256": {
     "baseline": "5bfa71403c79219635c98449c44179019e248bf8a3d07d86954e8dc0938ca70f",
-    "controller": "51a05c77961a2be12d14fc66272cd6f7afc519d8167413852d0fe0ce00bc05b3"
+    "controller": "9e86f9b2a719acd7bc08a0a9546dfe120c320b771b3935dd2076647aa49e3b9e"
   },
   "previous_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11.",
   "previous_fixed63_approved_scope": {
@@ -781,5 +816,19 @@
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-native-policy-elicitation-prefix-PREPARED-20261117/POLICY-ID.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
     "bytes": 3523,
     "sha256": "ec5f5b4a1d3dea9ae45ec4f6928877a35c5640dbc444217f040f2a70477ce9e5"
+  },
+  "previous_native_policy_exact_scope": {
+    "candidate_manifest_sha256": "376912048fd07cbd9030f596a9b4eaa45a00b7ddc7ee2cdefa8287f8aa1fd482",
+    "source_scope_sha256": "c6246ecfc449725ceb453600e739bbe824e7d5224cb4a14e920a28e6a1bcca76",
+    "authority": {
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-native-policy-elicitation-prefix-PREPARED-20261117/POLICY-ID.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
+      "bytes": 3523,
+      "sha256": "ec5f5b4a1d3dea9ae45ec4f6928877a35c5640dbc444217f040f2a70477ce9e5"
+    }
+  },
+  "current_Main22_retained_recovery_scope_authority": {
+    "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main22-retained-scan-recovery-20261117/MAIN22-RECOVERY.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
+    "bytes": 2882,
+    "sha256": "ac07ee7f96a452a93fcf571a8799fea8979eecbd31434a8ef380f4efa2c42e56"
   }
 }
