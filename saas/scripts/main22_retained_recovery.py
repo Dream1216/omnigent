@@ -72,6 +72,7 @@ CONTROL_PATHS = {
     "saas/scripts/main22_retained_recovery.py",
     "saas/scripts/legacy_artifact_download.py",
     "tests/saas/test_legacy_artifact_download.py",
+    "tests/saas/test_legacy_build_controller.py",
     "saas/scripts/accepted_m165_promotion.py",
     "tests/saas/test_main22_retained_recovery.py",
     "tests/saas/test_accepted_m165_promotion.py",

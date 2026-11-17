@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "83ebf83b71c4b3fca49893d74f6529df00fd0696297b4f797f9b654d504f87aa",
+  "candidate_manifest_sha256": "83e26b36a6bd8eac288154f4f259d4b4ef4adaa4b750798a15ebec358c557738",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -213,8 +213,8 @@
     },
     {
       "path": "saas/governance/main22-retained-recovery-controller.json",
-      "bytes": 2955,
-      "sha256": "83ebf83b71c4b3fca49893d74f6529df00fd0696297b4f797f9b654d504f87aa"
+      "bytes": 3133,
+      "sha256": "83e26b36a6bd8eac288154f4f259d4b4ef4adaa4b750798a15ebec358c557738"
     },
     {
       "path": "saas/production/platform_model_host.py",
@@ -258,8 +258,8 @@
     },
     {
       "path": "saas/scripts/main22_retained_recovery.py",
-      "bytes": 31248,
-      "sha256": "e9651b76209db39e0b96b5447d1103cc57e835a3ffbfe5cd651c4c5234aa112a"
+      "bytes": 31298,
+      "sha256": "c2f9bdbb0f4626746f5f8be390e746391fe65e5367ae925dfe8e3cf7aa6da221"
     },
     {
       "path": "saas/scripts/oci_promotion.py",
@@ -435,6 +435,11 @@
       "path": "tests/saas/test_legacy_artifact_download.py",
       "bytes": 4593,
       "sha256": "f3e34dd79e233049655aed2ee583cea6edb5d323dfb78000abfe52f88aabb55e"
+    },
+    {
+      "path": "tests/saas/test_legacy_build_controller.py",
+      "bytes": 64949,
+      "sha256": "19d2fc291f2dea718d891b41a209c6248e49c4a566b4ed8466263cf96fdcf457"
     },
     {
       "path": "tests/saas/test_legacy_domain_discovery.py",
@@ -839,6 +844,6 @@
   "current_Main22_retained_recovery_scope_authority": {
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main22-retained-scan-recovery-20261117/MAIN22-RECOVERY.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
     "bytes": 2882,
-    "sha256": "b86a0dd9c3c1ebb34b2b8f274cef8f20e528768b4544c150ca97dad7692cc8ba"
+    "sha256": "ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94"
   }
 }

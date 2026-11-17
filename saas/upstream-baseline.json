@@ -1518,9 +1518,9 @@
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
   "upstream_version": "0.21.0.dev20261031",
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "83ebf83b71c4b3fca49893d74f6529df00fd0696297b4f797f9b654d504f87aa",
+    "candidate_manifest_sha256": "83e26b36a6bd8eac288154f4f259d4b4ef4adaa4b750798a15ebec358c557738",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "b86a0dd9c3c1ebb34b2b8f274cef8f20e528768b4544c150ca97dad7692cc8ba"
+    "authority_record_sha256": "ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94"
   }
 }

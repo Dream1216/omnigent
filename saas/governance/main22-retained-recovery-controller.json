@@ -46,8 +46,8 @@
     },
     {
       "path": "saas/scripts/main22_retained_recovery.py",
-      "bytes": 31248,
-      "sha256": "e9651b76209db39e0b96b5447d1103cc57e835a3ffbfe5cd651c4c5234aa112a"
+      "bytes": 31298,
+      "sha256": "c2f9bdbb0f4626746f5f8be390e746391fe65e5367ae925dfe8e3cf7aa6da221"
     },
     {
       "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json",
@@ -63,6 +63,11 @@
       "path": "tests/saas/test_legacy_artifact_download.py",
       "bytes": 4593,
       "sha256": "f3e34dd79e233049655aed2ee583cea6edb5d323dfb78000abfe52f88aabb55e"
+    },
+    {
+      "path": "tests/saas/test_legacy_build_controller.py",
+      "bytes": 64949,
+      "sha256": "19d2fc291f2dea718d891b41a209c6248e49c4a566b4ed8466263cf96fdcf457"
     },
     {
       "path": "tests/saas/test_legacy_domain_discovery.py",
