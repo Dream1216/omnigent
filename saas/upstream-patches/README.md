@@ -512,3 +512,9 @@ empty parameter object at both protocol boundaries. Other malformed values keep
 their existing handling. The same-connection regression covers a null notification
 and no-argument request while retaining approval, cancellation and cleanup checks.
 Remove this extension when upstream handles these null parameters equivalently.
+
+The native Session executor uses the Server's `elicit_evaluate_` namespace for
+policy correlation identifiers. Bare UUIDs are rejected before policy evaluation.
+The existing workspace I/O regression checks both normal policy requests while
+retaining the approval, cancellation, isolation and cleanup contracts.
+Remove this correction when upstream emits the same canonical identifiers.
