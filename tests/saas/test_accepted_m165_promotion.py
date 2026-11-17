@@ -1415,6 +1415,7 @@ def test_M8c_workflows_only_complete_missing_builds_and_use_fixed_profile():
         "M165",
         "M8c-retained-first",
         "M8c-clean-context",
+        "Main22e-retained-failed-scan/v1",
     }
     for job in signer["jobs"].values():
         selectors = [

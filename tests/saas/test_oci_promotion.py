@@ -857,6 +857,14 @@ def test_cross_run_policy_rejects_bypassed_origin_binding(tmp_path, target) -> N
             "fixed_main16_ci_promotion classify",
         ),
         (
+            "Classify exact product and controller inputs before any build",
+            "main22_retained_recovery classify",
+        ),
+        (
+            "Classify exact product and controller inputs before any build",
+            "if [[ -f saas/governance/main22-retained-recovery-controller.json ]]; then",
+        ),
+        (
             "Validate protected release coordinates",
             '[[ "$PROMOTION_ARTIFACT_ID" == "14210895004" ]] || exit 1',
         ),

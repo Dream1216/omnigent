@@ -523,7 +523,12 @@ def _validate_fixed_product_controller_contract(workflow: str) -> list[str]:
         "Classify exact product and controller inputs before any build": {
             "python -m saas.scripts.fixed_main16_ci_promotion classify",
             '--candidate-revision "$CANDIDATE_REVISION"',
-            'assert context["mode"] in {"same-main", "fixed-main16-ci-only"}',
+            (
+                'assert context["mode"] in {"same-main", "fixed-main16-ci-only", '
+                '"exact_main22_retained_failed_scan_v1"}'
+            ),
+            "if [[ -f saas/governance/main22-retained-recovery-controller.json ]]; then",
+            "python -m saas.scripts.main22_retained_recovery classify",
         },
         "Validate protected release coordinates": {
             '[[ "$PRODUCT_REVISION" == "$TRUSTED_REVISION" ]] || exit 1',
