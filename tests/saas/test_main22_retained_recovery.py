@@ -361,6 +361,54 @@ def test_exact_profile_is_opt_in_and_original_defaults_are_preserved():
         promotion.configure_product_profile(previous)
 
 
+@pytest.mark.parametrize(
+    "changed_path,finite_approved,new_product",
+    [
+        ("omnigent/harnesses/codex_native/executor_backend.py", True, True),
+        ("omnigent/harnesses/codex_native/executor_backend.py", False, False),
+        ("saas/scripts/main22_retained_recovery.py", True, False),
+    ],
+)
+def test_classifier_separates_new_product_from_exact_old_recovery(
+    tmp_path, monkeypatch, changed_path, finite_approved, new_product
+):
+    from saas.scripts import check_upstream_delta as guard
+
+    revision = "a" * 40
+
+    def git(repo, *args):
+        if args == ("rev-parse", "HEAD"):
+            return revision
+        if args == ("rev-parse", f"{recovery.PRODUCT}^{{tree}}"):
+            return recovery.TREE
+        if args[:3] == ("diff", "--no-renames", "--name-status"):
+            return f"M\t{changed_path}"
+        return ""
+
+    def read_json(path):
+        if path == tmp_path / recovery.MANIFEST:
+            return {
+                "recovery_profile": recovery.PROFILE,
+                "product_revision": recovery.PRODUCT,
+                "product_tree": recovery.TREE,
+                "postimages": [],
+            }
+        return {"governance_paths": []}
+
+    monkeypatch.setattr(recovery, "git", git)
+    monkeypatch.setattr(recovery, "read_json", read_json)
+    monkeypatch.setattr(guard, "_ordinary_m_candidate_matches", lambda *args: finite_approved)
+    if new_product:
+        assert recovery.classify(tmp_path, revision) == {
+            "mode": "same-main",
+            "product_revision": revision,
+            "controller_revision": revision,
+        }
+    else:
+        with pytest.raises(ValueError):
+            recovery.classify(tmp_path, revision)
+
+
 def test_recovery_never_builds_and_publisher_keeps_protected_oidc():
     root = Path(__file__).resolve().parents[2]
     text = (root / recovery.WORKFLOW).read_text()

@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 from omnigent.harnesses.codex_native import executor_worker
+from omnigent.harnesses.codex_native.app_server import CodexAppServerResponseError
 from omnigent.harnesses.codex_native.executor_backend import SessionExecutorBackend
 from omnigent.harnesses.codex_native.executor_bwrap import required_bwrap_argv
 from omnigent.harnesses.codex_native.executor_policy import SessionExecutionPolicy
@@ -79,7 +80,7 @@ def authority(tmp_path: Path):
 def make_executor(monkeypatch: pytest.MonkeyPatch):
     """Keep the fixed executor/kernel mock visible; actual worker FS I/O remains real."""
     client = Mock()
-    records, outputs = [], {}
+    records, outputs, read_started = [], {}, set()
     activated = []
 
     async def request(method, params):
@@ -101,24 +102,23 @@ def make_executor(monkeypatch: pytest.MonkeyPatch):
                     result = executor_worker.run_plan(plan)
                 outputs[params["processId"]] = json.dumps(result).encode()
             else:
-                outputs[params["processId"]] = b""
+                outputs[params["processId"]] = (
+                    b'{"opened":true}\n' if plan["operation"] == "fs/open" else b""
+                )
             return {"result": {"processId": params["processId"]}}
         if method == "process/read":
-            return {
-                "result": {
-                    "chunks": [
-                        {
-                            "seq": 1,
-                            "stream": "stdout",
-                            "chunk": base64.b64encode(outputs[params["processId"]]).decode(),
-                        }
-                    ],
-                    "nextSeq": 1,
-                    "exited": True,
-                    "exitCode": 0,
-                    "failure": None,
-                }
+            first_read = params["processId"] not in read_started
+            read_started.add(params["processId"])
+            payload = base64.b64encode(outputs[params["processId"]]).decode()
+            chunk = {"seq": 1, "stream": "stdout", "chunk": payload}
+            result = {
+                "chunks": [] if first_read or params.get("afterSeq", 0) >= 1 else [chunk],
+                "nextSeq": 1 if first_read else 2,
+                "exited": not first_read,
+                "exitCode": None if first_read else 0,
+                "failure": None,
             }
+            return {"result": result}
         if method == "process/terminate":
             return {"result": {"running": False}}
         if method == "environment/info":
@@ -169,12 +169,14 @@ async def test_bound_backend_workspace_write_and_metadata_outside_refusal(
             with pytest.raises(PermissionError):
                 await backend.dispatch("fs/writeFile", {"path": path.as_uri(), "dataBase64": ""})
             assert not path.exists()
-        assert [p["_omnigent_elicitation_id"][:16] for p in requests] == ["elicit_evaluate_"] * 2
         assert not list(backend.plan_root.iterdir())
+        opened = await backend.dispatch("fs/open", {"path": file.as_uri(), "handleId": "owned"})
+        assert opened == {"handleId": "owned"}
+        assert [p["_omnigent_elicitation_id"][:16] for p in requests] == ["elicit_evaluate_"] * 3
         await backend.close()
         executor.close.assert_awaited_once()
         assert not root.exists()
-    assert len([method for method, _ in records if method == "process/start"]) == 2
+    assert len([method for method, _ in records if method == "process/start"]) == 3
 
 
 @pytest.mark.asyncio
@@ -597,9 +599,11 @@ async def test_registry_bootstrap_binds_executor_before_parent_and_retires_owner
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_fails", [False, True])
 async def test_same_connection_terminate_cancels_parked_start_before_late_allow(
     monkeypatch: pytest.MonkeyPatch,
     authority,
+    cleanup_fails: bool,
 ) -> None:
     bound, channels = authority
     executor, records, _ = make_executor(monkeypatch)
@@ -667,6 +671,42 @@ async def test_same_connection_terminate_cancels_parked_start_before_late_allow(
         )
         assert not writer.is_closing() and not backend._closed
         assert not [record for record in records if record[0] == "process/start"]
+        original_request = executor.request.side_effect
+        primary = CodexAppServerResponseError(
+            {"code": -32001, "message": "secret-command-url", "data": {"token": "secret-token"}}
+        )
+
+        async def reject_start(method, params):
+            if method == "process/start":
+                raise primary
+            if method == "process/terminate" and cleanup_fails:
+                raise CodexAppServerResponseError({"code": -32602, "message": "secret-cleanup"})
+            return await original_request(method, params)
+
+        executor.request.side_effect = reject_start
+        await send(
+            5,
+            "process/start",
+            {"processId": "owned-rejected", "argv": ["/bin/true"], "cwd": bound.cwd.as_uri()},
+        )
+        reply = json.loads(await asyncio.wait_for(reader.readline(), 1))
+        assert reply == {
+            "id": 5,
+            "error": {
+                "code": -32001,
+                "message": "Required Session executor request failed",
+                "data": {"errorType": "CodexAppServerResponseError"},
+            },
+        }
+        assert "secret" not in json.dumps(reply)
+        assert bool(backend.processes) is cleanup_fails
+        if cleanup_fails:
+            assert primary.__notes__ == ["Executor cleanup failed: CodexAppServerResponseError"]
+            assert all(path.exists() for path in backend.plans.values())
+        await send(6, "environment/info", None)
+        assert json.loads(await asyncio.wait_for(reader.readline(), 1))["id"] == 6
+        assert not writer.is_closing() and not backend._closed
+        executor.request.side_effect = original_request
         writer.close()
         await writer.wait_closed()
         await asyncio.wait_for(closed.wait(), 1)
@@ -770,28 +810,25 @@ async def test_filesystem_response_limit_precedes_read_encoding_and_spool_growth
 
     executor, _, _ = make_executor(monkeypatch)
     original_request = executor.request.side_effect
+    data = b""
 
     async def split_output(method, params):
+        nonlocal data
         response = await original_request(method, params)
         if method == "process/read":
-            data = base64.b64decode(response["result"]["chunks"][0]["chunk"])
-            start = params.get("afterSeq") or 0
+            if response["result"]["chunks"]:
+                data = base64.b64decode(response["result"]["chunks"][0]["chunk"])
+            elif not data:
+                return response
+            start = (params.get("afterSeq") or 0) * 32
             end = min(start + 32, len(data))
-            return {
-                "result": {
-                    "chunks": [
-                        {
-                            "seq": end,
-                            "stream": "stdout",
-                            "chunk": base64.b64encode(data[start:end]).decode(),
-                        }
-                    ],
-                    "nextSeq": end,
-                    "exited": end == len(data),
-                    "exitCode": 0,
-                    "failure": None,
-                }
-            }
+            payload = base64.b64encode(data[start:end]).decode()
+            response["result"].update(
+                chunks=[{"seq": start // 32 + 1, "stream": "stdout", "chunk": payload}],
+                nextSeq=start // 32 + 2,
+                exited=end == len(data),
+                exitCode=0,
+            )
         return response
 
     executor.request.side_effect = split_output

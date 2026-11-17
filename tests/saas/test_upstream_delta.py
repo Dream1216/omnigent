@@ -809,6 +809,8 @@ def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
         "previous-fixed16-proof-handoff-authority",
         "previous-fixed16-validator-authority",
         "previous-null-params-authority",
+        "previous-Main22-authority",
+        "previous-fixed077-authority",
         "scope-bytes",
         "protected-bytes",
         "other-source-bytes",
@@ -863,6 +865,10 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
     elif fault == "previous-fixed16-validator-authority":
         decision["authority_record_sha256"] = (
             "2b65dfd53ce4506fc4bb91e23f8609b4e211dc47fb76724ffee0cedd6c638448"
+        )
+    elif fault == "previous-Main22-authority":
+        decision["authority_record_sha256"] = (
+            "ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94"
         )
     elif fault == "previous-null-params-authority":
         decision["authority_record_sha256"] = (
@@ -939,6 +945,10 @@ def test_ordinary_m_finite_approval_checks_exact_current_sources(
     elif fault == "previous-diagnostic-guard-authority":
         decision["authority_record_sha256"] = (
             "6fca6f621dbd839a3a448e192611391c8af5861bcfe64d1e16e7a786c3df315d"
+        )
+    elif fault == "previous-fixed077-authority":
+        decision["authority_record_sha256"] = (
+            "a5587947a36d9be00a266120e8bbbf75b4dae5bc453eb932cb52eb7acd887e40"
         )
     target = {
         "scope-bytes": root / guard._ORDINARY_M_SCOPE_PATH,

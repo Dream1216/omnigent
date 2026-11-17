@@ -7047,6 +7047,9 @@ def _command_execution_tool_call(call_id: str, item: _JsonObject) -> _CodexToolC
     if isinstance(exit_code, int) and exit_code != 0:
         suffix = f"[exit code: {exit_code}]"
         output_text = f"{output_text}\n{suffix}" if output_text else suffix
+    elif item.get("status") in {"failed", "declined", "cancelled"}:
+        suffix = f"[native command {item['status']}]"
+        output_text = f"{output_text}\n{suffix}" if output_text else suffix
     # Turn codex's opaque "sandbox can't start" bwrap failure into actionable
     # recovery guidance; a no-op for any other output.
     output_text = _augment_sandbox_namespace_error(output_text)

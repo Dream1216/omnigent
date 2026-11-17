@@ -2856,10 +2856,10 @@ new file mode 100644
 +    main()
 diff --git a/omnigent/harnesses/codex_native/executor_backend.py b/omnigent/harnesses/codex_native/executor_backend.py
 new file mode 100644
-index 00000000000..124a42264d4
+index 00000000000..c0da2c48ebd
 --- /dev/null
 +++ b/omnigent/harnesses/codex_native/executor_backend.py
-@@ -0,0 +1,913 @@
+@@ -0,0 +1,937 @@
 +"""Session-bound required execution backend for the fixed native protocol."""
 +
 +from __future__ import annotations
@@ -2882,7 +2882,10 @@ index 00000000000..124a42264d4
 +
 +import httpx
 +
-+from omnigent.harnesses.codex_native.app_server import CodexAppServerClient
++from omnigent.harnesses.codex_native.app_server import (
++    CodexAppServerClient,
++    CodexAppServerResponseError,
++)
 +from omnigent.harnesses.codex_native.executor_policy import (
 +    FS_RESPONSE_LIMIT_BYTES,
 +    SessionExecutionPolicy,
@@ -3388,8 +3391,11 @@ index 00000000000..124a42264d4
 +                json.dump(plan, output)
 +            self.processes[key] = internal
 +            return await self.executor.request("process/start", request)
-+        except BaseException:
-+            await self._terminate(key)
++        except BaseException as error:
++            try:
++                await self._terminate(key)
++            except Exception as cleanup_error:  # noqa: BLE001 - preserve the primary launch failure
++                error.add_note(f"Executor cleanup failed: {type(cleanup_error).__name__}")
 +            raise
 +
 +    async def _terminate(self, key: str) -> None:
@@ -3552,7 +3558,7 @@ index 00000000000..124a42264d4
 +                                raise ValueError("Use the bounded filesystem stream for this file")
 +                            output.write(data)
 +                            output_bytes += len(data)
-+                    after = result["nextSeq"]
++                    after = max(0, result["nextSeq"] - 1)
 +                    if result["exited"]:
 +                        if result["exitCode"] != 0 or result.get("failure"):
 +                            raise OSError("Sandboxed filesystem worker failed")
@@ -3592,7 +3598,7 @@ index 00000000000..124a42264d4
 +            for chunk in result["chunks"]:
 +                if chunk["stream"] == "stdout":
 +                    output.extend(base64.b64decode(chunk["chunk"], validate=True))
-+            owned.after_seq = result["nextSeq"]
++            owned.after_seq = max(0, result["nextSeq"] - 1)
 +            if len(output) > 2 * 1048576:
 +                raise OSError("File worker response exceeded its bounded frame")
 +            if output.endswith(b"\n"):
@@ -3727,9 +3733,27 @@ index 00000000000..124a42264d4
 +                            },
 +                        }
 +                    )
-+                except (ValueError, PermissionError, OSError, httpx.HTTPError) as error:
++                except (
++                    CodexAppServerResponseError,
++                    ValueError,
++                    PermissionError,
++                    OSError,
++                    httpx.HTTPError,
++                ) as error:
++                    code = (
++                        (error.code if error.code is not None else -32603)
++                        if isinstance(error, CodexAppServerResponseError)
++                        else -32602
++                    )
 +                    await emit(
-+                        {"id": request_id, "error": {"code": -32602, "message": str(error)}}
++                        {
++                            "id": request_id,
++                            "error": {
++                                "code": code,
++                                "message": "Required Session executor request failed",
++                                "data": {"errorType": type(error).__name__},
++                            },
++                        }
 +                    )
 +        except (ConnectionError, OSError):
 +            pass
@@ -5894,3 +5918,11 @@ index 4373dc089a1..b694d722d4e 100644
 -                }
 -            ],
 +            "cwd": state.cwd or str(Path.cwd()),
+diff --git a/omnigent/harnesses/codex_native/forwarder.py b/omnigent/harnesses/codex_native/forwarder.py
+index a3cda1377cf..445f35832ce 100644
+--- a/omnigent/harnesses/codex_native/forwarder.py
++++ b/omnigent/harnesses/codex_native/forwarder.py
+@@ -7049,0 +7050,3 @@ def _command_execution_tool_call(call_id: str, item: _JsonObject) -> _CodexToolC
++    elif item.get("status") in {"failed", "declined", "cancelled"}:
++        suffix = f"[native command {item['status']}]"
++        output_text = f"{output_text}\n{suffix}" if output_text else suffix
