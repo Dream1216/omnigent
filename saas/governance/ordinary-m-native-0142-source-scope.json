@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "4b4f45b7256a13b7810f5d220e873c77cee820b64231f6457102271b5d6d1271",
+  "candidate_manifest_sha256": "407cc26be8c5b91a85eefdd0f8102284d973a3b9fe2f5315948951f939dc7fa0",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -213,8 +213,8 @@
     },
     {
       "path": "saas/governance/main22-retained-recovery-controller.json",
-      "bytes": 2224,
-      "sha256": "4b4f45b7256a13b7810f5d220e873c77cee820b64231f6457102271b5d6d1271"
+      "bytes": 2602,
+      "sha256": "407cc26be8c5b91a85eefdd0f8102284d973a3b9fe2f5315948951f939dc7fa0"
     },
     {
       "path": "saas/production/platform_model_host.py",
@@ -253,8 +253,8 @@
     },
     {
       "path": "saas/scripts/main22_retained_recovery.py",
-      "bytes": 30882,
-      "sha256": "b05d176e0c813a78340deebd14517433c38ae428498ec11f8c3f489f54f3c2c0"
+      "bytes": 31003,
+      "sha256": "7240c1df3ae941a136005ad92779ec622542969a775282117e571fe8dfe0679d"
     },
     {
       "path": "saas/scripts/oci_promotion.py",
@@ -418,8 +418,8 @@
     },
     {
       "path": "tests/saas/resources/native-domain-discovery-parent-hashes.json",
-      "bytes": 297409,
-      "sha256": "2485b6112685113b6a79e89a991ac98441a9c6813ecb552a87be3b8e63f72e42"
+      "bytes": 298198,
+      "sha256": "70e2ef1afe8292d61f38d05a851f36dffe0508f9a79200785445c2ed5c8e37a1"
     },
     {
       "path": "tests/saas/test_accepted_m165_promotion.py",
@@ -428,8 +428,8 @@
     },
     {
       "path": "tests/saas/test_legacy_domain_discovery.py",
-      "bytes": 46111,
-      "sha256": "36839c8b8911e032d61b911182f0dcb1076fbcbaac2a2e9aad8cc7bd4421dbba"
+      "bytes": 46308,
+      "sha256": "a5ee4269a21e77bf20519b36b2618222be4e63dc6b9a9e1596361aa31dafbd12"
     },
     {
       "path": "tests/saas/test_main22_retained_recovery.py",
@@ -829,6 +829,6 @@
   "current_Main22_retained_recovery_scope_authority": {
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main22-retained-scan-recovery-20261117/MAIN22-RECOVERY.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
     "bytes": 2882,
-    "sha256": "ac07ee7f96a452a93fcf571a8799fea8979eecbd31434a8ef380f4efa2c42e56"
+    "sha256": "82320510db00c35858f8c409007193138da8d46670c0d6a2696e9be3e8d95714"
   }
 }

@@ -67,6 +67,8 @@ CONTROL_PATHS = {
     "saas/scripts/check_upstream_delta.py",
     "saas/scripts/check_image_supply_chain.py",
     "tests/saas/test_oci_promotion.py",
+    "tests/saas/test_legacy_domain_discovery.py",
+    "tests/saas/resources/native-domain-discovery-parent-hashes.json",
     "saas/scripts/main22_retained_recovery.py",
     "saas/scripts/accepted_m165_promotion.py",
     "tests/saas/test_main22_retained_recovery.py",

@@ -28,10 +28,10 @@ def _is_under(path: str, prefixes: tuple[str, ...]) -> bool:
 
 
 _ORDINARY_M_APPROVAL = "ordinary_m_native_0142_finite_approval"
-_ORDINARY_M_CANDIDATE = "4b4f45b7256a13b7810f5d220e873c77cee820b64231f6457102271b5d6d1271"
+_ORDINARY_M_CANDIDATE = "407cc26be8c5b91a85eefdd0f8102284d973a3b9fe2f5315948951f939dc7fa0"
 _ORDINARY_M_PROTECTED_PATH = "omnigent/runner/native/orchestration.py"
 _ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.json"
-_ORDINARY_M_SCOPE_SHA256 = "0e609d03b3983ae033486a93dac74b5b0fd55b12349c7255b354364f41affb8a"
+_ORDINARY_M_SCOPE_SHA256 = "10e0575f38473a8d2179d73cbe159fbbc3612dc5c271552a552ae14d09991c10"
 
 
 def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:

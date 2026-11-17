@@ -666,6 +666,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "main22_retained_recovery_classifier_correction",
         "fixed_main16_controller_workflow_correction",
         "trusted_main_crossrun_correction",
         "registered_validation_base_correction",
@@ -708,6 +709,10 @@ def reviewed_source_bytes(root, relative, expected):
 @pytest.mark.parametrize(
     ("relative", "correction_name"),
     [
+        (
+            "saas/scripts/check_image_supply_chain.py",
+            "main22_retained_recovery_classifier_correction",
+        ),
         ("saas/scripts/legacy_source_ci.py", "registered_validation_base_correction"),
         ("saas/scripts/legacy_initial_publisher.py", "compat018_recovered_publication_correction"),
         (
