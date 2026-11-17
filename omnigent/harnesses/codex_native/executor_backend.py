@@ -381,7 +381,7 @@ class SessionExecutorBackend:
         request["event"]["context"]["harness"] = "codex-native"
         response = await self.server_client.post(
             f"/v1/sessions/{self.authority.session_id}/policies/evaluate",
-            json={**request, "_omnigent_elicitation_id": uuid4().hex},
+            json={**request, "_omnigent_elicitation_id": f"elicit_evaluate_{uuid4().hex}"},
             timeout=86400.0,
         )
         response.raise_for_status()

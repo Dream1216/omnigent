@@ -169,7 +169,7 @@ async def test_bound_backend_workspace_write_and_metadata_outside_refusal(
             with pytest.raises(PermissionError):
                 await backend.dispatch("fs/writeFile", {"path": path.as_uri(), "dataBase64": ""})
             assert not path.exists()
-        assert len(requests) == 2
+        assert [p["_omnigent_elicitation_id"][:16] for p in requests] == ["elicit_evaluate_"] * 2
         assert not list(backend.plan_root.iterdir())
         await backend.close()
         executor.close.assert_awaited_once()
