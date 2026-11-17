@@ -31,7 +31,7 @@ _ORDINARY_M_APPROVAL = "ordinary_m_native_0142_finite_approval"
 _ORDINARY_M_CANDIDATE = "077d95b3844c49d84d5dbf2c42a234ecea656a56da5a0b03c3218bd44689a418"
 _ORDINARY_M_PROTECTED_PATH = "omnigent/runner/native/orchestration.py"
 _ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.json"
-_ORDINARY_M_SCOPE_SHA256 = "948d1d4c23535516b7488d65c795f7386a4f63084a502cc3a7fcd23b17b52523"
+_ORDINARY_M_SCOPE_SHA256 = "ae4aee1f7a8a9fe30c3a091803857b5548aa93335e76e145af8a32ae10a692a6"
 
 
 def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:

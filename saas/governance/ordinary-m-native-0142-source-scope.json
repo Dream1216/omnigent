@@ -263,8 +263,8 @@
     },
     {
       "path": "saas/scripts/main22_retained_recovery.py",
-      "bytes": 31298,
-      "sha256": "c2f9bdbb0f4626746f5f8be390e746391fe65e5367ae925dfe8e3cf7aa6da221"
+      "bytes": 31575,
+      "sha256": "744f54ed3bd297f8130f5b2c61ba9f811b0a3febf5e0061a24906a08bc6b8340"
     },
     {
       "path": "saas/scripts/oci_promotion.py",
@@ -458,8 +458,8 @@
     },
     {
       "path": "tests/saas/test_main22_retained_recovery.py",
-      "bytes": 20020,
-      "sha256": "5fd35636fa4e5d3e7cb2e9d7d7e993f4381e74760b652d7a0599e170e53aaffc"
+      "bytes": 21725,
+      "sha256": "0a8618d2956b5c8116bf10764b43d050c6bed9261d483918b95b243d83784186"
     },
     {
       "path": "tests/saas/test_oci_candidate_build_capacity.py",
@@ -909,5 +909,18 @@
     "previous_candidate": "83e26b36a6bd8eac288154f4f259d4b4ef4adaa4b750798a15ebec358c557738",
     "previous_authority_record_sha256": "ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94",
     "no_new_protected_source_changes": true
+  },
+  "fixed077_new_product_classifier_repair": {
+    "failed_run_id": 44143511350,
+    "failed_job_id": 134252318976,
+    "failure": "Historical recovery manifest selected the old-only controller classifier for changed approved product source before any OCI build.",
+    "scope": "After exact current finite source validation, approved changes outside old controller-only paths select normal same-main full build mode. Exact old controller-only registration remains mandatory for retained recovery.",
+    "related_paths": [
+      "saas/scripts/main22_retained_recovery.py",
+      "tests/saas/test_main22_retained_recovery.py"
+    ],
+    "fixed077_four_blobs_unchanged": true,
+    "original_failure_preserved": true,
+    "OCI_builds_or_scans_in_failed_run": 0
   }
 }

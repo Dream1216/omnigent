@@ -165,6 +165,13 @@ def classify(repo: Path, revision: str) -> dict[str, Any]:
         ),
         "normal finite source budget qualification differs",
     )
+    if set(changes) - CONTROL_PATHS:
+        # Approved product changes need fresh builds; the old registration stays historical.
+        return {
+            "mode": "same-main",
+            "product_revision": revision,
+            "controller_revision": revision,
+        }
     governance = set(
         read_json(repo / "saas/governance/ordinary-m-native-0142-source-scope.json")[
             "governance_paths"
