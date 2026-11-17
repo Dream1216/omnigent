@@ -63,13 +63,13 @@ class FixedRelease(NamedTuple):
 
 _FIXED_RELEASES = {
     "m2c": FixedRelease(PRODUCT, _FIXED_TREE, _FIXED_RUN, ORIGIN_FILE, WORKFLOW, _EVIDENCE_KIND),
-    "main4cb": FixedRelease(
-        "4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
-        "a3de86a0a5e8ad9120b7ac451d135804335d5525",
-        43755049480,
+    "main342": FixedRelease(
+        "34201d054c563b1760e6990cdcaa8a71da097471",
+        "25e90c8c4b284f1282b309bbe33bae388f8d5a98",
+        43980645999,
         ORIGIN_FILE.with_name("main4cb-origin.json"),
         ".github/workflows/saas-m-current-evidence-renewal.yml",
-        "same_signed_M4cb_current_scan_evidence",
+        "same_signed_M342_current_scan_evidence",
     ),
 }
 
@@ -87,15 +87,110 @@ def select_release(release: str) -> None:
     )
 
 
+CURRENT_PRODUCT = "34201d054c563b1760e6990cdcaa8a71da097471"
+CURRENT_TREE = "25e90c8c4b284f1282b309bbe33bae388f8d5a98"
+CURRENT_SOURCE_RUN = 43957191521
+SOURCE_REQUIRED_JOBS = {
+    "verify-candidate-preflight": 133614979204,
+    (
+        "verify-production-migration-replay "
+        "(postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab..."
+    ): 133614979307,
+    (
+        "verify-production-migration-replay "
+        "(postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a..."
+    ): 133614979426,
+    "build-candidate": 133617883066,
+}
+CURRENT_PUBLISHER_RUN = 43980645999
+_CURRENT_ORIGIN_Q_SHA256 = "adbdb36ffb8ba3f95455fe114f1a742a0276f6fb993f563659d062552cd5e5ca"
+_CURRENT_SOURCE_QUALIFICATION_SHA256 = (
+    "96006ad901c9069dc43dc0cdf6a6970b23959352685019482893d9e4a98b98f3"
+)
+_CURRENT_CORE_QUALIFICATION_SHA256 = (
+    "487649b8ae9dfb27d379e6e651eb4f61bc4c90585e89424ea3b632839647fbcd"
+)
+_CURRENT_CORE_EXPIRY = "2026-11-17T21:10:21+00:00"
+CURRENT_PATHS = frozenset(
+    (
+        ".github/actions/compat-smoke-m2c-evidence-renewal/renewal.py",
+        ".github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py",
+        ".github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json",
+        ".github/workflows/saas-m-current-evidence-renewal.yml",
+        ".github/workflows/saas-upstream-compat.yml",
+        "tests/saas/test_upstream_delta.py",
+    )
+)
+CURRENT_REGISTRY = ".github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json"
+
+
 def origin() -> dict:
     value = read_json(ORIGIN_FILE)
-    extra = (
-        {"source_qualification_sha256", "original_main_ci", "original_environment_review"}
-        if _FIXED_RUN == 43755049480
-        else set()
-    )
+    if _FIXED_RUN == CURRENT_PUBLISHER_RUN:
+        require(
+            value["product_revision"] == CURRENT_PRODUCT
+            and value["product_tree"] == CURRENT_TREE
+            and value["run_id"] == CURRENT_PUBLISHER_RUN
+            and value["source_run_id"] == CURRENT_SOURCE_RUN
+            and value["attempt"] == value["source_attempt"] == 1
+            and value["workflow"] == ".github/workflows/saas-image-candidate.yml"
+            and value["rebuilt"] is False,
+            "fixed342 signed origin differs",
+        )
+        for key in ("source_qualification_sha256", "origin_q_sha256", "manifest_sha256"):
+            require(
+                re.fullmatch(r"[0-9a-f]{64}", str(value[key])) is not None,
+                "actual342 first P1/q pins not materialized",
+            )
+        require(
+            value["source_required_jobs"] == SOURCE_REQUIRED_JOBS
+            and value["required_jobs"].keys() == {"publish-signed", "verify-published-source"}
+            and all(
+                type(j) is int and j > 0
+                for rows in (value["source_required_jobs"], value["required_jobs"])
+                for j in rows.values()
+            ),
+            "actual342 origin native jobs required",
+        )
+        require(
+            value["origin_q_sha256"] == _CURRENT_ORIGIN_Q_SHA256
+            and value["source_qualification_sha256"] == _CURRENT_SOURCE_QUALIFICATION_SHA256
+            and value["original_main_ci"]["qualification_sha256"]
+            == _CURRENT_CORE_QUALIFICATION_SHA256
+            and value["original_main_ci"]["expires_at"] == _CURRENT_CORE_EXPIRY,
+            "actual fixed342 original qualification/Main CI pins differ",
+        )
+        require(
+            value["original_main_ci"]["product_revision"] == CURRENT_PRODUCT
+            and value["original_main_ci"]["product_tree"] == CURRENT_TREE
+            and value["original_main_ci"]["required_workflow_count"] == 6
+            and value["original_environment_review"]["run"] == CURRENT_PUBLISHER_RUN
+            and value["original_environment_review"]["environment"] == "production-image"
+            and value["original_environment_review"]["no_rules_bypassed"] is True,
+            "original342 Main CI or normal protected review differs",
+        )
+        caps = value["origin_hard_caps"]
+        require(
+            set(caps) == {"product_core", "source_created24", "publisher_created24"}
+            and caps["product_core"] == value["original_main_ci"]["expires_at"],
+            "all original nonsecurity clocks required",
+        )
+        for cap in caps.values():
+            instant(cap)
+        for role, run in (("oci", CURRENT_SOURCE_RUN), ("signed", CURRENT_PUBLISHER_RUN)):
+            item = value["artifacts"][role]
+            require(
+                item["run_id"] == run
+                and type(item["id"]) is int
+                and item["id"] > 0
+                and type(item["bytes"]) is int
+                and item["bytes"] > 0
+                and re.fullmatch(r"[0-9a-f]{64}", str(item["sha256"])),
+                "actual342 immutable artifact pins required",
+            )
+        return value
     require(
-        set(value) == _ORIGIN_FIELDS | extra
+        set(value) == _ORIGIN_FIELDS
         and value["product_revision"] == PRODUCT
         and value["product_tree"] == _FIXED_TREE
         and value["run_id"] == _FIXED_RUN
@@ -104,26 +199,191 @@ def origin() -> dict:
         and value["rebuilt"] is False,
         "fixed original signed M identity differs",
     )
-    if _FIXED_RUN == 43755049480:
-        require(
-            value.get("source_qualification_sha256")
-            == "821f80467cad0328549a3d8b8f0697b90edcbcf8c1d5eb79efcf3e83f76009e5"
-            and value.get("original_main_ci")
-            == {
-                "product_revision": PRODUCT,
-                "product_tree": _FIXED_TREE,
-                "qualification_sha256": (
-                    "b9e45e69935692dc6b0de8d987cb4b41ba2360643551c2c3a7b95de04e59ec8d"
-                ),
-                "expires_at": "2026-11-16T19:54:52+00:00",
-                "required_workflow_count": 6,
-            }
-            and value["original_environment_review"]["run"] == _FIXED_RUN
-            and value["original_environment_review"]["environment"] == "production-image"
-            and value["original_environment_review"]["no_rules_bypassed"] is True,
-            "original Source qualification, Main CI or normal environment differs",
-        )
     return value
+
+
+def validate_controller_changes(changes: dict, registered: set) -> None:
+    require(
+        set(changes) == CURRENT_PATHS
+        and set(changes) == registered
+        and all(status == "M" for status in changes.values()),
+        "fixed342 controller exact reviewed CI paths/statuses differ",
+    )
+
+
+def controller_budget(repo: Path, product_root: Path, policy: str) -> dict:
+    # Reuse the original classifier's finite-diff principle, never a prefix skip.
+    from saas.scripts import check_upstream_delta as guard
+    from saas.scripts.fixed_main16_ci_promotion import _git
+
+    require(
+        _git(repo, "rev-parse", "HEAD") == policy and policy != CURRENT_PRODUCT,
+        "actual distinct controller checkout required",
+    )
+    _git(repo, "merge-base", "--is-ancestor", CURRENT_PRODUCT, policy)
+    require(not _git(repo, "diff", "HEAD", "--"), "tracked controller checkout changed")
+    require(
+        _git(product_root, "rev-parse", "HEAD") == CURRENT_PRODUCT
+        and _git(product_root, "rev-parse", "HEAD^{tree}") == CURRENT_TREE
+        and not _git(product_root, "status", "--porcelain"),
+        "fixed product view differs",
+    )
+    registered = read_json(repo / CURRENT_REGISTRY)["controller_scope"]
+    changes = {
+        p: status
+        for status, p in (
+            row.split("\t")
+            for row in _git(
+                repo, "diff", "--no-renames", "--name-status", CURRENT_PRODUCT, policy
+            ).splitlines()
+        )
+    }
+    validate_controller_changes(changes, set(registered["postimages"]) | {CURRENT_REGISTRY})
+    require(
+        set(registered["postimages"]) == CURRENT_PATHS - {CURRENT_REGISTRY},
+        "exact five controller code/workflow/test postimages required",
+    )
+    for path, expected in registered["postimages"].items():
+        target = repo / path
+        require(
+            target.is_file()
+            and not target.is_symlink()
+            and digest(target) == expected["sha256"]
+            and target.stat().st_size == expected["bytes"],
+            "controller postimage differs",
+        )
+    authority = registered["authority"]
+    require(
+        authority["thread"] == "01a1db4c-a4d7-7693-96b6-af294b9aed8b"
+        and authority["Source_handoff_sha256"]
+        == "f6cc2d86c6bdb4d3d62fb1e24b3dabce4adbbd8c1279e5f529ee79d2a0172187"
+        and authority["decision"] == "MAINTAINER_REGISTERED_EXACT_CI_ONLY_INCREMENT"
+        and all(
+            re.fullmatch(r"[0-9a-f]{64}", str(authority[k]))
+            for k in ("registration_sha256", "independent_review_sha256")
+        ),
+        "Root exact registration and independent review not materialized",
+    )
+    manifest = read_json(product_root / ".github/workflows/saas-controller-source-budget.json")
+    require(
+        guard._ordinary_m_candidate_matches(product_root, manifest),
+        "original fixed342 finite product scope failed",
+    )
+    baseline = manifest["upstream_revision"]
+    _git(repo, "merge-base", "--is-ancestor", baseline, policy)
+    deltas = guard.collect_deltas(repo, baseline)
+    upstream = [
+        d.path
+        for d in deltas
+        if not guard._is_under(d.path, tuple(manifest["downstream_owned_prefixes"]))
+    ]
+    report = guard.evaluate_delta(
+        deltas,
+        manifest,
+        active_patch_count=len(list((repo / manifest["patch_queue_directory"]).glob("*.patch"))),
+        reverse_dependencies=guard.scan_reverse_dependencies(repo, upstream),
+        lineage_ok=True,
+        version_ok=guard._read_project_version(repo) == manifest["upstream_version"],
+        source_root=product_root,
+    )
+    require(report["status"] == "pass", "actual controller budget failed")
+    report.update(
+        product_revision=CURRENT_PRODUCT,
+        product_tree=CURRENT_TREE,
+        controller_revision=policy,
+        controller_tree=_git(repo, "rev-parse", "HEAD^{tree}"),
+        controller_scope=registered,
+        product_guard_scope_sha256=digest(
+            product_root / "saas/governance/ordinary-m-native-0142-source-scope.json"
+        ),
+    )
+    return report
+
+
+def verify_two_run_origin(
+    run: dict, jobs: dict, tree: dict, artifacts: dict, producer: dict
+) -> None:
+    value = origin()
+    for native, job_rows, identifier, event, expected in (
+        (
+            producer["run"],
+            producer["jobs"],
+            CURRENT_SOURCE_RUN,
+            "push",
+            value["source_required_jobs"],
+        ),
+        (run, jobs, CURRENT_PUBLISHER_RUN, "workflow_dispatch", value["required_jobs"]),
+    ):
+        require(
+            native["id"] == identifier
+            and native["head_sha"] == CURRENT_PRODUCT
+            and native["run_attempt"] == 1
+            and native["head_branch"] == "main"
+            and native["event"] == event
+            and native["path"] == value["workflow"]
+            and native["status"] == "completed"
+            and native["conclusion"] == "success"
+            and native["repository"]["full_name"] == value["repository"],
+            "fixed342 original source/publisher invocation differs",
+        )
+        by_name = {j["name"]: j for j in job_rows["jobs"]}
+        for name, job_id in expected.items():
+            j = by_name.get(name, {})
+            require(
+                j.get("id") == job_id
+                and j["run_id"] == identifier
+                and j["run_attempt"] == 1
+                and j["status"] == "completed"
+                and j["conclusion"] == "success"
+                and j["runner_group_name"] == "GitHub Actions"
+                and "ubuntu-24.04" in j["labels"],
+                "original342 hosted job differs",
+            )
+    migrations = [
+        j
+        for j in producer["jobs"]["jobs"]
+        if j["name"].startswith("verify-production-migration-replay (postgres:")
+    ]
+    require(
+        len(migrations) == 2 and {j["id"] for j in migrations} == {133614979307, 133614979426},
+        "both original PG16 and PG18 migration jobs required",
+    )
+    by_name = {j["name"]: j for j in jobs["jobs"]}
+    require(
+        all(
+            by_name[name]["conclusion"] == "skipped"
+            for name in (
+                "build-candidate",
+                "verify-candidate-preflight",
+                "verify-production-migration-replay",
+            )
+        ),
+        "publisher must retain original logical build/preflight/replay skips",
+    )
+    require(
+        tree["sha"] == CURRENT_PRODUCT and tree["tree"]["sha"] == CURRENT_TREE,
+        "fixed342 original product tree differs",
+    )
+    for role, rows in (("oci", producer["artifacts"]), ("signed", artifacts)):
+        expected = value["artifacts"][role]
+        item = next(a for a in rows["artifacts"] if a["id"] == expected["id"])
+        require(
+            item["name"] == expected["name"]
+            and item["size_in_bytes"] == expected["bytes"]
+            and item["digest"] == "sha256:" + expected["sha256"]
+            and item["expired"] is False
+            and item["workflow_run"]["id"] == expected["run_id"]
+            and item["workflow_run"]["head_sha"] == CURRENT_PRODUCT,
+            "fixed342 immutable split-origin artifact differs",
+        )
+    caps = value["origin_hard_caps"]
+    require(
+        instant(caps["source_created24"])
+        == instant(producer["run"]["created_at"]) + timedelta(hours=24)
+        and instant(caps["publisher_created24"])
+        == instant(run["created_at"]) + timedelta(hours=24),
+        "original source/publisher clocks cannot renew",
+    )
 
 
 def instant(value: str) -> datetime:
@@ -132,7 +392,13 @@ def instant(value: str) -> datetime:
     return parsed
 
 
-def verify_origin(run: dict, jobs: dict, tree: dict, artifacts: dict) -> None:
+def verify_origin(
+    run: dict, jobs: dict, tree: dict, artifacts: dict, producer: dict | None = None
+) -> None:
+    if _FIXED_RUN == CURRENT_PUBLISHER_RUN:
+        require(producer is not None, "actual fixed342 push origin required")
+        verify_two_run_origin(run, jobs, tree, artifacts, producer)
+        return
     value = origin()
     require(
         run["id"] == value["run_id"]
@@ -185,6 +451,13 @@ def download_origin(destination: Path) -> None:
         "tree": api(f"{prefix}/git/commits/{PRODUCT}"),
         "artifacts": api(f"{prefix}/actions/runs/{value['run_id']}/artifacts?per_page=100"),
     }
+    if _FIXED_RUN == CURRENT_PUBLISHER_RUN:
+        source = f"{prefix}/actions/runs/{CURRENT_SOURCE_RUN}"
+        native["producer"] = {
+            "run": api(source + "/attempts/1"),
+            "jobs": api(source + "/attempts/1/jobs?per_page=100"),
+            "artifacts": api(source + "/artifacts?per_page=100"),
+        }
     verify_origin(**native)
     destination.mkdir(parents=True, exist_ok=False)
     (destination / "native-origin.json").write_text(json.dumps(native, sort_keys=True) + "\n")
@@ -200,6 +473,26 @@ def download_origin(destination: Path) -> None:
         digest(destination / "sealed" / MANIFEST_NAME) == value["manifest_sha256"],
         "retained OCI seal differs",
     )
+    if _FIXED_RUN == CURRENT_PUBLISHER_RUN:
+        signed = destination / "signed-origin"
+        facts = read_json(signed / "signed-release-candidate.json")
+        proof = read_json(signed / "promotion-source.json")
+        promotion = facts["promotion"]
+        require(
+            facts["product_revision"] == CURRENT_PRODUCT
+            and promotion["rebuilt"] is False
+            and promotion["source_run_id"] == proof["source_run_id"] == CURRENT_SOURCE_RUN
+            and promotion["source_run_attempt"] == proof["source_run_attempt"] == 1
+            and promotion["original_artifact_id"]
+            == proof["artifact_id"]
+            == value["artifacts"]["oci"]["id"]
+            and promotion["original_artifact_sha256"]
+            == proof["artifact_sha256"]
+            == value["artifacts"]["oci"]["sha256"]
+            and promotion["candidate_manifest_sha256"] == value["manifest_sha256"]
+            and digest(signed / "promotion-source.json") == promotion["source_proof_sha256"],
+            "fixed342 original signed-source/seal binding differs",
+        )
 
 
 def digest(path: Path) -> str:
@@ -272,6 +565,8 @@ def qualify(
     expiry = min(built + timedelta(hours=24), checked + timedelta(hours=24))
     if "original_main_ci" in value:
         expiry = min(expiry, instant(value["original_main_ci"]["expires_at"]))
+    if "origin_hard_caps" in value:
+        expiry = min(expiry, *(instant(v) for v in value["origin_hard_caps"].values()))
     require(
         latest["status"] == "active"
         and instant(latest["built"]) == built
@@ -353,6 +648,14 @@ def verify_current(payload: dict, scans: Path, *, policy: str, run: str, attempt
             instant(payload["expires_at"]) <= instant(value["original_main_ci"]["expires_at"]),
             "new security evidence cannot renew original Main CI",
         )
+    if "origin_hard_caps" in value:
+        require(
+            all(
+                instant(payload["expires_at"]) <= instant(v)
+                for v in value["origin_hard_caps"].values()
+            ),
+            "current evidence cannot renew original nonsecurity clocks",
+        )
     manifest = read_json(scans / MANIFEST_NAME)
     require(digest(scans / MANIFEST_NAME) == value["manifest_sha256"], "independent seal differs")
     require(
@@ -406,10 +709,19 @@ def verify_current(payload: dict, scans: Path, *, policy: str, run: str, attempt
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument(
-        "action", choices=("origin", "qualify", "verify", "origin-signatures", "predicate")
+        "action",
+        choices=(
+            "origin",
+            "qualify",
+            "verify",
+            "origin-signatures",
+            "predicate",
+            "controller-budget",
+        ),
     )
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--scans", type=Path)
+    parser.add_argument("--product-root", type=Path)
     parser.add_argument("--policy")
     parser.add_argument("--run")
     parser.add_argument("--attempt")
@@ -417,6 +729,13 @@ def main() -> None:
     parser.add_argument("--release", choices=tuple(_FIXED_RELEASES), default="m2c")
     args = parser.parse_args()
     select_release(args.release)
+    if args.action == "controller-budget":
+        print(
+            json.dumps(
+                controller_budget(args.root, args.product_root, args.policy), sort_keys=True
+            )
+        )
+        return
     if args.action == "origin":
         download_origin(args.root)
     elif args.action == "predicate":

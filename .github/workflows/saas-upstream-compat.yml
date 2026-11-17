@@ -197,10 +197,22 @@ jobs:
             --output artifacts/production-readiness-report.json
       - name: Enforce source-intrusion budget
         if: matrix.shard == 0
-        run: >-
-          uv run python saas/scripts/check_upstream_delta.py
-          --manifest .github/workflows/saas-controller-source-budget.json
-          --output artifacts/upstream-delta-report.json
+        run: |
+          set -euo pipefail
+          helper=.github/actions/compat-smoke-m2c-evidence-renewal/renewal.py
+          registry=.github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json
+          if jq -e '.product_revision == "34201d054c563b1760e6990cdcaa8a71da097471" and .controller_scope != null' "$registry" >/dev/null; then
+            fixed="$RUNNER_TEMP/budget-product-342"
+            git worktree add --detach "$fixed" 34201d054c563b1760e6990cdcaa8a71da097471
+            trap 'git worktree remove --force "$fixed"' EXIT
+            uv run python "$helper" controller-budget --release main342 --root "$GITHUB_WORKSPACE" \
+              --product-root "$fixed" --policy "$(git rev-parse HEAD)" \
+              > artifacts/upstream-delta-report.json
+          else
+            uv run python saas/scripts/check_upstream_delta.py \
+              --manifest .github/workflows/saas-controller-source-budget.json \
+              --output artifacts/upstream-delta-report.json
+          fi
       - name: Upload compatibility evidence
         if: always() && matrix.shard == 0
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

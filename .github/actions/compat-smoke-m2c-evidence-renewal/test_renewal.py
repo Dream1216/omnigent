@@ -22,7 +22,78 @@ spec.loader.exec_module(renewal)
 POLICY = "b" * 40
 
 
-@pytest.fixture(params=["m2c", "main4cb"])
+# Exact native Source topology from frozen43957191521/a1, SHA09db4965.
+SOURCE342_ACTUAL_JOB_TOPOLOGY = [
+    {
+        "id": 133614748016,
+        "name": "source-context",
+        "run_id": 43957191521,
+        "run_attempt": 1,
+        "head_sha": "34201d054c563b1760e6990cdcaa8a71da097471",
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "success",
+        "runner_group_name": "GitHub Actions",
+        "labels": ["ubuntu-24.04"],
+    },
+    {
+        "id": 133614979204,
+        "name": "verify-candidate-preflight",
+        "run_id": 43957191521,
+        "run_attempt": 1,
+        "head_sha": "34201d054c563b1760e6990cdcaa8a71da097471",
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "success",
+        "runner_group_name": "GitHub Actions",
+        "labels": ["ubuntu-24.04"],
+    },
+    {
+        "id": 133614979307,
+        "name": (
+            "verify-production-migration-replay "
+            "(postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab..."
+        ),
+        "run_id": 43957191521,
+        "run_attempt": 1,
+        "head_sha": "34201d054c563b1760e6990cdcaa8a71da097471",
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "success",
+        "runner_group_name": "GitHub Actions",
+        "labels": ["ubuntu-24.04"],
+    },
+    {
+        "id": 133614979426,
+        "name": (
+            "verify-production-migration-replay "
+            "(postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a..."
+        ),
+        "run_id": 43957191521,
+        "run_attempt": 1,
+        "head_sha": "34201d054c563b1760e6990cdcaa8a71da097471",
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "success",
+        "runner_group_name": "GitHub Actions",
+        "labels": ["ubuntu-24.04"],
+    },
+    {
+        "id": 133617883066,
+        "name": "build-candidate",
+        "run_id": 43957191521,
+        "run_attempt": 1,
+        "head_sha": "34201d054c563b1760e6990cdcaa8a71da097471",
+        "head_branch": "main",
+        "status": "completed",
+        "conclusion": "success",
+        "runner_group_name": "GitHub Actions",
+        "labels": ["ubuntu-24.04"],
+    },
+]
+
+
+@pytest.fixture(params=["m2c", "main342"])
 def _fixed_release(request, monkeypatch):
     for name in (
         "PRODUCT",
@@ -34,12 +105,115 @@ def _fixed_release(request, monkeypatch):
     ):
         monkeypatch.setattr(renewal, name, getattr(renewal, name))
     renewal.select_release(request.param)
+    if request.param == "main342":
+        # Synthetic unit origin only; production null pins remain fail-closed.
+        reader = renewal.read_json
+        value = reader(renewal.ORIGIN_FILE)
+        end = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+        for key, constant, char in (
+            ("origin_q_sha256", "_CURRENT_ORIGIN_Q_SHA256", "a"),
+            ("source_qualification_sha256", "_CURRENT_SOURCE_QUALIFICATION_SHA256", "b"),
+        ):
+            value[key] = char * 64
+            monkeypatch.setattr(renewal, constant, value[key])
+        value["manifest_sha256"] = "c" * 64
+        value["original_main_ci"]["qualification_sha256"] = "d" * 64
+        value["original_main_ci"]["expires_at"] = end
+        monkeypatch.setattr(renewal, "_CURRENT_CORE_QUALIFICATION_SHA256", "d" * 64)
+        monkeypatch.setattr(renewal, "_CURRENT_CORE_EXPIRY", end)
+        value["origin_hard_caps"] = dict.fromkeys(value["origin_hard_caps"], end)
+        # Source names/IDs stay the real frozen preflight/build/PG16/PG18 tuple.
+        assert value["source_required_jobs"] == renewal.SOURCE_REQUIRED_JOBS
+        for index, name in enumerate(value["required_jobs"], start=1):
+            value["required_jobs"][name] = index
+        for index, item in enumerate(value["artifacts"].values(), start=1):
+            item.update(id=index, bytes=100, sha256="e" * 64)
+        value["original_environment_review"]["no_rules_bypassed"] = True
+        monkeypatch.setattr(
+            renewal,
+            "read_json",
+            lambda path: copy.deepcopy(value) if path == renewal.ORIGIN_FILE else reader(path),
+        )
     return request.param
 
 
 @pytest.fixture
 def native_origin(_fixed_release):
     value = renewal.origin()
+    if _fixed_release == "main342":
+
+        def run(identifier, event, cap):
+            return {
+                "id": identifier,
+                "run_attempt": 1,
+                "head_sha": renewal.PRODUCT,
+                "head_branch": "main",
+                "path": value["workflow"],
+                "event": event,
+                "status": "completed",
+                "conclusion": "success",
+                "repository": {"full_name": value["repository"]},
+                "created_at": (renewal.instant(cap) - timedelta(hours=24)).isoformat(),
+            }
+
+        def jobs(identifier, expected):
+            return {
+                "jobs": [
+                    {
+                        "id": job_id,
+                        "name": name,
+                        "run_id": identifier,
+                        "run_attempt": 1,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "runner_group_name": "GitHub Actions",
+                        "labels": ["ubuntu-24.04"],
+                    }
+                    for name, job_id in expected.items()
+                ]
+            }
+
+        def artifact(role):
+            item = value["artifacts"][role]
+            return {
+                "artifacts": [
+                    {
+                        "id": item["id"],
+                        "name": item["name"],
+                        "size_in_bytes": item["bytes"],
+                        "digest": "sha256:" + item["sha256"],
+                        "expired": False,
+                        "workflow_run": {"id": item["run_id"], "head_sha": renewal.PRODUCT},
+                    }
+                ]
+            }
+
+        publisher_jobs = jobs(value["run_id"], value["required_jobs"])
+        publisher_jobs["jobs"].extend(
+            {"name": name, "conclusion": "skipped"}
+            for name in (
+                "build-candidate",
+                "verify-candidate-preflight",
+                "verify-production-migration-replay",
+            )
+        )
+        return {
+            "run": run(
+                value["run_id"],
+                "workflow_dispatch",
+                value["origin_hard_caps"]["publisher_created24"],
+            ),
+            "jobs": publisher_jobs,
+            "artifacts": artifact("signed"),
+            "tree": {"sha": renewal.PRODUCT, "tree": {"sha": value["product_tree"]}},
+            "producer": {
+                "run": run(
+                    value["source_run_id"], "push", value["origin_hard_caps"]["source_created24"]
+                ),
+                "jobs": {"jobs": copy.deepcopy(SOURCE342_ACTUAL_JOB_TOPOLOGY)},
+                "artifacts": artifact("oci"),
+            },
+        }
     run = {
         "id": value["run_id"],
         "run_attempt": 1,
@@ -154,6 +328,10 @@ def current(tmp_path, monkeypatch, _fixed_release):
         value["original_main_ci"]["expires_at"] = (
             datetime.now(UTC) + timedelta(hours=2)
         ).isoformat()
+        if "origin_hard_caps" in value:
+            value["origin_hard_caps"] = dict.fromkeys(
+                value["origin_hard_caps"], value["original_main_ci"]["expires_at"]
+            )
     monkeypatch.setattr(renewal, "origin", lambda: copy.deepcopy(value))
     monkeypatch.setattr(renewal, "PRODUCT", REVISION)
     monkeypatch.setattr(
@@ -303,5 +481,97 @@ def test_protected_workflow_signs_only_new_evidence_for_its_fixed_origin(_fixed_
     assert all(access == "read" for access in independent["permissions"].values())
     verification = "\n".join(step.get("run", "") for step in independent["steps"])
     assert renewal.WORKFLOW in verification
-    assert commands.count("--release main4cb") == (4 if _fixed_release == "main4cb" else 0)
-    assert verification.count("--release main4cb") == (1 if _fixed_release == "main4cb" else 0)
+    assert commands.count("--release main342") == (4 if _fixed_release == "main342" else 0)
+    assert verification.count("--release main342") == (1 if _fixed_release == "main342" else 0)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "runtime",
+        "extra-owned",
+        "missing",
+        "missing-product-fixture",
+        "other-saas-test",
+        "delete",
+        "rename",
+        "type",
+    ],
+)
+def test_current342_controller_has_exact_owned_boundary(fault):
+    assert "tests/saas/test_upstream_delta.py" in renewal.CURRENT_PATHS
+    changes = dict.fromkeys(renewal.CURRENT_PATHS, "M")
+    registered = set(changes)
+    if fault == "runtime":
+        changes["omnigent/inner/codex_native_executor.py"] = "M"
+        registered.add("omnigent/inner/codex_native_executor.py")
+    elif fault == "extra-owned":
+        changes[".github/workflows/saas-image-candidate.yml"] = "M"
+        registered.add(".github/workflows/saas-image-candidate.yml")
+    elif fault == "missing":
+        registered.pop()
+    elif fault == "missing-product-fixture":
+        changes.pop("tests/saas/test_upstream_delta.py")
+        registered.remove("tests/saas/test_upstream_delta.py")
+    elif fault == "other-saas-test":
+        changes["tests/saas/other_owned_test.py"] = "M"
+        registered.add("tests/saas/other_owned_test.py")
+    elif fault:
+        changes[next(iter(changes))] = {"delete": "D", "rename": "R100", "type": "T"}[fault]
+    if fault is None:
+        renewal.validate_controller_changes(changes, registered)
+    else:
+        with pytest.raises(ValueError, match="exact reviewed CI"):
+            renewal.validate_controller_changes(changes, registered)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "source-event",
+        "source-run",
+        "source-job",
+        "wrong-artifact-run",
+        "publisher-rebuild",
+        "source-cap",
+        "publisher-cap",
+    ],
+)
+def test_fixed342_two_run_origin_preserves_distinct_native_guards(
+    _fixed_release, native_origin, fault
+):
+    if _fixed_release != "main342":
+        return
+    if fault == "source-event":
+        native_origin["producer"]["run"]["event"] = "workflow_dispatch"
+    elif fault == "source-run":
+        native_origin["producer"]["run"]["id"] += 1
+    elif fault == "source-job":
+        next(
+            job for job in native_origin["producer"]["jobs"]["jobs"] if job["id"] == 133617883066
+        )["conclusion"] = "failure"
+    elif fault == "wrong-artifact-run":
+        native_origin["producer"]["artifacts"]["artifacts"][0]["workflow_run"]["id"] = (
+            renewal.CURRENT_PUBLISHER_RUN
+        )
+    elif fault == "publisher-rebuild":
+        native_origin["jobs"]["jobs"][-1]["conclusion"] = "success"
+    else:
+        row = native_origin["producer"]["run"] if fault == "source-cap" else native_origin["run"]
+        row["created_at"] = (renewal.instant(row["created_at"]) + timedelta(seconds=1)).isoformat()
+    with pytest.raises(ValueError):
+        renewal.verify_origin(**native_origin)
+
+
+@pytest.mark.parametrize("missing_job_id", [133614979307, 133614979426])
+def test_fixed342_origin_requires_each_real_frozen_PG_job(
+    _fixed_release, native_origin, missing_job_id
+):
+    if _fixed_release != "main342":
+        return
+    native_origin["producer"]["jobs"]["jobs"] = [
+        row for row in native_origin["producer"]["jobs"]["jobs"] if row["id"] != missing_job_id
+    ]
+    with pytest.raises(ValueError):
+        renewal.verify_origin(**native_origin)

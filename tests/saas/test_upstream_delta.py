@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -739,11 +740,67 @@ def test_source_isolation_floor_remains_enforced_at_085(
     )
 
 
+@pytest.fixture(scope="session")
+def ordinary_m_product_source_root(tmp_path_factory: pytest.TempPathFactory):
+    """Keep product postimage tests on one real immutable checkout per worker."""
+    product_revision = "34201d054c563b1760e6990cdcaa8a71da097471"
+    product_tree = "25e90c8c4b284f1282b309bbe33bae388f8d5a98"
+    controller_root = Path(__file__).resolve().parents[2]
+    supplied = os.environ.get("OMNIGENT_TEST_ORDINARY_M_PRODUCT_ROOT")
+
+    def git(repo: Path, *args: str, check: bool = True):
+        return subprocess.run(
+            ["git", *args], cwd=repo, check=check, capture_output=True, text=True, timeout=120
+        )
+
+    def verify_product(root: Path) -> None:
+        assert git(root, "rev-parse", "HEAD").stdout.strip() == product_revision
+        assert git(root, "rev-parse", "HEAD^{tree}").stdout.strip() == product_tree
+        assert not git(root, "status", "--porcelain").stdout.strip()
+
+    if supplied:
+        root = Path(supplied).resolve(strict=True)
+        verify_product(root)
+        yield root
+        return
+
+    registry = controller_root / (
+        ".github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json"
+    )
+    registered = json.loads(registry.read_bytes())
+    if registered["product_revision"] != product_revision or not registered.get(
+        "controller_scope"
+    ):
+        yield controller_root
+        return
+    assert registered["product_tree"] == product_tree
+    from filelock import FileLock
+
+    common = Path(git(controller_root, "rev-parse", "--git-common-dir").stdout.strip())
+    if not common.is_absolute():
+        common = controller_root / common
+    lock = FileLock(str(common / "ordinary-m-product-fixture.lock"), timeout=120)
+    root = tmp_path_factory.mktemp("ordinary-m-fixed-product") / "checkout"
+    # Serialize shallow-fetch/worktree metadata across xdist session fixtures.
+    with lock:
+        if git(
+            controller_root, "cat-file", "-e", product_revision + "^{commit}", check=False
+        ).returncode:
+            git(controller_root, "fetch", "--no-tags", "--depth=1", "origin", product_revision)
+        git(controller_root, "worktree", "add", "--detach", str(root), product_revision)
+    try:
+        verify_product(root)
+        yield root
+    finally:
+        with lock:
+            git(controller_root, "worktree", "remove", "--force", str(root))
+
+
 @pytest.fixture
-def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
+def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch, ordinary_m_product_source_root: Path):
     from saas.scripts import check_upstream_delta as guard
 
-    root = Path(__file__).resolve().parents[2]
+    root = ordinary_m_product_source_root
     manifest = json.loads((root / "saas/upstream-baseline.json").read_text())
     scope = json.loads((root / guard._ORDINARY_M_SCOPE_PATH).read_text())
     manifest["source_intrusion_budget"] = dict(scope["budgets"])

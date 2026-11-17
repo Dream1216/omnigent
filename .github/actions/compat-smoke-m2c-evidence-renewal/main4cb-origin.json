@@ -1,78 +1,119 @@
 {
   "artifacts": {
     "oci": {
-      "bytes": 5231928033,
-      "id": 14182093849,
-      "name": "saas-oci-promotion-4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
-      "sha256": "ad1fdb211748e037dae006f4c09e6b65d7d732f4fea31eeb5f35b8c44d66b6a4"
+      "run_id": 43957191521,
+      "id": 14282437726,
+      "bytes": 5232102129,
+      "name": "saas-oci-promotion-34201d054c563b1760e6990cdcaa8a71da097471",
+      "sha256": "89c5f7e060945095204ed33f039cea47fca09114cf039f0ddf12be296ba92562"
     },
     "signed": {
-      "bytes": 3975741,
-      "id": 14183029120,
-      "name": "signed-release-candidate-4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
-      "sha256": "a473467773775c12496647eab70604457a2b2ef0bfb58045479cb116ced94e0f"
+      "run_id": 43980645999,
+      "id": 14284422959,
+      "bytes": 3976709,
+      "name": "signed-release-candidate-34201d054c563b1760e6990cdcaa8a71da097471",
+      "sha256": "0d61c54dbc2e32b26711d9b3583469b45800bd44b22acf13ad4f8120320bfd67"
     }
   },
   "attempt": 1,
   "images": {
-    "host": "sha256:f3f1b00046d94a8f8363b4dcf78760739a7ab10d66a888f36aa418c12e34d21e",
-    "server": "sha256:2d5fe7919104042ab7971c9e8517b5ace238c1198dd351f2b78c9cbf29ea8a77"
+    "host": "sha256:e2641d43fe1e50586edf9501b9f0ad6a1d5addd06d3a3b5da0824cf17b598cbb",
+    "server": "sha256:c6db1d7d350df012609ed283b557fa5d77c2bfefba838187056e9c01588ba74d"
   },
-  "manifest_sha256": "b987fbc5e9ed07b8b9bf73847da63f46dad901b7ce9b91df9044f34d17e849be",
+  "manifest_sha256": "f0ad2d410be156a2a6c62835f456a409660d94787a6949f14a1c30862aca4faa",
   "original_environment_review": {
-    "approval_POST_count": 1,
+    "run": 43980645999,
     "attempt": 1,
-    "deployment_id": 7810538481,
+    "product_revision": "34201d054c563b1760e6990cdcaa8a71da097471",
     "environment": "production-image",
-    "id": 19541282195,
     "no_rules_bypassed": true,
-    "normal_pending_api_approval": true,
-    "product_revision": "4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
-    "review_received_at": "2026-11-15T21:54:56.055641+00:00",
-    "reviewer_login": "Dream1216",
-    "run": 43755049480,
-    "signatures_or_q_not_yet_claimed": true
+    "approval_POST_count": 1
   },
   "original_main_ci": {
-    "expires_at": "2026-11-16T19:54:52+00:00",
-    "product_revision": "4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
-    "product_tree": "a3de86a0a5e8ad9120b7ac451d135804335d5525",
-    "qualification_sha256": "b9e45e69935692dc6b0de8d987cb4b41ba2360643551c2c3a7b95de04e59ec8d",
+    "product_revision": "34201d054c563b1760e6990cdcaa8a71da097471",
+    "product_tree": "25e90c8c4b284f1282b309bbe33bae388f8d5a98",
+    "qualification_sha256": "487649b8ae9dfb27d379e6e651eb4f61bc4c90585e89424ea3b632839647fbcd",
+    "expires_at": "2026-11-17T21:10:21+00:00",
     "required_workflow_count": 6
   },
   "platforms": {
     "host-amd64": {
-      "config_digest": "sha256:9594df31367af48de3d0c1dd2223412d575c1ce5baaf4b6515d1c30c9525fd0e",
-      "manifest_digest": "sha256:1852d55c272cb879b53aacbffa1b5d3a3db52944c10203072f11eb8d0fc4d91d"
+      "config_digest": "sha256:76d508fed69d63907b7e73e045d0a4d5d3351e8e10e1173574bab52a08f1872a",
+      "manifest_digest": "sha256:6bab4f74cfc6103a58dd494bc464967d0214d64aad4aeb630f114a9aed1a5928"
     },
     "host-arm64": {
-      "config_digest": "sha256:5f3d41375fa5449673d4bd29aa338816bb1ebd8997a4c90a5958d2c42edf570f",
-      "manifest_digest": "sha256:bedaf44644b73bbfc97025df8b8b62cd04c0e0d6603fcf87481b1102fcfbcec3"
+      "config_digest": "sha256:25dc1addc8dba04d7f945881358bf8c360e9bd958fb421c4eb1ca451dcc2dc04",
+      "manifest_digest": "sha256:cf1245b95db9fa5b37f449838577cb1eecdb19e951534c7f26c85faca68ada11"
     },
     "server-amd64": {
-      "config_digest": "sha256:cd46154dd81cdebd866a3ae7185698b1aa61ce3a037e2a1b0266c9db9e7838b2",
-      "manifest_digest": "sha256:2e9dcea802f9199e6f7b442a7b7c9c43ddb7a69fa8ce63bc675b91dfcdf8a9bc"
+      "config_digest": "sha256:8c2fc0d244b5cd1c7c26930a072b7eff2e27cd567b2b91b797ed1c47d0c47e01",
+      "manifest_digest": "sha256:4fda6d15380acd8811608b1fa5b3b69face37a84273a0f6f1fd2665aa3a9fddb"
     },
     "server-arm64": {
-      "config_digest": "sha256:e6b7eeb82b8d4f7cf02db079145fb8dd309f7ce7d6f01ad04652386cd7bf67ed",
-      "manifest_digest": "sha256:6167fa905882a481be367aeeb30bc6c95c31ac86501ccf3ec217a3504ee80765"
+      "config_digest": "sha256:8e68119da556e1a8e78ebe2c26052d8da712186d9eb865a83088a0e8f4e3f261",
+      "manifest_digest": "sha256:b1fc6c3c9e14bec5ead3be0ab1a55b2ce76c7a12e5b7d0249008b5e669761fba"
     }
   },
-  "product_revision": "4cb4d5581e30e1a85faac6ddf1c23b1d60110d81",
-  "product_tree": "a3de86a0a5e8ad9120b7ac451d135804335d5525",
+  "product_revision": "34201d054c563b1760e6990cdcaa8a71da097471",
+  "product_tree": "25e90c8c4b284f1282b309bbe33bae388f8d5a98",
   "rebuilt": false,
   "repository": "Dream1216/omnigent",
-  "required_jobs": [
-    132937262240,
-    132937262421,
-    132937262645,
-    132939071364,
-    132971403766,
-    132979954294
-  ],
-  "run_id": 43755049480,
-  "schema_version": 1,
-  "source_date_epoch": 1794772441,
-  "source_qualification_sha256": "821f80467cad0328549a3d8b8f0697b90edcbcf8c1d5eb79efcf3e83f76009e5",
-  "workflow": ".github/workflows/saas-image-candidate.yml"
+  "required_jobs": {
+    "publish-signed": 133696180009,
+    "verify-published-source": 133711044172
+  },
+  "run_id": 43980645999,
+  "schema_version": 2,
+  "source_date_epoch": 1794863373,
+  "source_qualification_sha256": "96006ad901c9069dc43dc0cdf6a6970b23959352685019482893d9e4a98b98f3",
+  "workflow": ".github/workflows/saas-image-candidate.yml",
+  "source_run_id": 43957191521,
+  "source_attempt": 1,
+  "origin_q_sha256": "adbdb36ffb8ba3f95455fe114f1a742a0276f6fb993f563659d062552cd5e5ca",
+  "source_required_jobs": {
+    "verify-candidate-preflight": 133614979204,
+    "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...": 133614979307,
+    "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...": 133614979426,
+    "build-candidate": 133617883066
+  },
+  "origin_hard_caps": {
+    "product_core": "2026-11-17T21:10:21+00:00",
+    "source_created24": "2026-11-17T21:09:37+00:00",
+    "publisher_created24": "2026-11-17T23:35:49+00:00"
+  },
+  "source_context_job": {
+    "id": 133614748016,
+    "name": "source-context"
+  },
+  "controller_scope": {
+    "postimages": {
+      ".github/actions/compat-smoke-m2c-evidence-renewal/renewal.py": {
+        "bytes": 32498,
+        "sha256": "82f93ca5f14358541c7e873886a6eeade060cc7f33cf15506bb9c8f4677c16d6"
+      },
+      ".github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py": {
+        "bytes": 21881,
+        "sha256": "53597c025bd98b8eb9dd81d53071e741fe6da971e1f19b4992feec27a6b0737b"
+      },
+      ".github/workflows/saas-m-current-evidence-renewal.yml": {
+        "bytes": 6837,
+        "sha256": "a328aa8478c3e5ef92d8dbd0459eaba335b172f6375bfb560c054c1024008b04"
+      },
+      ".github/workflows/saas-upstream-compat.yml": {
+        "bytes": 12329,
+        "sha256": "8697c63281cba14d70a853c89ead7e37a64fef128b1ceebce38f2093f412ec6e"
+      },
+      "tests/saas/test_upstream_delta.py": {
+        "bytes": 53850,
+        "sha256": "7628da7181a0e13cc3e05bb85f138e448ae5545fdbd76c466618f71f3292377a"
+      }
+    },
+    "authority": {
+      "thread": "01a1db4c-a4d7-7693-96b6-af294b9aed8b",
+      "Source_handoff_sha256": "f6cc2d86c6bdb4d3d62fb1e24b3dabce4adbbd8c1279e5f529ee79d2a0172187",
+      "decision": "MAINTAINER_REGISTERED_EXACT_CI_ONLY_INCREMENT",
+      "registration_sha256": "0d7d2a6d7d2a6e47be833a9bd23cf54494b2268185f631e005570b2aad8c82d9",
+      "independent_review_sha256": "6fe17e4b83eb4330ed9ba6eb2828adf247c4b4159d8e2343edc8d57d71a98b58"
+    }
+  }
 }
