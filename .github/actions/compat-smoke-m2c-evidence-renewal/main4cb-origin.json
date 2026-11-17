@@ -88,28 +88,32 @@
   "controller_scope": {
     "postimages": {
       ".github/actions/compat-smoke-m2c-evidence-renewal/renewal.py": {
-        "bytes": 32448,
-        "sha256": "89f9e5f9cbc0f69b20625317809b4fa06ad843bcbbc4342735d4ff70d3db90db"
+        "bytes": 32498,
+        "sha256": "82f93ca5f14358541c7e873886a6eeade060cc7f33cf15506bb9c8f4677c16d6"
       },
       ".github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py": {
-        "bytes": 21364,
-        "sha256": "11d525ad0fceadb5a42bf9d85c32a4dc952215377f64c9f0014d7a2d3fd0ac2e"
+        "bytes": 21881,
+        "sha256": "53597c025bd98b8eb9dd81d53071e741fe6da971e1f19b4992feec27a6b0737b"
       },
       ".github/workflows/saas-m-current-evidence-renewal.yml": {
         "bytes": 6837,
         "sha256": "a328aa8478c3e5ef92d8dbd0459eaba335b172f6375bfb560c054c1024008b04"
       },
       ".github/workflows/saas-upstream-compat.yml": {
-        "bytes": 16039,
-        "sha256": "8e7fd27112203eddd8ba4a33c1d14e21b439147683c75a7a4dc4d9d93e95f8ab"
+        "bytes": 12329,
+        "sha256": "8697c63281cba14d70a853c89ead7e37a64fef128b1ceebce38f2093f412ec6e"
+      },
+      "tests/saas/test_upstream_delta.py": {
+        "bytes": 53850,
+        "sha256": "7628da7181a0e13cc3e05bb85f138e448ae5545fdbd76c466618f71f3292377a"
       }
     },
     "authority": {
       "thread": "01a1db4c-a4d7-7693-96b6-af294b9aed8b",
       "Source_handoff_sha256": "f6cc2d86c6bdb4d3d62fb1e24b3dabce4adbbd8c1279e5f529ee79d2a0172187",
       "decision": "MAINTAINER_REGISTERED_EXACT_CI_ONLY_INCREMENT",
-      "registration_sha256": "1ccdea1f833359bce3b770131af0a0cd2110b69c0b1002f0965e646286c99e21",
-      "independent_review_sha256": "aa8c31215bf86ef9d1731ae1f7c4d0559e9e39b4494077c13e5e82061a752d54"
+      "registration_sha256": "0d7d2a6d7d2a6e47be833a9bd23cf54494b2268185f631e005570b2aad8c82d9",
+      "independent_review_sha256": "6fe17e4b83eb4330ed9ba6eb2828adf247c4b4159d8e2343edc8d57d71a98b58"
     }
   }
 }

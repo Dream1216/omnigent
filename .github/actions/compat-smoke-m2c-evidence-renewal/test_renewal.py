@@ -486,9 +486,21 @@ def test_protected_workflow_signs_only_new_evidence_for_its_fixed_origin(_fixed_
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "runtime", "extra-owned", "missing", "delete", "rename", "type"]
+    "fault",
+    [
+        None,
+        "runtime",
+        "extra-owned",
+        "missing",
+        "missing-product-fixture",
+        "other-saas-test",
+        "delete",
+        "rename",
+        "type",
+    ],
 )
 def test_current342_controller_has_exact_owned_boundary(fault):
+    assert "tests/saas/test_upstream_delta.py" in renewal.CURRENT_PATHS
     changes = dict.fromkeys(renewal.CURRENT_PATHS, "M")
     registered = set(changes)
     if fault == "runtime":
@@ -499,6 +511,12 @@ def test_current342_controller_has_exact_owned_boundary(fault):
         registered.add(".github/workflows/saas-image-candidate.yml")
     elif fault == "missing":
         registered.pop()
+    elif fault == "missing-product-fixture":
+        changes.pop("tests/saas/test_upstream_delta.py")
+        registered.remove("tests/saas/test_upstream_delta.py")
+    elif fault == "other-saas-test":
+        changes["tests/saas/other_owned_test.py"] = "M"
+        registered.add("tests/saas/other_owned_test.py")
     elif fault:
         changes[next(iter(changes))] = {"delete": "D", "rename": "R100", "type": "T"}[fault]
     if fault is None:

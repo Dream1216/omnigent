@@ -118,6 +118,7 @@ CURRENT_PATHS = frozenset(
         ".github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json",
         ".github/workflows/saas-m-current-evidence-renewal.yml",
         ".github/workflows/saas-upstream-compat.yml",
+        "tests/saas/test_upstream_delta.py",
     )
 )
 CURRENT_REGISTRY = ".github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json"
@@ -240,7 +241,7 @@ def controller_budget(repo: Path, product_root: Path, policy: str) -> dict:
     validate_controller_changes(changes, set(registered["postimages"]) | {CURRENT_REGISTRY})
     require(
         set(registered["postimages"]) == CURRENT_PATHS - {CURRENT_REGISTRY},
-        "exact four controller code/workflow postimages required",
+        "exact five controller code/workflow/test postimages required",
     )
     for path, expected in registered["postimages"].items():
         target = repo / path
