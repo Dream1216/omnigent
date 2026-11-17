@@ -32,11 +32,11 @@
     "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
     "frozen_product_baseline": "saas/upstream-baseline.json",
     "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "ec2adc028361db2f1a5b5c957e2104c5c4fdc6d794b9e1fe3a1ed89563ad16d5",
+    "current_controller_baseline_sha256": "157ecd00ae8d46273de5495435fd3580547377ee214e350547c27b29e64de5b2",
     "frozen_product_file_ceiling": 226,
     "current_controller_file_ceiling": 277,
     "reason": "Exact finite controller-only recovery of the original Main22 four OCI archives after scan-only failure; no runtime source change or OCI rebuild. Original failure, product and new controller identities remain distinct.",
-    "authority": "Existing continuous necessary release authority and actual Source handback cf1; normal exact maintainer registration 91ac999855502b867645fd1b9426383784d67557bd4e336b09e9ac2984eae006. Budgets and all final gates unchanged; no new human hash approval claimed.",
+    "authority": "Existing continuous necessary release authority and actual Source handback cf1; normal exact maintainer registration ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94. Budgets and all final gates unchanged; no new human hash approval claimed.",
     "image_rebuild_or_origin_exception": false,
     "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
     "new_counted_official_paths": [
@@ -47,9 +47,9 @@
     "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
   },
   "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "a3b9ac15d16918682a0b05045a3e18cd52dca561d54aa38b7107e6715edffb98",
+    "candidate_manifest_sha256": "83e26b36a6bd8eac288154f4f259d4b4ef4adaa4b750798a15ebec358c557738",
     "decision": "approved",
     "approver": "Dream1216",
-    "authority_record_sha256": "91ac999855502b867645fd1b9426383784d67557bd4e336b09e9ac2984eae006"
+    "authority_record_sha256": "ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94"
   }
 }

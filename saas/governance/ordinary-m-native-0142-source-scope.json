@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "a3b9ac15d16918682a0b05045a3e18cd52dca561d54aa38b7107e6715edffb98",
+  "candidate_manifest_sha256": "83e26b36a6bd8eac288154f4f259d4b4ef4adaa4b750798a15ebec358c557738",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/saas-main22-retained-scan-recovery.yml",
-      "bytes": 6016,
-      "sha256": "c5a29bf711c6251287f25c382f4523ee3710e44b1700e67c090b9746edf2d6cb"
+      "bytes": 6880,
+      "sha256": "77ed1125fa57eee538f0484686596db395c802a98c69518e2c65d83821ad765b"
     },
     {
       "path": ".github/workflows/saas-oci-promotion-accepted-m165.yml",
@@ -213,8 +213,8 @@
     },
     {
       "path": "saas/governance/main22-retained-recovery-controller.json",
-      "bytes": 2602,
-      "sha256": "a3b9ac15d16918682a0b05045a3e18cd52dca561d54aa38b7107e6715edffb98"
+      "bytes": 3133,
+      "sha256": "83e26b36a6bd8eac288154f4f259d4b4ef4adaa4b750798a15ebec358c557738"
     },
     {
       "path": "saas/production/platform_model_host.py",
@@ -252,9 +252,14 @@
       "sha256": "e94421006f0d952ca8c110cad37144edba338b229643002bd9464ff3f71da237"
     },
     {
+      "path": "saas/scripts/legacy_artifact_download.py",
+      "bytes": 4766,
+      "sha256": "54ed650266b360eb548e72b5800b5495cfb78348233ec464955d84006431382c"
+    },
+    {
       "path": "saas/scripts/main22_retained_recovery.py",
-      "bytes": 31003,
-      "sha256": "7240c1df3ae941a136005ad92779ec622542969a775282117e571fe8dfe0679d"
+      "bytes": 31298,
+      "sha256": "c2f9bdbb0f4626746f5f8be390e746391fe65e5367ae925dfe8e3cf7aa6da221"
     },
     {
       "path": "saas/scripts/oci_promotion.py",
@@ -427,14 +432,24 @@
       "sha256": "ca96446f67803a03a570246f8a71997a714f6b784c78ba7f3207f539ba5cce1d"
     },
     {
+      "path": "tests/saas/test_legacy_artifact_download.py",
+      "bytes": 4593,
+      "sha256": "f3e34dd79e233049655aed2ee583cea6edb5d323dfb78000abfe52f88aabb55e"
+    },
+    {
+      "path": "tests/saas/test_legacy_build_controller.py",
+      "bytes": 64949,
+      "sha256": "19d2fc291f2dea718d891b41a209c6248e49c4a566b4ed8466263cf96fdcf457"
+    },
+    {
       "path": "tests/saas/test_legacy_domain_discovery.py",
       "bytes": 46308,
       "sha256": "a5ee4269a21e77bf20519b36b2618222be4e63dc6b9a9e1596361aa31dafbd12"
     },
     {
       "path": "tests/saas/test_main22_retained_recovery.py",
-      "bytes": 18854,
-      "sha256": "0254da56566292b0656df6c0e264459e9c6cf630ebba9e09a1148310fe6b7ff3"
+      "bytes": 20020,
+      "sha256": "5fd35636fa4e5d3e7cb2e9d7d7e993f4381e74760b652d7a0599e170e53aaffc"
     },
     {
       "path": "tests/saas/test_oci_candidate_build_capacity.py",
@@ -829,6 +844,6 @@
   "current_Main22_retained_recovery_scope_authority": {
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main22-retained-scan-recovery-20261117/MAIN22-RECOVERY.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
     "bytes": 2882,
-    "sha256": "91ac999855502b867645fd1b9426383784d67557bd4e336b09e9ac2984eae006"
+    "sha256": "ff54f6b77bffefbeea8eb803aecbe85605a76f7120d0b616c335f5f452359a94"
   }
 }

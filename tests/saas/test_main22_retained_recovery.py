@@ -415,6 +415,40 @@ def test_original_native_zip_rejects_crc_or_digest_mismatch(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize(
+    "size,deadline", [(1024, 600), (1024**3 - 1, 600), (1024**3, 1800), (16 * 1024**3, 1800)]
+)
+def test_only_authenticated_large_main22_transfer_gets_bounded_extra_time(
+    tmp_path, monkeypatch, size, deadline
+):
+    archive = tmp_path / "native.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("evidence.json", "{}")
+    digest = recovery.file_sha256(archive)
+    metadata = {"id": 123, "size_in_bytes": size, "digest": "sha256:" + digest}
+    destination = tmp_path / "admit"
+    calls = []
+
+    def download(identifier, output, **kwargs):
+        calls.append((identifier, kwargs))
+        shutil.copyfile(archive, output)
+
+    monkeypatch.setattr(recovery, "download_artifact_bytes", download)
+    recovery.transfer(metadata, destination)
+    assert calls == [
+        (
+            123,
+            {
+                "expected_size": size,
+                "expected_sha256": digest,
+                "timeout_seconds": deadline,
+                "diagnostic_path": destination.with_suffix(".download.json"),
+            },
+        )
+    ]
+    assert (destination / "evidence.json").read_text() == "{}"
+
+
+@pytest.mark.parametrize(
     "fault",
     [
         None,

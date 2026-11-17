@@ -405,8 +405,6 @@ def test_native_download_streams_real_child_and_closes_failed_transfers(
         return process
 
     monkeypatch.setattr(download.subprocess, "Popen", spawn)
-    if fault == "timeout":
-        monkeypatch.setattr(download, "DOWNLOAD_TIMEOUT_SECONDS", 0.05)
     path = tmp_path / "native.zip"
     arguments = {
         "artifact_id": 121,
@@ -414,6 +412,8 @@ def test_native_download_streams_real_child_and_closes_failed_transfers(
         "expected_size": len(expected),
         "expected_sha256": "0" * 64 if fault == "digest" else hashlib.sha256(expected).hexdigest(),
     }
+    if fault == "timeout":
+        arguments["timeout_seconds"] = 1
     if fault:
         with pytest.raises((ValueError, OSError)):
             download.download_artifact_bytes(**arguments)

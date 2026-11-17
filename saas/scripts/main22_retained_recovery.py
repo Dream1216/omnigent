@@ -70,6 +70,9 @@ CONTROL_PATHS = {
     "tests/saas/test_legacy_domain_discovery.py",
     "tests/saas/resources/native-domain-discovery-parent-hashes.json",
     "saas/scripts/main22_retained_recovery.py",
+    "saas/scripts/legacy_artifact_download.py",
+    "tests/saas/test_legacy_artifact_download.py",
+    "tests/saas/test_legacy_build_controller.py",
     "saas/scripts/accepted_m165_promotion.py",
     "tests/saas/test_main22_retained_recovery.py",
     "tests/saas/test_accepted_m165_promotion.py",
@@ -388,6 +391,8 @@ def transfer(metadata: dict[str, Any], destination: Path, *, retain_zip: bool = 
         archive,
         expected_size=metadata["size_in_bytes"],
         expected_sha256=metadata["digest"][7:],
+        timeout_seconds=1800 if metadata["size_in_bytes"] >= 1024**3 else 600,
+        diagnostic_path=destination.with_suffix(".download.json"),
     )
     with zipfile.ZipFile(archive) as bundle:
         require(bundle.testzip() is None, "native artifact ZIP CRC differs")
