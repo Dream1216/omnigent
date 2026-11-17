@@ -112,6 +112,8 @@ jobs:
             --run-id "$GITHUB_RUN_ID" --artifact-id "$RAW_ID" --sha256 "$RAW_SHA"
           rm "$RUNNER_TEMP/main22-admit/server-2.tar" "$RUNNER_TEMP/main22-admit/host-2.tar"
       - name: Complete four normal 24 hour raw scans and seal the original OCI
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           python -m saas.scripts.scan_oci_candidates \
             --image "server=$RUNNER_TEMP/main22-admit/server-1.tar" \

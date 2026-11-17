@@ -34,6 +34,16 @@ def job(identifier, name, conclusion="success", *, run_id=None, controller=None)
 
 
 @pytest.fixture
+def main22_clock(monkeypatch):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 17, 8, tzinfo=UTC)
+
+    monkeypatch.setattr(recovery, "datetime", Clock)
+
+
+@pytest.fixture
 def parent():
     run = {
         "id": recovery.PARENT["run_id"],
@@ -362,6 +372,11 @@ def test_recovery_never_builds_and_publisher_keeps_protected_oidc():
     }
     assert "docker build" not in text and "buildx" not in text
     assert "retention-days: 30" in text
+    scan_steps = workflow["jobs"]["scan-and-admit-main22"]["steps"]
+    scanning = next(
+        step for step in scan_steps if step.get("name", "").startswith("Complete four")
+    )
+    assert scanning["env"]["GH_TOKEN"] == "${{ github.token }}"
     publisher = yaml.safe_load((root / promotion.WORKFLOW).read_text())
     assert publisher["jobs"]["publish-signed"]["environment"] == "production-image"
     assert publisher["jobs"]["publish-signed"]["permissions"]["id-token"] == "write"
@@ -412,6 +427,7 @@ def test_original_native_zip_rejects_crc_or_digest_mismatch(tmp_path, monkeypatc
         "scan-failed",
     ],
 )
+@pytest.mark.usefixtures("main22_clock")
 def test_split_binding_keeps_original_clocks_source_and_failures(parent, fault, monkeypatch):
     run, jobs, raw, report = parent
     origin = recovery.validate_parent(run, jobs, raw, report)
@@ -484,6 +500,7 @@ def test_split_binding_keeps_original_clocks_source_and_failures(parent, fault, 
         recovery.validate_binding(value, 71)
 
 
+@pytest.mark.usefixtures("main22_clock")
 def test_original_evidence_cap_expires_without_refreshing(parent, monkeypatch):
     run, jobs, raw, report = parent
     origin = recovery.validate_parent(run, jobs, raw, report)

@@ -21,8 +21,8 @@
     },
     {
       "path": ".github/workflows/saas-main22-retained-scan-recovery.yml",
-      "bytes": 5963,
-      "sha256": "8e860ace7eeb8c2d81907182b44ca8abbc3acb2eb2d979066b464ad85c71173c"
+      "bytes": 6016,
+      "sha256": "c5a29bf711c6251287f25c382f4523ee3710e44b1700e67c090b9746edf2d6cb"
     },
     {
       "path": ".github/workflows/saas-oci-promotion-accepted-m165.yml",
@@ -61,8 +61,8 @@
     },
     {
       "path": "tests/saas/test_main22_retained_recovery.py",
-      "bytes": 18286,
-      "sha256": "753a9a22dba0a5a85b0e57976ad9265b336787b49ed8684099a359829d147b5b"
+      "bytes": 18854,
+      "sha256": "0254da56566292b0656df6c0e264459e9c6cf630ebba9e09a1148310fe6b7ff3"
     },
     {
       "path": "tests/saas/test_oci_promotion.py",

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "candidate_manifest_sha256": "407cc26be8c5b91a85eefdd0f8102284d973a3b9fe2f5315948951f939dc7fa0",
+  "candidate_manifest_sha256": "a3b9ac15d16918682a0b05045a3e18cd52dca561d54aa38b7107e6715edffb98",
   "public_base": "aadd44ed616f2ec6457252f8c9cd6123704ea4d4",
   "scope_main": "adf6f0f1ef62199d171ffd32d7feec4b848a084a",
   "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
@@ -58,8 +58,8 @@
     },
     {
       "path": ".github/workflows/saas-main22-retained-scan-recovery.yml",
-      "bytes": 5963,
-      "sha256": "8e860ace7eeb8c2d81907182b44ca8abbc3acb2eb2d979066b464ad85c71173c"
+      "bytes": 6016,
+      "sha256": "c5a29bf711c6251287f25c382f4523ee3710e44b1700e67c090b9746edf2d6cb"
     },
     {
       "path": ".github/workflows/saas-oci-promotion-accepted-m165.yml",
@@ -214,7 +214,7 @@
     {
       "path": "saas/governance/main22-retained-recovery-controller.json",
       "bytes": 2602,
-      "sha256": "407cc26be8c5b91a85eefdd0f8102284d973a3b9fe2f5315948951f939dc7fa0"
+      "sha256": "a3b9ac15d16918682a0b05045a3e18cd52dca561d54aa38b7107e6715edffb98"
     },
     {
       "path": "saas/production/platform_model_host.py",
@@ -433,8 +433,8 @@
     },
     {
       "path": "tests/saas/test_main22_retained_recovery.py",
-      "bytes": 18286,
-      "sha256": "753a9a22dba0a5a85b0e57976ad9265b336787b49ed8684099a359829d147b5b"
+      "bytes": 18854,
+      "sha256": "0254da56566292b0656df6c0e264459e9c6cf630ebba9e09a1148310fe6b7ff3"
     },
     {
       "path": "tests/saas/test_oci_candidate_build_capacity.py",
@@ -829,6 +829,6 @@
   "current_Main22_retained_recovery_scope_authority": {
     "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-Main22-retained-scan-recovery-20261117/MAIN22-RECOVERY.EXISTING-AUTHORITY.MAINTAINER-REGISTRATION.PUBLIC.json",
     "bytes": 2882,
-    "sha256": "82320510db00c35858f8c409007193138da8d46670c0d6a2696e9be3e8d95714"
+    "sha256": "91ac999855502b867645fd1b9426383784d67557bd4e336b09e9ac2984eae006"
   }
 }
