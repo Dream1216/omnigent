@@ -594,6 +594,30 @@ class PreviewGatewayDirectoryAuthority:
                 expired.append(record.id)
         return tuple(expired)
 
+    def assert_routable(self, gateway_instance_id: str) -> None:
+        """Check a gateway's live lease without reading its routing endpoint."""
+
+        if not _GATEWAY_INSTANCE.fullmatch(gateway_instance_id):
+            raise PreviewGatewayLifecycleError(
+                "preview_gateway_route_invalid", "Preview Gateway route is invalid"
+            )
+        now = _utcnow()
+        with self._service_session_factory.begin() as db:
+            row = db.execute(
+                sa.select(
+                    PreviewGatewayInstanceRecord.status,
+                    PreviewGatewayInstanceRecord.lease_expires_at,
+                ).where(PreviewGatewayInstanceRecord.id == gateway_instance_id)
+            ).one_or_none()
+            if (
+                row is None
+                or row.status not in _ROUTABLE_STATUSES
+                or now >= _aware(row.lease_expires_at)
+            ):
+                raise PreviewGatewayLifecycleError(
+                    "preview_gateway_route_unavailable", "Preview Gateway route is unavailable"
+                )
+
     def resolve(self, placement: object):
         """Resolve only the active endpoint named by a server-selected Placement."""
 

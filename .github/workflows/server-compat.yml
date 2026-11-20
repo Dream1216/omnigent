@@ -60,6 +60,7 @@ permissions:
 
 env:
   OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
+  OMNIGENT_CI_PIPELINE: server-compat
 
 jobs:
   # ── Fast smoke: both compat configs against the latest stable release ──────

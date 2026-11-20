@@ -1,8 +1,7 @@
 {
-  "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
-  "upstream_version": "0.21.0.dev20261031",
+  "upstream_revision": "34570c6624af037c998dfaed774de83db72313f1",
+  "upstream_version": "0.24.0.dev0",
   "adapter_contract_version": "0.2.0",
-  "patch_queue_directory": "saas/upstream-patches",
   "downstream_owned_prefixes": [
     ".github/actions/compat-smoke-",
     ".github/scripts/e2e-ui-required/",
@@ -22,34 +21,27 @@
     "omnigent/runner/native/",
     "omnigent/runtime/workflow.py"
   ],
+  "patch_queue_directory": "saas/upstream-patches",
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 279,
-    "max_upstream_net_added_loc": 13719,
+    "max_direct_upstream_files": 287,
+    "max_upstream_net_added_loc": 14591,
     "min_isolated_custom_code_ratio": 0.85
   },
-  "controller_budget_scope": {
-    "frozen_product": "8c851bdd12829340b2a327cf7542fe4de84d9132",
-    "frozen_product_baseline": "saas/upstream-baseline.json",
-    "frozen_product_baseline_sha256": "ef11629c2dfed86a63928ba47de133339c41a55ae8abd70c53110cae49a3c77a",
-    "current_controller_baseline_sha256": "6cf687f889aee30c0dd989f15120d2a9fc28570dd26817e77d8f33d311d54c9b",
-    "frozen_product_file_ceiling": 226,
-    "current_controller_file_ceiling": 279,
-    "reason": "Fixedf11 existing-file cursor correction derives from reviewed fixed077 and stays within original279/13719 budget; exact new product postimages require their own normal qualification.",
-    "authority": "Root normal existing-scope registration 1b991405e25be134c9579398ab76b889ff1b6eca786fc966e1ff23176968e27c; fixedf11 two-file cursor delta net-2, no new budget. Historical fixed077 direct-human a558 grant remains077-only; standing unchanged protected-source ff54 authority retained. No new orchestration, safety, CI, rebuild-origin or release exception.",
-    "image_rebuild_or_origin_exception": false,
-    "frozen_producer_control_revision": "7463d1eb1657f9f702b30be4ba3d5bcbafc04bf5",
-    "new_counted_official_paths": [
-      "tests/server/integration/test_kiro_permission_delivery.py",
-      "tests/server/integration/test_host_tunnel_route.py",
-      "tests/server/integration/test_sessions_archive.py"
-    ],
-    "prior_approved_controller_authority": "Repository administrator Dream1216 approved 230 files and 7090 net lines for 3f19c0376366fdeea0a89da23c55d3f5741f3f5d on 2026-11-11."
-  },
-  "ordinary_m_native_0142_finite_approval": {
-    "candidate_manifest_sha256": "f11a5e890164080f6ab5496aae688c6ea266d61ace3562a2dd940420acc5827c",
+  "upgrade_024_finite_approval": {
     "decision": "approved",
-    "approver": "Dream1216",
-    "authority_record_sha256": "1b991405e25be134c9579398ab76b889ff1b6eca786fc966e1ff23176968e27c"
+    "authority_thread": "01a1e054-c80a-7ea0-ad52-446f9597e483",
+    "authority_turn": "01a1f7d0-0f8c-73e3-b220-91cdc28ff715",
+    "authority_message": "01a1f7d0-100f-72a2-9d80-9a762712a75a",
+    "authority_record_sha256": "dce3ded52bde2aa89d98df9b641ecefd3deeb18d6504eb473f343fe38a683644",
+    "scope": "Complete fixed 0.24 upgrade, retained private SaaS and necessary compatibility repairs; original runtime security budgets preserved."
+  },
+  "controller_budget_scope": {
+    "product_baseline": "saas/upstream-baseline.json",
+    "private_base": "73e8d4fba01a3b0a7183c172f44961928376805c",
+    "fixed_upstream": "34570c6624af037c998dfaed774de83db72313f1",
+    "current_controller_file_ceiling": 287,
+    "same_final_Main_required": true,
+    "image_rebuild_or_origin_exception": false
   }
 }

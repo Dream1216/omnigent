@@ -51,7 +51,7 @@ _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
     "decode-uri-component@0.5.1",
     "http-cache-semantics@4.3.0",
     "body-parser@2.4.0",
-    "electron@42.11.16",
+    "electron@45.2.1",
     "fast-uri@3.1.9",
     "source-map-js@1.2.2",
     "@modelcontextprotocol/sdk@1.32.0",
@@ -883,7 +883,11 @@ def validate_candidate_build_contract(repo: Path) -> list[str]:
             "if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' "
             "&& needs.source-context.outputs.mode == 'same-main' }}"
         )
-        != 3
+        != 2
+        or "github.ref == 'refs/heads/main' && (github.event_name == 'push' || "
+        "github.event_name == 'workflow_dispatch') && !inputs.diagnostic_host_only && "
+        "inputs.promotion_source_run_id == '' && needs.source-context.outputs.mode == 'same-main'"
+        not in workflow.partition("  build-candidate:")[2].partition("  publish-signed:")[0]
         or any(fragment not in publication for fragment in cross_run_publication)
         or any(fragment not in independent for fragment in cross_run_readback)
     ):

@@ -184,6 +184,7 @@ def test_signed_package_setup_stops_on_failed_update(
         "Path(os.environ['TEST_APT_LOG']).read_text().splitlines()]\n"
         "calls=sum(x['args'][0]=='apt-get' and "
         "'--print-uris' not in x['args'] and "
+        "'--download-only' not in x['args'] and "
         "(x['args'][-1]=='update')==(op=='update') for x in prior)\n"
         "with open(os.environ['TEST_APT_LOG'],'a') as f: f.write(json.dumps(row)+'\\n')\n"
         "if '--print-uris' in args:\n"
@@ -193,6 +194,10 @@ def test_signed_package_setup_stops_on_failed_update(
         ' print("\'"+root+"pool/main/t/tool/tool_1.0_amd64.deb\' '
         'tool_1.0_amd64.deb "+str(len(payload))+" SHA256:"+'
         "hashlib.sha256(payload).hexdigest())\n sys.exit(0)\n"
+        "if '--download-only' in args:\n"
+        " assert '--no-download' not in args and 'Acquire::ForceHash=SHA256' in args\n"
+        " cache=Path(os.environ['TEST_APT_CACHE'])\n cache.mkdir(parents=True,exist_ok=True)\n"
+        " (cache/'tool_1.0_amd64.deb').write_bytes(b'locked Ubuntu package')\n sys.exit(0)\n"
         "if op=='install':\n"
         " assert '--no-download' in args\n"
         " assert (Path(os.environ['TEST_APT_CACHE'])/'tool_1.0_amd64.deb').read_bytes() "
@@ -298,14 +303,23 @@ def test_signed_package_setup_stops_on_failed_update(
     rows = [
         row
         for row in commands
-        if row["args"][0] == "apt-get" and "--print-uris" not in row["args"]
+        if row["args"][0] == "apt-get"
+        and "--print-uris" not in row["args"]
+        and "--download-only" not in row["args"]
     ]
+    downloads = [row for row in commands if "--download-only" in row["args"]]
     plans = [row for row in commands if "--print-uris" in row["args"]]
     materializations = [row for row in commands if row["args"][0] == "python3"]
     assert len(plans) == len(materializations) == installs
+    assert len(downloads) == (installs if archive_recovery else 0)
     assert all(
         ("--allow-ubuntu-archive" in row["args"]) == archive_recovery for row in materializations
     )
+    assert all(("--cache-only" in row["args"]) == archive_recovery for row in materializations)
+    for downloaded in downloads:
+        position = commands.index(downloaded)
+        verified = commands[position + 1]
+        assert verified["args"][0] == "python3" and "--cache-only" in verified["args"]
     assert all("Acquire::ForceHash=SHA256" in row["args"] for row in plans)
     assert all(
         row["args"][2:] and row["args"][2:4] == ["--distribution", "ubuntu"]

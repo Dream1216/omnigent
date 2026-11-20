@@ -1227,7 +1227,7 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
     [
         ("'http-cache-semantics@4.3.0'", "'http-cache-semantics@*'"),
         ("'body-parser@2.4.0'", "'body-parser@*'"),
-        ("'electron@42.11.16'", "'electron@*'"),
+        ("'electron@45.2.1'", "'electron@*'"),
         ("'fast-uri@3.1.9'", "'fast-uri@*'"),
         ("'source-map-js@1.2.2'", "'source-map-js@*'"),
         ("'@modelcontextprotocol/sdk@1.32.0'", "'@modelcontextprotocol/sdk@*'"),

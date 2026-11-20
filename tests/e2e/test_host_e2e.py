@@ -488,6 +488,13 @@ def test_host_launch_runner_and_session_round_trip(
     # Configure mock LLM to reply with the marker for the round-trip.
     marker = f"HOST_E2E_GOLDEN_PATH_OK_{uuid.uuid4().hex}"
     configure_mock_llm(mock_llm_server_url, [{"text": marker}], match=marker)
+    unrelated = httpx.post(
+        f"{mock_llm_server_url}/v1/responses",
+        json={"input": "An unrelated client is still using the shared mock provider."},
+        timeout=5.0,
+    )
+    unrelated.raise_for_status()
+    assert marker not in json.dumps(unrelated.json())
 
     # 1. Start host daemon.
     daemon = _spawn_host_daemon(

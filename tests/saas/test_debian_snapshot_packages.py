@@ -74,11 +74,26 @@ def test_bad_download_never_exports(tmp_path: Path, monkeypatch) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
-def test_existing_cache_is_verified(tmp_path: Path) -> None:
+@pytest.mark.parametrize("cache_only", [False, True])
+@pytest.mark.parametrize("payload", [b"bad", b"wrong package!", b"locked package"])
+def test_existing_cache_is_verified(tmp_path: Path, payload: bytes, cache_only: bool) -> None:
     item = packages.parse_inputs(line())[0]
-    (tmp_path / str(item["name"])).write_bytes(b"bad")
-    with pytest.raises(ValueError):
-        packages.fetch(item, tmp_path)
+    (tmp_path / str(item["name"])).write_bytes(payload)
+    if payload == b"locked package":
+        assert packages.fetch(item, tmp_path, cache_only=cache_only) == item
+    else:
+        with pytest.raises(ValueError):
+            packages.fetch(item, tmp_path, cache_only=cache_only)
+
+
+def test_cache_only_never_fetches_missing_package(tmp_path: Path, monkeypatch) -> None:
+    def unexpected_download(*args, **kwargs):
+        pytest.fail("cache-only verification must not fetch a missing package")
+
+    monkeypatch.setattr(packages.urllib.request, "urlopen", unexpected_download)
+    with pytest.raises(ValueError, match="missing from the verified download cache"):
+        packages.fetch(packages.parse_inputs(line())[0], tmp_path, cache_only=True)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_cache_symlink_is_rejected(tmp_path: Path) -> None:

@@ -32,13 +32,16 @@ _ORDINARY_M_CANDIDATE = "f11a5e890164080f6ab5496aae688c6ea266d61ace3562a2dd94042
 _ORDINARY_M_PROTECTED_PATH = "omnigent/runner/native/orchestration.py"
 _ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.json"
 _ORDINARY_M_SCOPE_SHA256 = "ad0ace4fc2b789431df2b589f8c6f6d3928cdf7ded6213b1a16b9eb695e5cecc"
+_UPGRADE024_APPROVAL = "upgrade_024_finite_approval"
+_UPGRADE024_SCOPE_PATH = "saas/governance/upgrade-024-source-scope.json"
+_UPGRADE024_SCOPE_SHA256 = "3c7c5113d02b53cf1b23207c1636babc50e00e81ca7c2c88fa0610f6580fdc4f"
 
 
 def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:
     controls = {
         key: value
         for key, value in manifest.items()
-        if key not in {"source_intrusion_budget", _ORDINARY_M_APPROVAL}
+        if key not in {"source_intrusion_budget", _ORDINARY_M_APPROVAL, _UPGRADE024_APPROVAL}
     }
     if "controller_budget_scope" in controls:
         controls["controller_budget_scope"] = {
@@ -147,6 +150,56 @@ def _ordinary_m_candidate_matches(source_root: Path | None, manifest: dict[str, 
     return True
 
 
+def _upgrade024_candidate_matches(source_root: Path | None, manifest: dict[str, Any]) -> bool:
+    """Bind the complete fixed upgrade to its reviewed private source postimages."""
+
+    if source_root is None:
+        return False
+    try:
+        root = source_root.resolve(strict=True)
+        path = root / _UPGRADE024_SCOPE_PATH
+        if path.is_symlink() or not path.resolve(strict=True).is_relative_to(root):
+            return False
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != _UPGRADE024_SCOPE_SHA256:
+            return False
+        scope = json.loads(raw)
+        if (
+            scope["upstream_revision"] != "34570c6624af037c998dfaed774de83db72313f1"
+            or manifest["upstream_revision"] != scope["upstream_revision"]
+            or manifest["source_intrusion_budget"] != scope["budgets"]
+            or manifest.get(_UPGRADE024_APPROVAL) != scope["approval"]
+        ):
+            return False
+        kind = "controller" if "controller_budget_scope" in manifest else "baseline"
+        if _manifest_controls_sha256(manifest) != scope["manifest_controls_sha256"][kind]:
+            return False
+        _git(root, "merge-base", "--is-ancestor", scope["private_base"], "HEAD")
+        _git(root, "merge-base", "--is-ancestor", scope["upstream_revision"], "HEAD")
+        expected_paths = {item["path"] for item in scope["files"]}
+        actual_paths = {
+            item.path
+            for item in collect_deltas(root, scope["upstream_revision"])
+            if not _is_under(item.path, tuple(manifest["downstream_owned_prefixes"]))
+        }
+        if actual_paths != expected_paths:
+            return False
+        for item in scope["files"]:
+            target = root / item["path"]
+            if item["sha256"] is None:
+                if target.exists() or target.is_symlink():
+                    return False
+                continue
+            if target.is_symlink() or not target.resolve(strict=True).is_relative_to(root):
+                return False
+            data = target.read_bytes()
+            if len(data) != item["bytes"] or hashlib.sha256(data).hexdigest() != item["sha256"]:
+                return False
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def evaluate_delta(
     deltas: list[FileDelta],
     manifest: dict[str, Any],
@@ -167,12 +220,20 @@ def evaluate_delta(
     forbidden_files = sorted(
         d.path for d in upstream_deltas if _is_under(d.path, forbidden_prefixes)
     )
-    finite_requested = _ORDINARY_M_APPROVAL in manifest or (
-        budgets["max_direct_upstream_files"],
-        budgets["max_upstream_net_added_loc"],
-    ) == (264, 12547)
+    upgrade_requested = _UPGRADE024_APPROVAL in manifest
+    upgrade_verified = upgrade_requested and _upgrade024_candidate_matches(source_root, manifest)
+    finite_requested = not upgrade_requested and (
+        _ORDINARY_M_APPROVAL in manifest
+        or (
+            budgets["max_direct_upstream_files"],
+            budgets["max_upstream_net_added_loc"],
+        )
+        == (264, 12547)
+    )
     finite_verified = finite_requested and _ordinary_m_candidate_matches(source_root, manifest)
-    approved_protected = [_ORDINARY_M_PROTECTED_PATH] if finite_verified else []
+    approved_protected = (
+        [_ORDINARY_M_PROTECTED_PATH] if finite_verified or upgrade_verified else []
+    )
     unapproved_forbidden = [path for path in forbidden_files if path not in approved_protected]
     total_added = sum(delta.added for delta in deltas)
     downstream_added = sum(
@@ -190,6 +251,8 @@ def evaluate_delta(
         "upstream_net_added_loc": upstream_net_added,
     }
     violations: list[str] = []
+    if upgrade_requested and not upgrade_verified:
+        violations.append("fixed 0.24 source scope is missing or mismatched")
     if finite_requested and not finite_verified:
         violations.append("ordinary M finite source approval is missing or mismatched")
     if not lineage_ok:

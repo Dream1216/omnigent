@@ -21,7 +21,7 @@
     "omnigent/runtime/workflow.py"
   ],
   "official_schema_heads": [
-    "d0a1f879a01d"
+    "5ab01aaca219"
   ],
   "patch_queue_directory": "saas/upstream-patches",
   "runner_session_protocol_version": 2,
@@ -72,6 +72,16 @@
       "workspace_id",
       "host_id"
     ],
+    "inbox_items": [
+      "workspace_id",
+      "id"
+    ],
+    "memories": [
+      "workspace_id",
+      "actor_type",
+      "actor_id",
+      "path"
+    ],
     "omnigent_conversation_metadata": [
       "workspace_id",
       "id"
@@ -93,9 +103,24 @@
       "workspace_id",
       "id"
     ],
+    "scheduled_task_shares": [
+      "workspace_id",
+      "scheduled_task_id",
+      "user_id"
+    ],
     "scheduled_tasks": [
       "workspace_id",
       "id"
+    ],
+    "session_journal_entries": [
+      "workspace_id",
+      "conversation_id",
+      "position",
+      "created_at"
+    ],
+    "session_journal_heads": [
+      "workspace_id",
+      "conversation_id"
     ],
     "session_permissions": [
       "workspace_id",
@@ -110,12 +135,21 @@
     "users": [
       "workspace_id",
       "id"
+    ],
+    "workflow_shares": [
+      "workspace_id",
+      "workflow_id",
+      "user_id"
+    ],
+    "workflows": [
+      "workspace_id",
+      "id"
     ]
   },
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 279,
-    "max_upstream_net_added_loc": 13719,
+    "max_direct_upstream_files": 287,
+    "max_upstream_net_added_loc": 14591,
     "min_isolated_custom_code_ratio": 0.85
   },
   "source_intrusion_budget_revision": {
@@ -1554,15 +1588,35 @@
         "tests/harnesses/codex_native/test_executor_backend.py"
       ],
       "reason": "Two existing fixed0142 filesystem consumers use last-seen nextSeq-1. Production net0 and original strict-sequence regression net-2; retain279/13719 caps,9patches,.85 floor and every normal admission/signing/business/data/rollback gate. Original077 fixed grant and postimages remain historical authority only; no new protected source or runtime safety change."
+    },
+    "fixed_024_20261120": {
+      "private_base": "73e8d4fba01a3b0a7183c172f44961928376805c",
+      "upstream_revision": "34570c6624af037c998dfaed774de83db72313f1",
+      "measured_budgets": {
+        "max_active_patches": 9,
+        "max_direct_upstream_files": 287,
+        "max_upstream_net_added_loc": 14591,
+        "min_isolated_custom_code_ratio": 0.85
+      },
+      "old_021_budget_historical_only": true,
+      "old_021_waiver_applies": false
     }
   },
   "upstream_repository": "https://github.com/omnigent-ai/omnigent.git",
-  "upstream_revision": "ee728a02004749e7f6971beee6c66d990bfbd216",
-  "upstream_version": "0.21.0.dev20261031",
-  "ordinary_m_native_0142_finite_approval": {
+  "upstream_revision": "34570c6624af037c998dfaed774de83db72313f1",
+  "upstream_version": "0.24.0.dev0",
+  "historical_ordinary_m_native_0142_finite_approval": {
     "candidate_manifest_sha256": "f11a5e890164080f6ab5496aae688c6ea266d61ace3562a2dd940420acc5827c",
     "decision": "approved",
     "approver": "Dream1216",
     "authority_record_sha256": "1b991405e25be134c9579398ab76b889ff1b6eca786fc966e1ff23176968e27c"
+  },
+  "upgrade_024_finite_approval": {
+    "decision": "approved",
+    "authority_thread": "01a1e054-c80a-7ea0-ad52-446f9597e483",
+    "authority_turn": "01a1f7d0-0f8c-73e3-b220-91cdc28ff715",
+    "authority_message": "01a1f7d0-100f-72a2-9d80-9a762712a75a",
+    "authority_record_sha256": "dce3ded52bde2aa89d98df9b641ecefd3deeb18d6504eb473f343fe38a683644",
+    "scope": "Complete fixed 0.24 upgrade, retained private SaaS and necessary compatibility repairs; original runtime security budgets preserved."
   }
 }

@@ -77,7 +77,7 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .venv
-        key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}
+        key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}-${{ hashFiles('uv.toml') }}
 
     - name: Install project and test dependencies
       shell: bash
@@ -90,17 +90,17 @@ runs:
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
     - name: Install Claude Code CLI
-      uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f7a4eac0d3e54732b0751ec3cf6488ef85dd9aeb
+      uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f67721ea41c7cb79ac0cdd348af796c038a5bc69
       with:
         harness: claude
 
     - name: Install Codex CLI
-      uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f7a4eac0d3e54732b0751ec3cf6488ef85dd9aeb
+      uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f67721ea41c7cb79ac0cdd348af796c038a5bc69
       with:
         harness: codex
 
     - name: Install Pi CLI
-      uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f7a4eac0d3e54732b0751ec3cf6488ef85dd9aeb
+      uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f67721ea41c7cb79ac0cdd348af796c038a5bc69
       with:
         harness: pi
 

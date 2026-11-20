@@ -223,6 +223,8 @@ def test_gateway_directory_token_lifecycle_discovery_and_non_reuse(gateway_fixtu
     with pytest.raises(PreviewGatewayLifecycleError) as starting:
         directory.resolve(_placement("gateway-a"))
     assert starting.value.code == "preview_gateway_route_unavailable"
+    with pytest.raises(PreviewGatewayLifecycleError, match="route is unavailable"):
+        directory.assert_routable("gateway-a")
     with pytest.raises(PreviewGatewayLifecycleError) as incomplete:
         directory.activate_gateway(
             gateway_instance_id="gateway-a",
@@ -238,6 +240,7 @@ def test_gateway_directory_token_lifecycle_discovery_and_non_reuse(gateway_fixtu
         now=now,
     )
     endpoint = directory.resolve(_placement("gateway-a"))
+    directory.assert_routable("gateway-a")
     assert (endpoint.connect_host, endpoint.port, endpoint.server_name) == (
         "127.0.0.1",
         8443,
@@ -273,6 +276,8 @@ def test_gateway_directory_token_lifecycle_discovery_and_non_reuse(gateway_fixtu
     with pytest.raises(PreviewGatewayLifecycleError) as unavailable:
         directory.resolve(_placement("gateway-a"))
     assert unavailable.value.code == "preview_gateway_route_unavailable"
+    with pytest.raises(PreviewGatewayLifecycleError, match="route is unavailable"):
+        directory.assert_routable("gateway-a")
     with pytest.raises(PreviewGatewayLifecycleError) as reused:
         _register(directory, gateway_instance_id="gateway-a", token=token, now=now)
     assert reused.value.code == "preview_gateway_identity_reused"
@@ -549,9 +554,11 @@ def _role_factory(engine: sa.Engine, role: str) -> sessionmaker[Session]:
     return factory
 
 
-def test_real_postgresql_gateway_rls_token_certificate_and_monotonic_guards() -> None:
+def test_real_postgresql_gateway_rls_token_certificate_and_monotonic_guards(
+    isolated_postgres_url: str,
+) -> None:
     root = Path(__file__).resolve().parents[2]
-    engine = sa.create_engine(_postgres_url())
+    engine = sa.create_engine(isolated_postgres_url)
     now = datetime.now(UTC).replace(microsecond=0)
     gateway_instance_id = f"gateway-rls-{uuid4().hex[:12]}"
     token = f"gateway-rls-token-{uuid4().hex}" + "x" * 16
@@ -643,6 +650,26 @@ def test_real_postgresql_gateway_rls_token_certificate_and_monotonic_guards() ->
         registration_token=token,
         now=now + timedelta(seconds=10),
     )
+    owner_factory = _role_factory(engine, "saas_preview_owner")
+
+    @sa.event.listens_for(owner_factory, "after_begin")
+    def _bind_owner_gateway(_session, _transaction, connection) -> None:
+        connection.execute(
+            sa.text(
+                "SELECT set_config('app.preview_gateway_instance_id', :gateway, true), "
+                "set_config('app.preview_gateway_registration_token_hash', :token, true)"
+            ),
+            {"gateway": gateway_instance_id, "token": hashlib.sha256(token.encode()).hexdigest()},
+        )
+
+    owner_directory = PreviewGatewayDirectoryAuthority(
+        platform_factory, service_session_factory=owner_factory
+    )
+    owner_directory.assert_routable(gateway_instance_id)
+    with pytest.raises(DBAPIError, match="permission denied"):
+        owner_directory.resolve(_placement(gateway_instance_id))
+    with pytest.raises(PreviewGatewayLifecycleError, match="route is unavailable"):
+        owner_directory.assert_routable("gateway-other")
     with pytest.raises(DBAPIError, match="lifecycle is monotonic"):
         with engine.begin() as connection:
             connection.exec_driver_sql("SET LOCAL ROLE saas_platform")
@@ -720,6 +747,8 @@ def test_real_postgresql_gateway_rls_token_certificate_and_monotonic_guards() ->
         reason="rls acceptance complete",
         now=now + timedelta(seconds=30),
     )
+    with pytest.raises(PreviewGatewayLifecycleError, match="route is unavailable"):
+        owner_directory.assert_routable(gateway_instance_id)
     assert not gateway_certificates.is_preview_gateway_certificate_authorized(
         gateway_instance_id=gateway_instance_id,
         certificate_der=client_der,

@@ -106,11 +106,12 @@ class _RegistrationClient:
         return self.registration
 
 
+@pytest.mark.parametrize("function", tuple(tunnel_module._PRIVATE_CONTRACT_HASHES))
 def test_runner_rejects_private_function_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, function: str
 ) -> None:
     config = _config(tmp_path)
-    monkeypatch.setattr(tunnel_module, "_send_hello", tunnel_module._cancel_dispatch_tasks)
+    monkeypatch.setattr(tunnel_module, function, lambda: None)
     with pytest.raises(ProductionPreviewRunnerTunnelError, match="contract changed"):
         ProductionPreviewRunnerTunnel(config, _RegistrationClient(_registration(config)))
 
@@ -153,6 +154,7 @@ async def test_preview_only_handshake_excludes_managed_mcp_and_handles_ping(
         )
         assert isinstance(sent[0], HelloFrame)
         assert CAP_MCP_REGISTRY not in sent[0].capabilities
+        assert sent[0].capabilities == []
         assert sent[0].runner_version == config.product_revision
         assert any(isinstance(frame, PongFrame) and frame.ts == 123 for frame in sent)
         assert connection["uri"].startswith("wss://10.42.1.17:9442/")

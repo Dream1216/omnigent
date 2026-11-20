@@ -1,6 +1,19 @@
 # Upstream patch queue
 
-## Current replay target: v0.21.0.dev20261031 (2026-11-01)
+## Current replay target: 0.24.0.dev0 (2026-11-20)
+
+The fixed official revision is `34570c6624af037c998dfaed774de83db72313f1`.
+All nine owning patches are regenerated from the resolved integration against
+that revision. Officially covered changes are absent from the new private delta.
+The accepted full upgrade retains SaaS isolation, the configured Session default,
+owned listener handoff, trusted workspace binding and required sandbox policy.
+The historical records below describe their original scope and removal criteria;
+they do not extend the old release waiver to this upgrade. The current finite
+source postimages and measured budget are in `saas/upstream-baseline.json` and
+`saas/governance/upgrade-024-source-scope.json`. Replay proves source equality,
+not signed artifacts, real business, recovery or production admission.
+
+## Historical replay target: v0.21.0.dev20261031 (2026-11-01)
 
 The fixed upstream revision is `ee728a02004749e7f6971beee6c66d990bfbd216`.
 All nine patches are regenerated from the resolved product against this exact
@@ -518,3 +531,23 @@ policy correlation identifiers. Bare UUIDs are rejected before policy evaluation
 The existing workspace I/O regression checks both normal policy requests while
 retaining the approval, cancellation, isolation and cleanup contracts.
 Remove this correction when upstream emits the same canonical identifiers.
+
+The fixed 0.24 interruption adapter keeps the one-second terminal/usage grace for a live captured turn. It waits for that Task's turn finalization or completion, so terminal handling before or after the interrupt acknowledgement can release the wait while transport cleanup continues. It rechecks the generation before the cancel floor, preserving a newer turn. The existing interrupt/stop tests cover delayed terminal usage, a stuck turn, and pending cleanup with a new active turn; the formal benchmark keeps its original boundaries and thresholds.
+
+The Host recovery lifecycle hook uses the existing bounded runner index only to
+reject runners without a Host binding in a fresh workspace-scoped snapshot.
+Unsupported or over-budget discovery falls back to the original session reads.
+Fresh session eligibility checks precede native harness resolution; applicable
+Host sessions retain the original second read and recovery compare-and-swap.
+Terminal frames first use the existing workspace-scoped recovery lookup: a
+missing episode cannot be stopped or created by that frame. This negative result
+is never cached; an episode present on the next frame retains all original
+session, native exclusion and compare-and-swap checks. Unsupported episode reads
+fall back to that original path. Nonterminal frames keep runner discovery.
+
+Queued native status publications carry the forwarded-status invalidation and
+turn generations. A forwarded hook or tunnel resync supersedes older queued
+watcher edges, and a new turn supersedes its predecessor's queued completion.
+Same-window watcher edges keep FIFO order, including PTY fallback and repeated
+native working observations; a real queued turn may still publish running after
+the prior Stop. The counters follow existing transfer and session cleanup.

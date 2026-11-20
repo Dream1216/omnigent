@@ -1,24 +1,24 @@
 diff --git a/omnigent/cli_config.py b/omnigent/cli_config.py
-index 8b27e392d84c8a55783c5da7e92353f836deea40..7d86641a06565767d2b15fcd5fcae831cfea6555 100644
+index 775ef2b05..4601b8875 100644
 --- a/omnigent/cli_config.py
 +++ b/omnigent/cli_config.py
-@@ -2838,2 +2838,2 @@ def _print_kimi_auth_help() -> None:
+@@ -2839,2 +2839,2 @@
 -        "    • Omnigent stores no kimi credential and cannot thread one per "
 -        "spawn — configure it once in the kimi CLI\n"
 +        "    • Managed SaaS can also supply an Omnigent platform Provider "
 +        "per session; its short-lived token is never written to this config\n"
-@@ -2873 +2872,0 @@ def _manage_kimi_harness() -> None:
+@@ -2874 +2873,0 @@
 -        harness_install_spec,
-@@ -2874,0 +2874 @@ def _manage_kimi_harness() -> None:
+@@ -2875,0 +2875 @@
 +        install_harness_cli,
-@@ -2879,4 +2879,2 @@ def _manage_kimi_harness() -> None:
+@@ -2880,4 +2880,2 @@
 -    # Gate on the CLI. Kimi ships a single binary via a curl installer (not
 -    # npm), so there's no in-process auto-install — name the command and let
 -    # the user run it, then re-open. Mirrors how ``harness_setup_hint`` treats
 -    # the other curl-installed CLI (cursor-agent).
 +    # Gate on the CLI. Kimi now publishes an official npm package, so setup can
 +    # install it directly instead of sending the user to a mutable curl script.
-@@ -2884,6 +2882,5 @@ def _manage_kimi_harness() -> None:
+@@ -2885,6 +2883,5 @@
 -        spec = harness_install_spec(KIMI_KEY)
 -        hint = (spec.install_hint if spec else None) or "see Kimi Code docs"
 -        console.print(
@@ -30,7 +30,7 @@ index 8b27e392d84c8a55783c5da7e92353f836deea40..7d86641a06565767d2b15fcd5fcae831
 +            ["Yes — install official npm package", "No — back to harnesses"],
 +            default=0,
 +            clear_on_exit=True,
-@@ -2891 +2888,9 @@ def _manage_kimi_harness() -> None:
+@@ -2892 +2889,9 @@
 -        return
 +        if choice != 0:
 +            return
@@ -42,10 +42,10 @@ index 8b27e392d84c8a55783c5da7e92353f836deea40..7d86641a06565767d2b15fcd5fcae831
 +            )
 +            return
 diff --git a/omnigent/db/utils.py b/omnigent/db/utils.py
-index f30e64df2f625e3a901e07bdeb2cad10227536f1..a0029166e2a800013292e7507bb6c0a7a3e34d7c 100644
+index 323367b36..fa789f7a9 100644
 --- a/omnigent/db/utils.py
 +++ b/omnigent/db/utils.py
-@@ -40,0 +41,18 @@ ManagedSessionMaker = Callable[[], AbstractContextManager[Session]]
+@@ -44,0 +45,18 @@
 +ManagedSessionInitializer = Callable[[Session], None]
 +
 +_managed_session_initializer: ContextVar[ManagedSessionInitializer | None] = ContextVar(
@@ -64,7 +64,7 @@ index f30e64df2f625e3a901e07bdeb2cad10227536f1..a0029166e2a800013292e7507bb6c0a7
 +        yield
 +    finally:
 +        _managed_session_initializer.reset(token)
-@@ -941,3 +959,4 @@ def make_managed_session_maker(
+@@ -1170,3 +1188,4 @@
 -        Inside a :func:`shared_read_scope` (and only for read makers), the
 -        scope's per-engine session is reused instead of a fresh checkout;
 -        the scope — not this block — owns its commit/close.
@@ -72,20 +72,26 @@ index f30e64df2f625e3a901e07bdeb2cad10227536f1..a0029166e2a800013292e7507bb6c0a7
 +        makers), the scope's per-engine session is reused instead of a fresh
 +        checkout; the scope — not this block — owns its commit/close. A bound
 +        initializer always receives a transaction-local session.
-@@ -945 +964,2 @@ def make_managed_session_maker(
--        if not immediate:
+@@ -1174 +1193,2 @@
+-        if not immediate and reuse_shared_reads:
 +        initializer = _managed_session_initializer.get()
-+        if not immediate and initializer is None:
-@@ -972,0 +993,2 @@ def make_managed_session_maker(
-+                if initializer is not None:
-+                    initializer(session)
++        if not immediate and reuse_shared_reads and initializer is None:
+@@ -1199,0 +1220,2 @@
++            if initializer is not None:
++                initializer(session)
+@@ -1201 +1223,4 @@
+-            _end_session_transaction(session)
++            if initializer is not None:
++                session.commit()
++            else:
++                _end_session_transaction(session)
 diff --git a/omnigent/llms/_usage_observer.py b/omnigent/llms/_usage_observer.py
-index 970fa7eb5427191e17cbb6afd53b4cee5377ab07..04cd40c0e9cb5638f7256c677d5ef953a6458e3f 100644
+index 970fa7eb5..04cd40c0e 100644
 --- a/omnigent/llms/_usage_observer.py
 +++ b/omnigent/llms/_usage_observer.py
-@@ -82,0 +83 @@ class _UsageBucket(_ModelUsage):
+@@ -82,0 +83 @@
 +_REQUIRED_OBSERVERS: list[UsageObserver] = []
-@@ -140,0 +142,16 @@ def add_observer(callback: UsageObserver) -> Callable[[], None]:
+@@ -140,0 +142,16 @@
 +def add_required_observer(callback: UsageObserver) -> Callable[[], None]:
 +    """Register a fail-closed usage sink that runs before diagnostics.
 +
@@ -102,13 +108,13 @@ index 970fa7eb5427191e17cbb6afd53b4cee5377ab07..04cd40c0e9cb5638f7256c677d5ef953
 +    return remove
 +
 +
-@@ -176,4 +193 @@ def notify(
+@@ -176,4 +193 @@
 -    """Dispatch usage to observers and (if enabled) the auto-recorder.
 -
 -    Never raises: a misbehaving observer is logged and skipped.
 -    """
 +    """Dispatch usage to required sinks, diagnostics, and the auto-recorder."""
-@@ -182,0 +197,7 @@ def notify(
+@@ -182,0 +197,7 @@
 +    for cb in list(_REQUIRED_OBSERVERS):
 +        cb(
 +            model=model,
@@ -116,5 +122,5 @@ index 970fa7eb5427191e17cbb6afd53b4cee5377ab07..04cd40c0e9cb5638f7256c677d5ef953
 +            output_tokens=output_tokens,
 +            total_tokens=total_tokens,
 +        )
-@@ -337,0 +359 @@ __all__ = [
+@@ -337,0 +359 @@
 +    "add_required_observer",
