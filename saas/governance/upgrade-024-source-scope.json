@@ -12,12 +12,12 @@
   },
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 269,
-    "max_upstream_net_added_loc": 13920,
+    "max_direct_upstream_files": 280,
+    "max_upstream_net_added_loc": 13960,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "e22118a16806e7c9d075cb12a459631ba668adafa84ea4c48fd282ca4a950791",
+    "baseline": "e7494835c5b438971908f998f0ec07db07d3d218d3d05285b26acb0b15a7ff57",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -757,6 +757,51 @@
       "sha256": "ca6e37b359d5d8a961189e2fda684a6cc34132da840e8d01fb914e204c11dc1f"
     },
     {
+      "path": "tests/e2e_ui/visual/snapshots/test_chat_snapshot/test_chat_conversation_matches_baseline/test_chat_conversation_matches_baseline[chromium][linux].png",
+      "bytes": 64025,
+      "sha256": "37661a0b158470b43a2e72a6f76decceb29378305a2b0a41c57791e47e8c156e"
+    },
+    {
+      "path": "tests/e2e_ui/visual/snapshots/test_chat_turn_rail_snapshot/test_chat_turn_rail_matches_baseline/test_chat_turn_rail_matches_baseline[chromium][linux].png",
+      "bytes": 61889,
+      "sha256": "47683e47f8873dfc0f8f4bdd9d73e79d56cfe4322ab2ec808dd572cedfcd8b9f"
+    },
+    {
+      "path": "tests/e2e_ui/visual/snapshots/test_landing_snapshot/test_empty_landing_matches_baseline/test_empty_landing_matches_baseline[chromium][linux].png",
+      "bytes": 49202,
+      "sha256": "bb956f8de1c35b24f85d791c7b92b9584abf5dd267ae4d90cc811d52230dfe4e"
+    },
+    {
+      "path": "tests/e2e_ui/visual/snapshots/test_sidebar_flyout_snapshot/test_pinned_project_flyout_matches_baseline/test_pinned_project_flyout_matches_baseline[chromium][linux].png",
+      "bytes": 60130,
+      "sha256": "e7fba5627617e33b879b160cdd4f89df64b5c4f03bcaa1db5340083751841fcb"
+    },
+    {
+      "path": "tests/e2e_ui/visual/snapshots/test_sidebar_snapshot/test_populated_sidebar_matches_baseline/test_populated_sidebar_matches_baseline[chromium][linux].png",
+      "bytes": 69609,
+      "sha256": "f7f12452ef0342cb6cb6ae84af30b908a9128379c21b1c6a034a6ed867f1c250"
+    },
+    {
+      "path": "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/test_story_matches_baseline/test_story_matches_baseline[chromium-components-agents-agentharnesspicker--every-harness-unavailable][linux].png",
+      "bytes": 21522,
+      "sha256": "0fd53486c1f908a8d12328de75e92681c44d06316df817cc9fc959e641a0f8b8"
+    },
+    {
+      "path": "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/test_story_matches_baseline/test_story_matches_baseline[chromium-components-agents-agentharnesspicker--long-names][linux].png",
+      "bytes": 36612,
+      "sha256": "5586901f688288c9bee3e01a75564e4cf7853ff9e2a032c4c51e2d55e92c6c5c"
+    },
+    {
+      "path": "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/test_story_matches_baseline/test_story_matches_baseline[chromium-components-agents-agentharnesspicker--needs-setup-badges][linux].png",
+      "bytes": 27413,
+      "sha256": "6a9988dd779b20f11964cf7b973ea55235bf6d9724beab2745d50266b7d50d10"
+    },
+    {
+      "path": "tests/e2e_ui/visual/snapshots/test_storybook_snapshot/test_story_matches_baseline/test_story_matches_baseline[chromium-components-agents-agentharnesspicker--no-agents][linux].png",
+      "bytes": 8349,
+      "sha256": "bf242cf9c65d9bd520d31b7731943f683986ca61576de27515377b5348da79f0"
+    },
+    {
       "path": "tests/e2e_ui/visual/test_landing_snapshot.py",
       "bytes": 5967,
       "sha256": "82ea6be5dfe14792ca44448df600acb89e082685ae7d620984078ed3fa1e6a3c"
@@ -1148,8 +1193,8 @@
     },
     {
       "path": "web/src/components/LanguageSwitcher.tsx",
-      "bytes": 3507,
-      "sha256": "802fa4859214002881f00ba576c88b432b06882cb2d3cbf207557090350f8912"
+      "bytes": 3955,
+      "sha256": "837115a09f44705132a45f92490f6dd5d33e867202e960fd0d570f21a8b4a6db"
     },
     {
       "path": "web/src/components/PreviewControl.tsx",
@@ -1278,8 +1323,13 @@
     },
     {
       "path": "web/src/pages/SettingsPage.tsx",
-      "bytes": 147801,
-      "sha256": "e16838fea801a2e1bb814a64b3638fbb96219f5ad38450e38f6e35bf390c7605"
+      "bytes": 147891,
+      "sha256": "8de8ef00394396d3c32d4e0e6468fef14bd20aa99af0f454a9c14b1d81b683cd"
+    },
+    {
+      "path": "web/src/pages/settings/search/catalog/appearance.ts",
+      "bytes": 10359,
+      "sha256": "937e09836fe3a0c67cbd4315f8e1d47b6d47d59c35b867cbb9c5d1d40ac58c6c"
     },
     {
       "path": "web/src/shell/AgentHarnessPicker.stories.tsx",
@@ -1298,8 +1348,8 @@
     },
     {
       "path": "web/src/shell/NewChatDialog.projectCreate.test.tsx",
-      "bytes": 47414,
-      "sha256": "356204c87d1a7857758334e0479d4e09414b4341ac861508412c586697ef1a4e"
+      "bytes": 47512,
+      "sha256": "fd7a30989501188a262ebce158a4ccd2b318d4fc7c5d9853047c9f87033d3bdf"
     },
     {
       "path": "web/src/shell/NewChatDialog.test.tsx",
@@ -1335,6 +1385,11 @@
       "path": "web/src/shell/Sidebar.tsx",
       "bytes": 351227,
       "sha256": "a9d2da36ab225aa0cf0d1af75ca837a1b919b8b0b74e54166d7180140d5b31ed"
+    },
+    {
+      "path": "web/src/shell/SidebarHeaderActions.test.tsx",
+      "bytes": 5876,
+      "sha256": "f3cd3f22acde50623422528c366f5f7b56382c62d9b6596207c32087580c4792"
     },
     {
       "path": "web/src/shell/SidebarHeaderActions.tsx",

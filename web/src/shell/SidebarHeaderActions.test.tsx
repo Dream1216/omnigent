@@ -92,7 +92,7 @@ describe("SidebarHeaderActions shortcut hints", () => {
         screen.getByTestId("sidebar-header-actions").querySelectorAll<HTMLElement>("[aria-label]"),
         (control) => control.getAttribute("aria-label"),
       ),
-    ).toEqual(["Close sidebar", "Search", "Back", "Forward"]);
+    ).toEqual(["Close sidebar", "Change language", "Search", "Back", "Forward"]);
   });
 
   it("hides Back and Forward until browser history has another entry", () => {

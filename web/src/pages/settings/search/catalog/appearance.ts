@@ -2,6 +2,20 @@ import { PALETTES } from "@/lib/themePalette";
 
 import { settingsEntry } from "./types";
 
+export const LANGUAGE_ENTRY = settingsEntry({
+  id: "language",
+  section: "appearance",
+  label: "Language",
+  description: "Choose the language used in the Omnigent interface.",
+  keywords: ["language", "locale", "Chinese", "English", "中文", "语言"],
+  parts: { "zh-CN": "Chinese", "en-US": "English" },
+  nameAlternatives: {
+    "zh-CN": { "en-US": "Chinese", "zh-CN": "中文" },
+    "en-US": { "en-US": "English", "zh-CN": "英文" },
+  },
+  focus: "zh-CN",
+});
+
 export const THEME_MODE_ENTRY = settingsEntry({
   id: "theme-mode",
   section: "appearance",
@@ -256,6 +270,7 @@ export const PROJECT_FOLDER_PAGINATION_ENTRY = settingsEntry({
 });
 
 export const APPEARANCE_SETTINGS = [
+  LANGUAGE_ENTRY,
   THEME_MODE_ENTRY,
   TERMINAL_THEME_ENTRY,
   COLOR_THEME_ENTRY,

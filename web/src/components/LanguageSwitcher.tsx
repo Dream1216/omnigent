@@ -10,6 +10,12 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useI18n, type Locale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { LANGUAGE_ENTRY } from "@/pages/settings/search/catalog/appearance";
+import {
+  settingsControlProps,
+  settingsDescriptionId,
+  settingsLabelId,
+} from "@/pages/settings/search/settingsControl";
 
 const options: readonly { value: Locale; shortLabel: string }[] = [
   { value: "zh-CN", shortLabel: "中文" },
@@ -67,8 +73,15 @@ export function LanguageSettingControl() {
   return (
     <div className="flex flex-col gap-3" data-testid="language-setting-control">
       <div>
-        <div className="text-ui font-medium">{t("language.label")}</div>
-        <p className="mt-1 text-sm text-muted-foreground">{t("settings.languageDescription")}</p>
+        <div id={settingsLabelId(LANGUAGE_ENTRY)} className="text-ui font-medium">
+          {t("language.label")}
+        </div>
+        <p
+          id={settingsDescriptionId(LANGUAGE_ENTRY)}
+          className="mt-1 text-sm text-muted-foreground"
+        >
+          {t("settings.languageDescription")}
+        </p>
       </div>
       <div
         className="inline-flex w-fit rounded-lg border border-border bg-muted/40 p-1"
@@ -82,6 +95,7 @@ export function LanguageSettingControl() {
             <button
               key={option.value}
               type="button"
+              {...settingsControlProps(LANGUAGE_ENTRY, option.value, { alternative: locale })}
               onClick={() => setLocale(option.value)}
               aria-pressed={selected}
               className={cn(

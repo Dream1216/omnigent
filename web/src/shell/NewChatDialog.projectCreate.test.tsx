@@ -851,7 +851,11 @@ describe("NewChatLandingScreen nested agent creation", () => {
       "Selected host is unavailable",
     );
     expect(createBundledSession).not.toHaveBeenCalled();
-    expect(useHosts).toHaveBeenCalledWith({ refetchOnFocus: true, sourceHostId: "offline" });
+    expect(useHosts).toHaveBeenCalledWith({
+      includeSandbox: true,
+      refetchOnFocus: true,
+      sourceHostId: "offline",
+    });
   });
 
   it.each([false, true])(
@@ -875,7 +879,11 @@ describe("NewChatLandingScreen nested agent creation", () => {
       const { client } = renderLanding({ sibling_sessions: true, session_bundle_workspaces: true });
       await screen.findByRole("heading", { name: "Add nested agent" });
       const draftKey = client.getQueryData<NestedSessionDraft[]>(["nested-session-drafts"])![0].key;
-      expect(useHosts).toHaveBeenCalledWith({ refetchOnFocus: true, sourceHostId: "host_1" });
+      expect(useHosts).toHaveBeenCalledWith({
+        includeSandbox: true,
+        refetchOnFocus: true,
+        sourceHostId: "host_1",
+      });
       expect(screen.getByTestId("new-chat-landing-host-chip")).toHaveAttribute(
         "aria-label",
         "Host: This machine, Online",

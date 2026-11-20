@@ -127,6 +127,7 @@ import {
   CODE_FONT_WEIGHT_ENTRY,
   COLOR_THEME_ENTRY,
   HIDE_UNCONFIGURED_HARNESSES_ENTRY,
+  LANGUAGE_ENTRY,
   PEER_SESSION_MESSAGES_ENTRY,
   SHOW_FINAL_ANSWER_ENTRY,
   TERMINAL_THEME_ENTRY,
@@ -1364,7 +1365,9 @@ function AppearanceSection() {
   return (
     <Section title={t("settings.appearance")} description={t("settings.appearanceDescription")}>
       <div className="flex flex-col gap-6">
-        <LanguageSettingControl />
+        <SettingsItem entry={LANGUAGE_ENTRY}>
+          <LanguageSettingControl />
+        </SettingsItem>
         <div key={resetKey} className="flex flex-col gap-6">
           <SettingsGroup title="Theme" testId="settings-group-theme">
             <ModeControl />
