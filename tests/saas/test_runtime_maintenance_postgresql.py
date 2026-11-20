@@ -1436,6 +1436,28 @@ def _native_t_rebinding_fixture(production_replay, *, derive_t_gold_at=None, ret
             database_engine.dispose()
 
 
+def assert_current_schema_refuses_legacy_fenced_t_before_mutation(production_replay):
+    with _native_t_rebinding_fixture(production_replay) as context:
+        with context.engines["official_owner"].connect() as connection:
+            assert connection.exec_driver_sql(
+                "SELECT version_num FROM public.alembic_version"
+            ).scalar_one() == migration._expected_head("official")
+        assert migration._expected_head("official") != "d0a1f879a01d"
+        before = context.facts()
+        rows = runtime_native.runtime_rows_snapshot(
+            context.reader, expected_identity=context.identity, owner=context.owner, maximum=20
+        )
+        with pytest.raises(db.Refused, match=r"^installed_source_and_runtime_heads_required$"):
+            context.control.prepare()
+        assert context.facts() == before
+        assert (
+            runtime_native.runtime_rows_snapshot(
+                context.reader, expected_identity=context.identity, owner=context.owner, maximum=20
+            )
+            == rows
+        )
+
+
 def assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome(
     production_replay,
 ):

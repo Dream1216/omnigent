@@ -7,7 +7,11 @@ import hashlib
 import ipaddress
 import json
 import os
-from collections.abc import Iterator
+import subprocess
+import sys
+import tarfile
+import xml.etree.ElementTree as ET
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1024,41 +1028,132 @@ def _verify_runner_deployment_and_startup(
     )
 
 
+@pytest.fixture(scope="session")
+def historical_d0_source(tmp_path_factory):
+    if not os.environ.get("OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"):
+        pytest.skip("requires a dedicated clean production-migration replay cluster")
+    repository = Path(__file__).resolve().parents[2]
+    root = tmp_path_factory.mktemp("historical-d0-replay")
+    objects = root / "objects.git"
+    revisions = (
+        "73e8d4fba01a3b0a7183c172f44961928376805c",
+        "3264a645a0fce33ea2c6477ea92044f8491051bf",
+        "254151b742667a95f0ec8a94e312f03924f56c80",
+    )
+    complete = all(
+        subprocess.run(
+            ["git", "cat-file", "-e", revision + "^{commit}"],
+            cwd=repository,
+            capture_output=True,
+            timeout=10,
+        ).returncode
+        == 0
+        for revision in revisions
+    )
+    subprocess.run(["git", "init", "--bare", str(objects)], check=True, capture_output=True)
+    git = ["git", "--git-dir=" + str(objects)]
+    subprocess.run(
+        [
+            *git,
+            "fetch",
+            "--no-tags",
+            "--depth=1",
+            str(repository) if complete else "https://github.com/Dream1216/omnigent.git",
+            *revisions,
+        ],
+        check=True,
+        capture_output=True,
+        timeout=90,
+    )
+    archive = root / "source.tar"
+    with archive.open("wb") as output:
+        subprocess.run(
+            [
+                *git,
+                "archive",
+                revisions[0],
+                "omnigent",
+                "saas",
+                "tests",
+                "pyproject.toml",
+            ],
+            stdout=output,
+            check=True,
+            timeout=60,
+        )
+    source = root / "source"
+    source.mkdir()
+    with tarfile.open(archive) as packaged:
+        packaged.extractall(source, filter="data")
+    return source, objects
+
+
+@pytest.fixture
+def historical_d0_replay(historical_d0_source, tmp_path) -> Callable[[str], None]:
+    source, objects = historical_d0_source
+
+    def replay(scenario: str) -> None:
+        report = tmp_path / "historical-replay.xml"
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"PYTHONPATH", "PYTEST_ADDOPTS", "PYTEST_CURRENT_TEST"}
+        }
+        environment.update(
+            PYTHONPATH=str(source), OMNIGENT_SAAS_TEST_ORIGINAL_T_GIT_DIR=str(objects)
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; import pytest,sys; "
+                "import omnigent.db; from saas.production import postgresql_migration; "
+                "assert all(Path(module.__file__).resolve().is_relative_to(Path.cwd()) "
+                "for module in (omnigent.db,postgresql_migration)); "
+                "raise SystemExit(pytest.main(sys.argv[1:]))",
+                "tests/saas/test_production_migration_replay.py::" + scenario + "[admin]",
+                "-q",
+                "--reruns",
+                "0",
+                "--basetemp=" + str(tmp_path / "native"),
+                "--junitxml=" + str(report),
+            ],
+            cwd=source,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        suites = ET.parse(report).getroot().iter("testsuite")
+        counts = [suite.attrib for suite in suites]
+        assert sum(int(row["tests"]) for row in counts) == 1
+        assert all(
+            int(row[key]) == 0 for row in counts for key in ("failures", "errors", "skipped")
+        )
+
+    return replay
+
+
+def test_real_fenced_t_runtime_rebinding_commit_and_complete_facts(historical_d0_replay):
+    """Retain the original D0 native proof on its exact installed source."""
+    historical_d0_replay("test_real_fenced_t_runtime_rebinding_commit_and_complete_facts")
+
+
+def test_real_fenced_t_new_schema_inverse_refuses_before_mutation(historical_d0_replay):
+    """Retain D0's refusal of the original destructive T inverse."""
+    historical_d0_replay("test_real_fenced_t_new_schema_inverse_refuses_before_mutation")
+
+
+def test_real_d0_retaining_t_inverse_and_reattach_preserves_complete_facts(historical_d0_replay):
+    """Retain the exact historical SQL proof without qualifying current rollback."""
+    historical_d0_replay("test_real_d0_retaining_t_inverse_and_reattach_preserves_complete_facts")
+
+
 @pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
-def test_real_fenced_t_runtime_rebinding_commit_and_complete_facts(production_replay):
-    """Run the native maintenance scenario in the existing two-major replay lane."""
+def test_current_schema_refuses_legacy_fenced_t_before_mutation(production_replay):
     from tests.saas.test_runtime_maintenance_postgresql import (
-        assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome,
+        assert_current_schema_refuses_legacy_fenced_t_before_mutation,
     )
 
-    assert_fenced_t_rebinding_preserves_same_projects_all_other_facts_and_commit_outcome(
-        production_replay
-    )
-
-
-@pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
-def test_real_fenced_t_new_schema_inverse_refuses_before_mutation(production_replay, tmp_path):
-    """New official columns cannot enter the original destructive T downgrade."""
-    from tests.saas.test_runtime_maintenance_postgresql import (
-        assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold,
-    )
-
-    assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
-        production_replay,
-        tmp_path,
-        expected_inverse_refusal=r"^official_schema_inverse_not_source_qualified$",
-    )
-
-
-@pytest.mark.parametrize("production_replay", ["admin"], indirect=True)
-def test_real_d0_retaining_t_inverse_and_reattach_preserves_complete_facts(
-    production_replay, tmp_path
-):
-    """Real SQL proof; image/provider/physical-restore qualification is separate."""
-    from tests.saas.test_runtime_maintenance_postgresql import (
-        assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold,
-    )
-
-    assert_fenced_t_complete_inverse_and_reattach_derives_independent_target_gold(
-        production_replay, tmp_path, retain_d0=True
-    )
+    assert_current_schema_refuses_legacy_fenced_t_before_mutation(production_replay)
