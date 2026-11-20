@@ -23,6 +23,10 @@ on:
       - ".github/workflows/benchmark-host.yml"
   workflow_dispatch:
     inputs:
+      interrupt_diagnostic:
+        description: "Observe the fixed runtime interrupt path without release qualification"
+        type: boolean
+        default: false
       journeys:
         description: "Comma-separated journeys (blank = the host-session set)"
         required: false
@@ -63,7 +67,10 @@ concurrency:
 jobs:
   benchmark-host:
     name: Host session benchmark (sqlite)
-    if: github.repository == 'omnigent-ai/omnigent' && !github.event.pull_request.draft
+    if: >-
+      (github.repository == 'omnigent-ai/omnigent' ||
+       (github.event_name == 'workflow_dispatch' && inputs.interrupt_diagnostic)) &&
+      !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -72,6 +79,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -86,9 +94,21 @@ jobs:
       - name: Install dependencies
         # Same runtime install as the other benchmark workflows so numbers stay
         # comparable across them.
-        run: uv sync --extra databricks
+        run: |
+          if [ "${{ inputs.interrupt_diagnostic }}" = "true" ]; then
+            uv sync --frozen --extra all --extra saas --group test
+          else
+            uv sync --extra databricks
+          fi
+
+      - name: Observe isolated interrupt segments
+        if: github.event_name == 'workflow_dispatch' && inputs.interrupt_diagnostic
+        run: |
+          uv run --no-sync python -m saas.scripts.benchmark_interrupt_diagnostics \
+            --output interrupt-diagnostics
 
       - name: Run host-session benchmark
+        if: ${{ !inputs.interrupt_diagnostic }}
         # Throwaway empty SQLite DB (run.py default): these journeys measure
         # process spin-up and turn latency, not query scale — corpus-scale
         # numbers live in the nightly benchmark.yml.
@@ -113,6 +133,8 @@ jobs:
         if: always()
         with:
           name: benchmark-results-host-${{ github.run_id }}
-          path: benchmark-results-host.json
+          path: |
+            benchmark-results-host.json
+            interrupt-diagnostics/
           retention-days: 30
           if-no-files-found: warn

@@ -12,12 +12,12 @@
   },
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 285,
-    "max_upstream_net_added_loc": 14296,
+    "max_direct_upstream_files": 286,
+    "max_upstream_net_added_loc": 14318,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "018743ace0617296c0cebdfc0c7cf23788fc24205016c825d6aae67e6f6bd16a",
+    "baseline": "cb3b51377e5303a6ba45da0f90cde8b4431bf5a2d50bc46912b90c65f6300088",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -85,6 +85,11 @@
       "path": ".github/triage_v2/pyproject.toml",
       "bytes": 1063,
       "sha256": "fedd571ae56726d9f8c8deed0e056f1c7c2624154177ce8fd98b9ebaa69f2bd1"
+    },
+    {
+      "path": ".github/workflows/benchmark-host.yml",
+      "bytes": 5551,
+      "sha256": "d2f9731a369165279dfb4dc9ba77daf0c82cf75b17b858a6d1d6665f6b3f5be1"
     },
     {
       "path": ".github/workflows/ci.yml",
