@@ -1,14 +1,14 @@
 diff --git a/omnigent/harnesses/kimi_native/credentials.py b/omnigent/harnesses/kimi_native/credentials.py
-index 5d2d771c0345898a053b78a59e176028949999e7..86aba9cd1ad07d8e6c77a378496f49eadcb221bf 100644
+index bdf771534..ba809babe 100644
 --- a/omnigent/harnesses/kimi_native/credentials.py
 +++ b/omnigent/harnesses/kimi_native/credentials.py
-@@ -122,2 +122,3 @@ def build_kimi_session_home(
+@@ -190,2 +190,3 @@
 -    :returns: ``{"KIMI_CODE_HOME": str(session_home)}`` to merge into the
 -        launched kimi process env.
 +    :returns: The session-home override plus a temporary ``KIMI_MODEL_*``
 +        Provider when the managed Host exposes a safely translatable,
 +        session-bound OpenAI-compatible gateway. No token is written to disk.
-@@ -159 +160,23 @@ def build_kimi_session_home(
+@@ -229 +230,23 @@
 -    return {KIMI_CODE_HOME_ENV_VAR: str(session_home)}
 +    env = {KIMI_CODE_HOME_ENV_VAR: str(session_home)}
 +
@@ -34,14 +34,14 @@ index 5d2d771c0345898a053b78a59e176028949999e7..86aba9cd1ad07d8e6c77a378496f49ea
 +        )
 +    return env
 diff --git a/omnigent/harnesses/kimi_native/forwarder.py b/omnigent/harnesses/kimi_native/forwarder.py
-index e5784d775b5997f8994d200688613f7ff71ff4af..cd603d32d0aa326ea3d5d17f3915e44f03888a12 100644
+index e5784d775..cd603d32d 100644
 --- a/omnigent/harnesses/kimi_native/forwarder.py
 +++ b/omnigent/harnesses/kimi_native/forwarder.py
-@@ -1706,0 +1707 @@ async def forward_kimi_wire_to_session(
+@@ -1706,0 +1707 @@
 +            terminal_pending = False
-@@ -1993,0 +1995 @@ async def forward_kimi_wire_to_session(
+@@ -1993,0 +1995 @@
 +                        terminal_pending = item.kind in ("turn_end", "turn_failed")
-@@ -2012 +2014,8 @@ async def forward_kimi_wire_to_session(
+@@ -2012 +2014,8 @@
 -            if turn_open and pane_is_alive is False and not dead_tail_pending:
 +            # A received terminal edge owns closure until delivered or poison-dropped.
 +            # Watchdogs must not replace it while its POST is still pending.
@@ -51,20 +51,20 @@ index e5784d775b5997f8994d200688613f7ff71ff4af..cd603d32d0aa326ea3d5d17f3915e44f
 +                and pane_is_alive is False
 +                and not dead_tail_pending
 +            ):
-@@ -2018,0 +2028 @@ async def forward_kimi_wire_to_session(
+@@ -2018,0 +2028 @@
 +                and not terminal_pending
-@@ -2028,0 +2039 @@ async def forward_kimi_wire_to_session(
+@@ -2028,0 +2039 @@
 +                and not terminal_pending
 diff --git a/omnigent/inner/kimi_executor.py b/omnigent/inner/kimi_executor.py
-index daa93bce0061cba1977fe048101fd814d3d58b75..2eaa6a4a08c32fa3fa8d902594cd3c73ac38e16b 100644
+index a6c69199d..53f6767eb 100644
 --- a/omnigent/inner/kimi_executor.py
 +++ b/omnigent/inner/kimi_executor.py
-@@ -4,2 +4,2 @@ Drives Moonshot AI's upstream ``kimi`` CLI from
+@@ -4,2 +4,2 @@
 -https://github.com/MoonshotAI/Kimi-Code (the curl-installed
 -single-binary build at https://code.kimi.com/kimi-code/install.sh).
 +https://github.com/MoonshotAI/Kimi-Code (the official
 +``@moonshot-ai/kimi-code`` package).
-@@ -51,5 +51,4 @@ Env-var contract (read once at construction by
+@@ -51,5 +51,4 @@
 -Per-invocation provider routing (``--config-file`` / ``--mcp-config-file``
 -/ gateway env vars) is **not** wired: upstream kimi has no per-spawn
 -config override. Provider configuration lives in ``~/.kimi-code/config.toml``
@@ -74,16 +74,16 @@ index daa93bce0061cba1977fe048101fd814d3d58b75..2eaa6a4a08c32fa3fa8d902594cd3c73
 +temporary-provider environment family. Omnigent resolves a gateway token once
 +at subprocess start and exports only that session-bound token; no Provider key
 +or generated provider block is persisted to disk.
-@@ -403,0 +403,2 @@ class KimiExecutor(Executor):
+@@ -403,0 +403,2 @@
 +        gateway_base_url: str | None = None,
 +        gateway_auth_command: str | None = None,
-@@ -411,0 +413,2 @@ class KimiExecutor(Executor):
+@@ -411,0 +413,2 @@
 +        self._gateway_base_url = gateway_base_url
 +        self._gateway_auth_command = gateway_auth_command
-@@ -444 +447 @@ class KimiExecutor(Executor):
+@@ -444 +447 @@
 -    def _build_spawn_env(self) -> dict[str, str]:
 +    async def _build_spawn_env(self) -> dict[str, str]:
-@@ -447,4 +450,3 @@ class KimiExecutor(Executor):
+@@ -447,4 +450,3 @@
 -        Inherits the harness wrap's own env (so ``KIMI_*`` auth vars
 -        the user exported reach the subprocess) and adds nothing — all
 -        ``HARNESS_KIMI_*`` knobs are read on the wrap side and
@@ -91,10 +91,10 @@ index daa93bce0061cba1977fe048101fd814d3d58b75..2eaa6a4a08c32fa3fa8d902594cd3c73
 +        Inherits Kimi's own ambient env for the vendor-login fallback. When a
 +        gateway is configured, the resolved session token and endpoint replace
 +        that fallback through Kimi Code's in-memory ``KIMI_MODEL_*`` provider.
-@@ -455 +457 @@ class KimiExecutor(Executor):
+@@ -455 +457 @@
 -        return clean_agent_env(
 +        env = clean_agent_env(
-@@ -458,0 +461,54 @@ class KimiExecutor(Executor):
+@@ -458,0 +461,54 @@
 +        env.update(await self._resolve_gateway_env())
 +        return env
 +
@@ -149,14 +149,14 @@ index daa93bce0061cba1977fe048101fd814d3d58b75..2eaa6a4a08c32fa3fa8d902594cd3c73
 +        if self._model:
 +            env["KIMI_MODEL_NAME"] = self._model
 +        return env
-@@ -500,3 +556,3 @@ class KimiExecutor(Executor):
+@@ -498,3 +554,3 @@
 -            # kimi is a curl-installed single binary: it must read its own
 -            # install dir and write its config dir ($KIMI_CODE_HOME, default
 -            # ~/.kimi-code), or it can't start inside the jail.
 +            # kimi must read its own install dir and write its config dir
 +            # ($KIMI_CODE_HOME, default
 +            # ~/.kimi-code) and /tmp, or it can't start inside the jail.
-@@ -739 +795,5 @@ class KimiExecutor(Executor):
+@@ -738 +794,5 @@
 -        env = self._build_spawn_env()
 +        try:
 +            env = await self._build_spawn_env()
@@ -164,10 +164,10 @@ index daa93bce0061cba1977fe048101fd814d3d58b75..2eaa6a4a08c32fa3fa8d902594cd3c73
 +            yield ExecutorError(message=str(exc), retryable=True)
 +            return
 diff --git a/omnigent/inner/kimi_harness.py b/omnigent/inner/kimi_harness.py
-index 5d8aae8018027907fd6785022b7fb6a48fc8b643..d855165f4bf494c40e3983c5331281ed8abbaaee 100644
+index 5d8aae801..d855165f4 100644
 --- a/omnigent/inner/kimi_harness.py
 +++ b/omnigent/inner/kimi_harness.py
-@@ -33,4 +33,3 @@ Env vars read at startup (full contract in
+@@ -33,4 +33,3 @@
 -Provider routing for kimi happens via ``kimi provider add`` / its
 -``~/.kimi-code/config.toml`` (out-of-band from Omnigent) — upstream kimi
 -has no per-spawn ``--config-file`` or env-var provider override.
@@ -175,9 +175,9 @@ index 5d8aae8018027907fd6785022b7fb6a48fc8b643..d855165f4bf494c40e3983c5331281ed
 +Provider routing uses Kimi Code's ``KIMI_MODEL_*`` temporary-provider
 +environment family. Omnigent resolves the configured gateway token at process
 +start and never persists it in ``~/.kimi-code/config.toml``.
-@@ -65,0 +65,2 @@ _ENV_OS_ENV = "HARNESS_KIMI_OS_ENV"
+@@ -65,0 +65,2 @@
 +_ENV_GATEWAY_BASE_URL = "HARNESS_KIMI_GATEWAY_BASE_URL"
 +_ENV_GATEWAY_AUTH_COMMAND = "HARNESS_KIMI_GATEWAY_AUTH_COMMAND"
-@@ -136,0 +138,2 @@ def _build_kimi_executor() -> Executor:
+@@ -136,0 +138,2 @@
 +        gateway_base_url=os.environ.get(_ENV_GATEWAY_BASE_URL, "").strip() or None,
 +        gateway_auth_command=os.environ.get(_ENV_GATEWAY_AUTH_COMMAND, "").strip() or None,

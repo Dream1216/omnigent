@@ -1,20 +1,18 @@
 diff --git a/omnigent/cli.py b/omnigent/cli.py
-index 81b853168d095027f07ad92893102942c8956a4e..a0219a46911209c9db132e7840b6f32ba4ed33fe 100644
+index b9d2fc4c7..40a058f3d 100644
 --- a/omnigent/cli.py
 +++ b/omnigent/cli.py
-@@ -3845,0 +3846,2 @@ def _build_host_daemon_env(
+@@ -3985,0 +3986,2 @@
 +        HOST_TOKEN_FILE_ENV_VAR,
 +        HOST_WORKSPACE_ID_ENV_VAR,
-@@ -3862,0 +3865,2 @@ def _build_host_daemon_env(
+@@ -4002,0 +4005,2 @@
 +            HOST_TOKEN_FILE_ENV_VAR,
 +            HOST_WORKSPACE_ID_ENV_VAR,
 diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
+index d18edd96e..344fb3429 100644
 --- a/omnigent/host/connect.py
 +++ b/omnigent/host/connect.py
-@@ -148,7 +148,12 @@ from omnigent.host.git_worktree import (
-     list_worktrees,
-     remove_worktree,
- )
+@@ -161 +161,6 @@
 -from omnigent.host.identity import HostIdentity, load_or_create_host_identity
 +from omnigent.host.identity import (
 +    HostIdentity,
@@ -22,149 +20,59 @@ diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
 +    load_or_create_host_identity,
 +)
 +from omnigent.host.identity_env import in_managed_sandbox
- from omnigent.host.maintenance import HostMaintenanceJanitor
- from omnigent.host.runner_zygote import ZygoteManager, ZygoteRunnerProc, ZygoteUnavailable
- from omnigent.inner import _proc
-@@ -205,6 +210,7 @@ from omnigent.runner.identity import (
-     RUNNER_PARENT_PID_ENV_VAR,
-     RUNNER_SLICE_KEY_ENV_VAR,
-     RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR,
+@@ -221,0 +227 @@
 +    RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR,
-     RUNNER_WORKSPACE_ENV_VAR,
-     runner_sign_in_is_pending,
-     token_bound_runner_id,
-@@ -302,6 +308,7 @@ def _coerce_int(value: object) -> int:
- HARNESS_READINESS_REFRESH_INTERVAL_S = 5.0
- # Auth changes and removals need the full, potentially expensive readiness map.
- HARNESS_READINESS_FULL_REFRESH_INTERVAL_S = 60.0
+@@ -321,0 +328 @@
 +_HOST_READINESS_REFRESH_TIMEOUT_S = 15.0
- HARNESS_ACCOUNT_PROBE_TIMEOUT_S = 7.0
- HARNESS_LOGIN_START_TIMEOUT_S = 20.0
- HARNESS_LOGIN_COMPLETION_TIMEOUT_S = 15 * 60.0
-@@ -952,6 +959,7 @@ def _build_runner_env(
-     host_owns_global_cleanup: bool = False,
-     harness_tmp_parent: Path | None = None,
-     inference_config: dict[str, object] | None = None,
+@@ -997,0 +1005 @@
 +    workspace_id: int | None = None,
- ) -> dict[str, str]:
-     """
-     Build the environment for a spawned runner subprocess.
-@@ -985,6 +993,8 @@ def _build_runner_env(
-         machine-global cleanup that standalone runners perform synchronously.
-     :param harness_tmp_parent: Absolute harness socket root shared with the
-         host janitor. ``None`` preserves the standalone runner default.
+@@ -1031,0 +1040,2 @@
 +    :param workspace_id: Managed SaaS workspace partition selector. ``None``
 +        leaves local and single-workspace runner behavior unchanged.
-     :returns: The runner subprocess environment.
-     """
-     extra_names = {
-@@ -1028,6 +1038,8 @@ def _build_runner_env(
-         env[RUNNER_INITIAL_AUTH_TOKEN_ENV_VAR] = initial_auth_token
-     env[RUNNER_WORKSPACE_ENV_VAR] = workspace
-     env[RUNNER_PARENT_PID_ENV_VAR] = str(parent_pid)
+@@ -1082,0 +1093,2 @@
 +    if workspace_id is not None:
 +        env[RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR] = str(workspace_id)
-     if host_owns_global_cleanup:
-         env[RUNNER_HOST_OWNS_GLOBAL_CLEANUP_ENV_VAR] = "1"
-     if harness_tmp_parent is not None:
-@@ -1344,6 +1356,12 @@ class HostProcess:
-         # write has already produced a fresher snapshot. Capability state is
-         # mutated only on the event loop, so no cross-thread lock is needed.
-         self._capability_generation = 0
+@@ -1413,0 +1426,6 @@
 +        self._configured_harness_probe: (
 +            tuple[int, asyncio.Task[dict[str, HarnessAvailability]]] | None
 +        ) = None
 +        self._readiness_probe_caches_stale = False
 +        # A quick version check or post-install refresh can also spawn a CLI.
 +        self._readiness_cli_lock = threading.Lock()
-         # Account probes have their own generation so metadata refreshes neither
-         # discard readiness nor overwrite a newer login/logout result.
-         self._account_generation = 0
-@@ -1560,6 +1578,9 @@ class HostProcess:
-         Cancellation stops waiting for the result but cannot stop a worker
-         thread. Keep the orphan reaper paused until the worker itself finishes.
-         """
+@@ -1661,0 +1680,3 @@
 +        return await asyncio.shield(self._start_host_subprocess_in_thread(operation))
 +
 +    def _start_host_subprocess_in_thread(self, operation: Callable[[], _T]) -> asyncio.Task[_T]:
-         self._owned_subprocess_ops += 1
-         task = asyncio.create_task(asyncio.to_thread(operation))
-         retained_task = cast("asyncio.Task[object]", task)
-@@ -1573,7 +1594,7 @@ class HostProcess:
-                 completed.exception()
- 
-         task.add_done_callback(_release)
+@@ -1675 +1696 @@
 -        return await asyncio.shield(task)
 +        return task
- 
-     def _alive_runner_ids(self) -> list[str]:
-         """Return IDs of runners that are still alive.
-@@ -2110,6 +2131,7 @@ class HostProcess:
-             host_owns_global_cleanup=self._maintenance_janitor is not None,
-             harness_tmp_parent=self._harness_tmp_parent,
-             inference_config=frame.inference_config,
+@@ -2239,0 +2261 @@
 +            workspace_id=load_host_tunnel_workspace_id(),
-         )
-         if frame.inference_config is not None:
-             try:
-@@ -2367,8 +2389,10 @@ class HostProcess:
-                 proc = subprocess.Popen(
-                     # -P keeps cwd off sys.path: a workspace that is itself an
-                     # omnigent checkout would otherwise shadow the installed
+@@ -2506,2 +2528,4 @@
 -                    # package. _entry re-adds it for spec-declared local tools.
 -                    [sys.executable, "-P", "-m", "omnigent.runner._entry"],
 +                    # package. The selected entry re-adds it for spec-declared
 +                    # local tools. Managed compositions override this seam with
 +                    # their reviewed metering entrypoint; ambient input cannot.
 +                    [sys.executable, "-P", "-m", self._runner_entry_module()],
-                     env=env,
-                     # A daemon may outlive the checkout it started from.
-                     cwd=str(workspace),
-@@ -2388,6 +2412,11 @@ class HostProcess:
-         finally:
-             log_fh.close()
- 
+@@ -2529,0 +2554,5 @@
 +    def _runner_entry_module(self) -> str:
 +        """Return the installed Runner entrypoint for this Host composition."""
 +
 +        return "omnigent.runner._entry"
 +
-     async def _stop_abandoned_spawn(
-         self,
-         spawn: asyncio.Future[tuple[subprocess.Popen[bytes] | ZygoteRunnerProc, Path]],
-@@ -3236,6 +3265,7 @@ class HostProcess:
-         account_generation = self._account_generation
-         try:
-             invalidate_harness_probe_caches()
+@@ -3531,0 +3561 @@
 +            self._capability_generation += 1
-             configured, accounts, gateway = await asyncio.gather(
-                 self._probe_configured_harnesses(startup=False),
-                 self._probe_harness_accounts(explicit_refresh=True),
-@@ -3409,6 +3439,8 @@ class HostProcess:
-                 success, error = False, "login expired"
-                 with contextlib.suppress(Exception):
-                     await session.cancel(vendor_login_id)
+@@ -3704,0 +3735,2 @@
 +            if success:
 +                self._invalidate_readiness_after_auth_change()
-             configured = await self._probe_configured_harnesses(startup=False)
-             accounts = await self._probe_harness_accounts(explicit_refresh=False)
-             self._replace_capabilities(configured, self._gateway_inference, accounts)
-@@ -3524,6 +3556,7 @@ class HostProcess:
-             )
-         finally:
-             self._owned_subprocess_ops -= 1
+@@ -3819,0 +3852 @@
 +        self._invalidate_readiness_after_auth_change()
-         configured = await self._probe_configured_harnesses(startup=False)
-         accounts = await self._probe_harness_accounts(explicit_refresh=False)
-         self._replace_capabilities(configured, self._gateway_inference, accounts)
-@@ -3548,10 +3581,32 @@ class HostProcess:
-                 await active.task
-             await active.session.close()
- 
+@@ -3844,2 +3877 @@
 -    @staticmethod
 -    def _fresh_harness_state() -> tuple[dict[str, HarnessAvailability], None]:
 +    def _fresh_harness_state(self) -> tuple[dict[str, HarnessAvailability], None]:
-         """Return readiness immediately; account probes are async and bounded."""
+@@ -3847 +3879,24 @@
 -        return configured_harness_map(), None
 +        return self._collect_configured_harnesses(), None
 +
@@ -190,16 +98,10 @@ diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
 +            return _unavailable_harness_became_ready(configured)
 +        finally:
 +            self._readiness_cli_lock.release()
- 
-     def _handle_store_secret(self, frame: HostStoreSecretFrame) -> HostStoreSecretResultFrame:
-         """Handle a ``host.store_secret`` request from the server.
-@@ -4580,9 +4635,32 @@ class HostProcess:
-         *,
-         startup: bool,
-     ) -> dict[str, HarnessAvailability] | None:
+@@ -4976 +5031 @@
 -        """Collect harness readiness without letting a probe break the channel."""
 +        """Share one full readiness worker until it has actually exited."""
-         try:
+@@ -4978 +5033,24 @@
 -            return await self._run_host_subprocess_in_thread(configured_harness_map)
 +            async with asyncio.timeout(_HOST_READINESS_REFRESH_TIMEOUT_S):
 +                generation = self._capability_generation
@@ -225,22 +127,10 @@ diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
 +                            return configured
 +        except TimeoutError:
 +            _logger.warning("Host harness readiness probe timed out without a new result")
-         except Exception as exc:
-             _logger.exception("Host harness readiness probe failed")
-             if startup:
-@@ -4591,7 +4669,7 @@ class HostProcess:
-                     f"connect with harness readiness unknown: {exc}",
-                     stderr=True,
-                 )
+@@ -4987 +5065 @@
 -            return None
 +        return None
- 
-     async def _probe_harness_accounts(self, *, explicit_refresh: bool) -> HarnessAccounts | None:
-         """Probe account families concurrently, with one timeout per CLI."""
-@@ -5366,7 +5444,13 @@ class HostProcess:
-             managed-host token header or — only when a token could be
-             minted — ``{"Authorization": "Bearer <token>"}``.
-         """
+@@ -5792 +5870,7 @@
 -        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, MANAGED_HOST_TOKEN_HEADER
 +        from omnigent.host.identity import (
 +            HOST_TOKEN_FILE_ENV_VAR,
@@ -249,21 +139,15 @@ diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
 +            load_host_tunnel_token,
 +            load_host_tunnel_workspace_id,
 +        )
-         from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
- 
-         # Identify as a first-party client so the server's WebSocket origin
-@@ -5385,17 +5469,22 @@ class HostProcess:
-             databricks_request_headers(self._server_url, host_id=self._identity.host_id)
-         )
- 
+@@ -5811 +5895 @@
 -        managed_token = os.environ.get(HOST_TOKEN_ENV_VAR)
 +        managed_token = load_host_tunnel_token()
-         if managed_token:
+@@ -5812,0 +5897,4 @@
 +            # A managed machine credential is deliberately independent from
 +            # the user's bearer. Drop any Authorization header contributed by
 +            # deployment routing helpers so the two identities never mix.
 +            headers.pop("Authorization", None)
-             headers[MANAGED_HOST_TOKEN_HEADER] = managed_token
+@@ -5814,8 +5902,9 @@
 -            # Behind an authenticating front door (Databricks Apps OAuth proxy)
 -            # the launch token alone never reaches the server; the launcher-
 -            # provisioned proxy bearer gets the request through the proxy.
@@ -281,54 +165,31 @@ diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
 +                proxy_bearer = read_proxy_bearer(self._server_url)
 +                if proxy_bearer:
 +                    headers["Authorization"] = f"Bearer {proxy_bearer}"
-             return headers
-         token = self._current_auth_token()
-         if token:
-@@ -5415,8 +5504,10 @@ class HostProcess:
-         :returns: Current bearer token, or ``None`` when credentials are not
-             available or this is a managed host authenticated by launch token.
-         """
+@@ -5841 +5930 @@
 -        from omnigent.host.identity import HOST_TOKEN_ENV_VAR
 +        from omnigent.host.identity import HOST_TOKEN_ENV_VAR, HOST_TOKEN_FILE_ENV_VAR
- 
+@@ -5842,0 +5932,2 @@
 +        if os.environ.get(HOST_TOKEN_FILE_ENV_VAR):
 +            return None
-         if os.environ.get(HOST_TOKEN_ENV_VAR):
-             from omnigent.util.proxy_bearer import read_proxy_bearer
- 
-@@ -5556,38 +5647,48 @@ class HostProcess:
-         published_gateway = self._gateway_inference
-         loop = asyncio.get_running_loop()
-         next_quick = loop.time() + HARNESS_READINESS_REFRESH_INTERVAL_S
+@@ -6014 +6105,5 @@
 -        next_full = loop.time() + HARNESS_READINESS_FULL_REFRESH_INTERVAL_S
 +        next_full = loop.time() + (
 +            HARNESS_READINESS_REFRESH_INTERVAL_S
 +            if published_configured is None
 +            else HARNESS_READINESS_FULL_REFRESH_INTERVAL_S
 +        )
-         while True:
-             await asyncio.sleep(max(0.0, min(next_quick, next_full) - loop.time()))
-             now = loop.time()
-             generation = self._capability_generation
-             configured = self._configured_harnesses
-             gateway = self._gateway_inference
+@@ -6021 +6116 @@
 -            refresh_full = configured is None or now >= next_full
 +            refresh_full = now >= next_full
-             if now >= next_quick:
-                 next_quick = now + HARNESS_READINESS_REFRESH_INTERVAL_S
-                 if not refresh_full and configured is not None:
-                     try:
+@@ -6026,2 +6121,2 @@
 -                        refresh_full = await asyncio.to_thread(
 -                            _unavailable_harness_became_ready, configured
 +                        refresh_full = await self._run_host_subprocess_in_thread(
 +                            functools.partial(self._quick_harness_check, configured)
-                         )
-                     except Exception:
-                         _logger.exception("Host harness quick readiness probe failed")
-             if refresh_full:
+@@ -6032,2 +6126,0 @@
 -                latest = await self._probe_configured_harnesses(startup=False)
 -                latest_gateway = await self._probe_gateway_inference(startup=False)
-                 next_full = now + HARNESS_READINESS_FULL_REFRESH_INTERVAL_S
+@@ -6035 +6128,11 @@
 -                new_configured = latest if latest is not None else configured
 +                try:
 +                    async with asyncio.timeout(_HOST_READINESS_REFRESH_TIMEOUT_S):
@@ -341,74 +202,38 @@ diff --git a/omnigent/host/connect.py b/omnigent/host/connect.py
 +                # snapshot without publishing it as the result of this refresh.
 +                if not latest:
 +                    continue
-                 new_gateway = latest_gateway if latest_gateway is not None else gateway
-                 if self._capability_generation == generation and (
+@@ -6038 +6141 @@
 -                    new_configured != configured or new_gateway != gateway
 +                    latest != configured or new_gateway != gateway
-                 ):
+@@ -6040 +6143 @@
 -                    self._replace_capabilities(new_configured, new_gateway)
 +                    self._replace_capabilities(latest, latest_gateway)
-             configured = self._configured_harnesses
-             gateway = self._gateway_inference
+@@ -6043,3 +6146 @@
 -            if configured is not None and (
 -                configured != published_configured or gateway != published_gateway
 -            ):
 +            if configured and (configured != published_configured or gateway != published_gateway):
-                 await self._send_text(
-                     ws,
-                     encode_host_frame(
-@@ -6001,6 +6102,7 @@ def run_host_process(
-     server_url: str,
-     config_path: Path | None = None,
-     *,
+@@ -6482,0 +6584 @@
 +    host_factory: Callable[..., HostProcess] = HostProcess,
-     daemon_target: str | None = None,
-     lifecycle_lock: DaemonLifecycleLock | None = None,
-     interactive_shells: list[str] | None = None,
-@@ -6014,6 +6116,7 @@ def run_host_process(
-         ``"https://omnigent-app.databricksapps.com"``.
-     :param config_path: Optional path to ``config.yaml``.
-         Defaults to ``~/.omnigent/config.yaml``.
+@@ -6496,0 +6599 @@
 +    :param host_factory: Downstream-neutral HostProcess construction seam.
-     :param daemon_target: Normalized registry target this process owns, e.g.
-         ``"local"`` or a server URL. When given, the daemon binds its lifetime
-         to that record (flock + self-terminate on delete/reassign). ``None``
-@@ -6054,6 +6157,7 @@ def run_host_process(
-             server_url,
-             config_path,
-             host_log_path=host_log_path,
+@@ -6547,0 +6651 @@
 +            host_factory=host_factory,
-             daemon_target=daemon_target,
-             lifecycle_lock=lifecycle_lock,
-             interactive_shells=interactive_shells,
-@@ -6103,6 +6207,7 @@ def _serve_host_until_exit(
-     config_path: Path | None,
-     *,
-     host_log_path: Path,
+@@ -6597,0 +6702 @@
 +    host_factory: Callable[..., HostProcess] = HostProcess,
-     daemon_target: str | None,
-     lifecycle_lock: DaemonLifecycleLock | None,
-     interactive_shells: list[str] | None,
-@@ -6192,7 +6297,7 @@ def _serve_host_until_exit(
- 
-     if lifecycle_lock is None and daemon_target is not None:
-         lifecycle_lock = DaemonLifecycleLock.for_target(daemon_target)
+@@ -6688 +6793 @@
 -    host = HostProcess(
 +    host = host_factory(
-         identity,
-         server_url,
-         lifecycle_lock=lifecycle_lock,
-
 diff --git a/omnigent/host/identity.py b/omnigent/host/identity.py
-index 16cc9a27d4b48946baa962e557fc7892ed76ec21..1bbaf392cd1180545c161aae1d3a86a6a0cbdacb 100644
+index 16cc9a27d..1bbaf392c 100644
 --- a/omnigent/host/identity.py
 +++ b/omnigent/host/identity.py
-@@ -12,0 +13 @@ import socket
+@@ -12,0 +13 @@
 +import stat
-@@ -32,0 +34,2 @@ HOST_TOKEN_ENV_VAR = identity_env.HOST_TOKEN_ENV_VAR
+@@ -32,0 +34,2 @@
 +HOST_TOKEN_FILE_ENV_VAR = identity_env.HOST_TOKEN_FILE_ENV_VAR
 +HOST_WORKSPACE_ID_ENV_VAR = identity_env.HOST_WORKSPACE_ID_ENV_VAR
-@@ -39,0 +43,49 @@ MANAGED_HOST_TOKEN_HEADER = "X-Omnigent-Host-Token"
+@@ -39,0 +43,49 @@
 +MANAGED_HOST_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
 +
 +_MAX_HOST_TOKEN_FILE_BYTES = 4096
@@ -459,58 +284,23 @@ index 16cc9a27d4b48946baa962e557fc7892ed76ec21..1bbaf392cd1180545c161aae1d3a86a6
 +        raise ValueError(f"{HOST_WORKSPACE_ID_ENV_VAR} must be a canonical positive integer")
 +    return workspace_id
 diff --git a/omnigent/host/identity_env.py b/omnigent/host/identity_env.py
-index aece008652ff612f7d5677734a00b07a7a06b788..22302ed04508a2961e8393d7e3b30629279b8efa 100644
+index aece00865..22302ed04 100644
 --- a/omnigent/host/identity_env.py
 +++ b/omnigent/host/identity_env.py
-@@ -20,0 +21 @@ HOST_TOKEN_ENV_VAR = "OMNIGENT_HOST_TOKEN"
+@@ -20,0 +21 @@
 +HOST_TOKEN_FILE_ENV_VAR = "OMNIGENT_HOST_TOKEN_FILE"
-@@ -22,0 +24 @@ HOST_NAME_ENV_VAR = "OMNIGENT_HOST_NAME"
+@@ -22,0 +24 @@
 +HOST_WORKSPACE_ID_ENV_VAR = "OMNIGENT_HOST_WORKSPACE_ID"
-diff --git a/omnigent/inner/bwrap_sandbox.py b/omnigent/inner/bwrap_sandbox.py
-index dccc8b2b1b9e5a97f9e86dd0c43dd2fc6041bdbd..517f79e5720fef831d97729552bd3164cb3bb59b 100644
---- a/omnigent/inner/bwrap_sandbox.py
-+++ b/omnigent/inner/bwrap_sandbox.py
-@@ -189,2 +189,5 @@ _ALLOWED_SOCKET_FAMILIES = (
--# Vetted outer sandboxes; see _should_bind_host_proc for isolation requirements.
--_PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset({"lakebox", "phoenix-kubernetes"})
-+# These outer launchers provide isolated, single-tenant PID namespaces.
-+_PROC_BIND_HOST_BACKENDS: frozenset[str] = frozenset(
-+    {"kubernetes", "lakebox", "phoenix-kubernetes"}
-+)
-+_HOST_SANDBOX_BACKEND_ENV = HOST_SANDBOX_BACKEND_ENV
-diff --git a/omnigent/runner/_entry.py b/omnigent/runner/_entry.py
-index f523b46e8372f5bc41422d05532d8b79d83fd6b8..44e326127754976b04a696bf9fce98b0808112fa 100644
---- a/omnigent/runner/_entry.py
-+++ b/omnigent/runner/_entry.py
-@@ -1104,0 +1105,2 @@ def _mint_managed_owner_token(
-+        RUNNER_TUNNEL_WORKSPACE_HEADER,
-+        load_runner_tunnel_workspace_id,
-@@ -1111,0 +1114,3 @@ def _mint_managed_owner_token(
-+    workspace_id = load_runner_tunnel_workspace_id()
-+    if workspace_id is not None:
-+        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
-@@ -1491,0 +1497 @@ def create_app(
-+        RUNNER_TUNNEL_WORKSPACE_HEADER,
-@@ -1492,0 +1499 @@ def create_app(
-+        load_runner_tunnel_workspace_id,
-@@ -1531,0 +1539 @@ def create_app(
-+    workspace_id = load_runner_tunnel_workspace_id()
-@@ -1545,0 +1554,5 @@ def create_app(
-+            **(
-+                {RUNNER_TUNNEL_WORKSPACE_HEADER: str(workspace_id)}
-+                if workspace_id is not None
-+                else {}
-+            ),
 diff --git a/omnigent/runner/identity.py b/omnigent/runner/identity.py
-index 4126c5caa3e6404021c89a077e35b067408c3968..043acbb837c340b6ad958ac19d0120186c3bf72b 100644
+index 654c8d1ef..3498e0889 100644
 --- a/omnigent/runner/identity.py
 +++ b/omnigent/runner/identity.py
-@@ -29,0 +30,4 @@ RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_BINDING_TOKEN"
+@@ -32,0 +33,4 @@
 +# Runtime partition selector injected by a managed host. It is a routing hint;
 +# the server still authenticates the path-bound runner token.
 +RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR = "OMNIGENT_RUNNER_TUNNEL_WORKSPACE_ID"
 +RUNNER_TUNNEL_WORKSPACE_HEADER = "X-Omnigent-Workspace-Id"
-@@ -98,0 +103,17 @@ RUNNER_AUTH_SECRET_ENV_VARS: frozenset[str] = frozenset(
+@@ -108,0 +113,17 @@
 +def load_runner_tunnel_workspace_id() -> int | None:
 +    """Load the canonical positive managed-runner workspace selector."""
 +    value = os.environ.get(RUNNER_TUNNEL_WORKSPACE_ID_ENV_VAR)
@@ -529,21 +319,21 @@ index 4126c5caa3e6404021c89a077e35b067408c3968..043acbb837c340b6ad958ac19d012018
 +
 +
 diff --git a/omnigent/runner/transports/ws_tunnel/serve.py b/omnigent/runner/transports/ws_tunnel/serve.py
-index 19c9d08d98c151350094b57f66aa3b3925e42f16..f05a583b078d850facf314814a8cfc9e501d415a 100644
+index 1735f5540..a7e304bb7 100644
 --- a/omnigent/runner/transports/ws_tunnel/serve.py
 +++ b/omnigent/runner/transports/ws_tunnel/serve.py
-@@ -44,0 +45,2 @@ from omnigent.runner.identity import (
+@@ -45,0 +46,2 @@
 +    RUNNER_TUNNEL_WORKSPACE_HEADER,
 +    load_runner_tunnel_workspace_id,
-@@ -1123,0 +1126,3 @@ async def _serve_tunnel_once(
+@@ -1233,0 +1236,3 @@
 +    workspace_id = load_runner_tunnel_workspace_id()
 +    if workspace_id is not None:
 +        headers[RUNNER_TUNNEL_WORKSPACE_HEADER] = str(workspace_id)
 diff --git a/omnigent/server/routes/host_tunnel.py b/omnigent/server/routes/host_tunnel.py
-index bbc454de97d303852636d6596237448b6453c541..864bf6201bd1d58301c2911d4f46137f9d26a3ad 100644
+index e1a4642fa..d40d4e64b 100644
 --- a/omnigent/server/routes/host_tunnel.py
 +++ b/omnigent/server/routes/host_tunnel.py
-@@ -459 +459,8 @@ def create_host_tunnel_router(
+@@ -508 +508,8 @@
 -                    _ping_loop(ws, conn, host_id, heartbeat_requested),
 +                    _ping_loop(
 +                        ws,
@@ -553,11 +343,11 @@ index bbc454de97d303852636d6596237448b6453c541..864bf6201bd1d58301c2911d4f46137f
 +                        host_store=host_store,
 +                        presented_host_token=managed_token,
 +                    ),
-@@ -1348,0 +1356,3 @@ async def _ping_loop(
+@@ -1466,0 +1474,3 @@
 +    *,
 +    host_store: HostStore,
 +    presented_host_token: str | None = None,
-@@ -1363,0 +1374,11 @@ async def _ping_loop(
+@@ -1481,0 +1492,11 @@
 +        if presented_host_token is not None:
 +            still_valid = await asyncio.to_thread(
 +                host_store.resolve_launch_token,

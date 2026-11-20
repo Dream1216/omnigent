@@ -22,6 +22,7 @@ import subprocess
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 
+from omnigent.entities.scheduled_task import ScheduledRunLogContext
 from omnigent.host.connect import (
     HARNESS_CREDENTIAL_ENV_VARS,
     RUNNER_ENV_PASSTHROUGH_ENV_VAR,
@@ -252,9 +253,11 @@ class ManagedHostProcess(HostProcess):
             self._complete_metering_grant(grant)
             raise
 
-    async def _watch_runner(self, runner_id: str) -> None:
+    async def _watch_runner(
+        self, runner_id: str, *, launch_context: ScheduledRunLogContext | None = None
+    ) -> None:
         try:
-            await super()._watch_runner(runner_id)
+            await super()._watch_runner(runner_id, launch_context=launch_context)
         finally:
             self._cleanup_metering_envelope(runner_id)
             grant = self._active_metering.pop(runner_id, None)

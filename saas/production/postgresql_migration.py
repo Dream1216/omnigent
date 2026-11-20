@@ -216,6 +216,17 @@ _PG_TRGM_OPCLASS_CONTRACTS = {
 # key binds the only supported PostgreSQL majors and both migration heads; the
 # digest is deliberately not learned from a privileged migration receipt.
 _PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+    (
+        16,
+        "5ab01aaca219",
+        "p0s000000018",
+    ): "5c67d2a7145301ac7dc51b2ec3906371890b66862caa9d6b1d21e956197369dc",
+    (
+        18,
+        "5ab01aaca219",
+        "p0s000000018",
+    ): "67040e6a1c9adfc97f8331959cdb475433632ef6fb3ce7df30bb84a2b32f2b2d",
     # Independent M0/T clean source + exact U official migration replay.
     (
         16,
@@ -1766,6 +1777,17 @@ _PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
 # security catalog, so any extra object, ACL, policy, membership, or owner still
 # fails closed.
 _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
+    # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+    (
+        16,
+        "5ab01aaca219",
+        "p0s000000018",
+    ): "5c67d2a7145301ac7dc51b2ec3906371890b66862caa9d6b1d21e956197369dc",
+    (
+        18,
+        "5ab01aaca219",
+        "p0s000000018",
+    ): "67040e6a1c9adfc97f8331959cdb475433632ef6fb3ce7df30bb84a2b32f2b2d",
     # Independent M0/T clean source + exact U official migration replay.
     (
         16,
@@ -2132,6 +2154,17 @@ _PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256 = {
     ): "05a3b8eca8a8fffccd1ea093c7afa3f7ef62abb845fd9547ceaa0d5ce1eccbf6",
 }
 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256 = {
+    # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+    (
+        16,
+        "5ab01aaca219",
+        "p0s000000018",
+    ): "b29cf49ade7fc5a23db07c3841e738f6560a0f640a5187814a4639110dfcea05",
+    (
+        18,
+        "5ab01aaca219",
+        "p0s000000018",
+    ): "9e507541128ca4f8c6f68ba6d10f7930e628735909f69425264b379444b8811e",
     # Independent M0/T clean source + exact U official migration replay.
     (
         16,
@@ -2792,6 +2825,17 @@ _MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256 = {
 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
     tuple[int, str, str], str
 ] = {
+    # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+    (
+        16,
+        "5ab01aaca219",
+        "p0s000000018",
+    ): "8c9a9ebda5178a90d20267538012dd44a113f737611b7fcacdb12f2feb5af41b",
+    (
+        18,
+        "5ab01aaca219",
+        "p0s000000018",
+    ): "a0235bb8d5e888a008db58913418c9ff9b934395c675b3898a47fb4a4ec2be9b",
     # Independent M0/T clean source + exact U official migration replay.
     (
         16,
@@ -3108,6 +3152,17 @@ _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256: dict[
 # fail preflight; live deployment receipts can never teach these baselines.
 _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str], str]] = {
     "core": {
+        # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+        (
+            16,
+            "5ab01aaca219",
+            "p0s000000018",
+        ): "4cf4bc845981086090183197eb7cc4684cc30768c8d4b808effef0689a1fa6bf",
+        (
+            18,
+            "5ab01aaca219",
+            "p0s000000018",
+        ): "d709b4bb4d98d45cfee9586748d5f058d51a2e635db2e49cad063a256f32d096",
         (
             16,
             "d0a1f879a01d",
@@ -3140,6 +3195,17 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
         ): "f7989192a42530b9361cdeadad84e2981fdad330705dc7165baeb4b690aaaabb",
     },
     "model": {
+        # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+        (
+            16,
+            "5ab01aaca219",
+            "p0s000000018",
+        ): "9111a8449b95915ae523df6e1ee5eb1368c1cdea5d92c14f4cc591325961938c",
+        (
+            18,
+            "5ab01aaca219",
+            "p0s000000018",
+        ): "9cbb7c738e627ca370b4ae297568935dc1f2dfbb3b96cfb07bfcbc04e16a2100",
         (
             16,
             "d0a1f879a01d",
@@ -3172,6 +3238,17 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
         ): "e48a5d3b6a3ada8ea9615e63f0bc467b6bc6fa6c40a713d72d82ead29ee94b08",
     },
     "admin": {
+        # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+        (
+            16,
+            "5ab01aaca219",
+            "p0s000000018",
+        ): "22f0b45102645e668025733ba1946331079d7682b27fe180f06d7193382cf35b",
+        (
+            18,
+            "5ab01aaca219",
+            "p0s000000018",
+        ): "9afc8c4f316557ade1469e7d161c47e3837a7b4db4dbb96e0b2b1789854bbeb4",
         (
             16,
             "d0a1f879a01d",
@@ -3204,6 +3281,17 @@ _BUSINESS_DELIVERY_SOURCE_SECURITY_CATALOGS: dict[str, dict[tuple[int, str, str]
         ): "839de6b98bf8f67ea4c3a7c41ab09da91e729bc0ed08f2a280051cd3e6be2b01",
     },
     "projection": {
+        # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+        (
+            16,
+            "5ab01aaca219",
+            "p0s000000018",
+        ): "a161de2f5e64ef277e3774dede7f063f5a5a83db0e4c5257867bfd420444c742",
+        (
+            18,
+            "5ab01aaca219",
+            "p0s000000018",
+        ): "106c1c0e496bd764fe7d623785079011b80f0f5750605471774c5a62293674f6",
         (
             16,
             "d0a1f879a01d",
@@ -5245,6 +5333,13 @@ def _verify_public_schema_inventory(
 
 
 _PRODUCTION_PREVIEW_PUBLIC_SCHEMA_INVENTORY_SHA256: dict[tuple[int, str, str], tuple[str, ...]] = {
+    # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+    (16, "5ab01aaca219", "p0s000000018"): (
+        "b7f1546860297bd2b436a9a53e5e36fb4c12fb4433c009aa5b81173de51c0485",
+    ),
+    (18, "5ab01aaca219", "p0s000000018"): (
+        "aecb31e6035cec02b19a8573e642fe91806770a5cabbce3afab7a4d2aee528ce",
+    ),
     (16, "d0a1f879a01d", "p0s000000018"): (
         "16cf118ee08a2daaafdc1a6a84df2bf6b43402ba991551615cfeaf5f3c8aa337",
     ),
@@ -5253,6 +5348,15 @@ _PRODUCTION_PREVIEW_PUBLIC_SCHEMA_INVENTORY_SHA256: dict[tuple[int, str, str], t
     ),
 }
 _PRODUCTION_PREVIEW_SOURCE_SECURITY_CATALOG_SHA256: dict[tuple[int, str, str], tuple[str, str]] = {
+    # Clean source replay: fixed 0.24 official schema and retained P18 roles.
+    (16, "5ab01aaca219", "p0s000000018"): (
+        "f5b1677ff2a200c547d054d73269d8e3cf016a973f0e2d19df77642cb5e2831c",
+        "a7cfd7b540eb5cb939d91bebcf672ce0b0a08065bf05963ba20769e7c63c704c",
+    ),
+    (18, "5ab01aaca219", "p0s000000018"): (
+        "c0896605941e11a33943da2688b40f05496c244d762d6d0c747a7e0faa63f5c1",
+        "eb2d85d8c3e5da87f3ee75f0222d647ee8f58a43c8ece29a0dab1ebb3c3725d4",
+    ),
     (16, "d0a1f879a01d", "p0s000000018"): (
         "04103373694d826f697f2ab649f7edaafd8fc6ee30df7ce381991656fd9fc8b5",
         "bd5898a8fa57cd95a1620da5676b2dbe78c065a13b38227b92c3ad4a2d7e43ee",

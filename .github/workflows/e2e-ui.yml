@@ -51,6 +51,7 @@ concurrency:
 env:
   # Fix one official signed Ubuntu index view per job while Snapshot is unavailable.
   OMNIGENT_CI_UBUNTU_ARCHIVE_RECOVERY: "1"
+  OMNIGENT_CI_PIPELINE: e2e-ui
   # No SPA build during `uv sync`: this workflow builds the bundle in a
   # dedicated step, so the setup.py build would be a redundant npm hit.
   OMNIGENT_SKIP_WEB_UI: "true"
@@ -194,7 +195,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .venv
-          key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}
+          key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}-${{ hashFiles('uv.toml') }}
 
       - name: Install project + test dependencies
         run: uv sync --locked --extra all --extra openshell --extra kubernetes --group test
@@ -309,7 +310,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .venv
-          key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}
+          key: venv-${{ runner.os }}-${{ hashFiles('.python-version') }}-${{ hashFiles('uv.lock') }}-${{ hashFiles('uv.toml') }}
       - name: Install project + test dependencies
         run: uv sync --locked --extra all --extra openshell --extra kubernetes --group test
 
@@ -364,12 +365,12 @@ jobs:
       # native render-parity tests boot a real Claude Code / Codex CLI. The
       # rest of the e2e-ui suite (openai-agents) ignores them.
       - name: Install Claude Code CLI
-        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f7a4eac0d3e54732b0751ec3cf6488ef85dd9aeb
+        uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@75d817057138bd2cf5cd5af1cd954fdaca12e03d
         with:
           harness: claude
 
       - name: Install Codex CLI
-        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f7a4eac0d3e54732b0751ec3cf6488ef85dd9aeb
+        uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@75d817057138bd2cf5cd5af1cd954fdaca12e03d
         with:
           harness: codex
 

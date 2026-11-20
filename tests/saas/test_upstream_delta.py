@@ -50,6 +50,64 @@ def test_isolated_downstream_change_passes_budget() -> None:
     assert report["metrics"]["isolated_custom_code_ratio"] == 1.0
 
 
+@pytest.mark.parametrize("fault", [None, "postimage", "extra-path", "budget", "scope"])
+def test_fixed_upgrade_requires_exact_source_scope(tmp_path, monkeypatch, fault) -> None:
+    import hashlib
+
+    from saas.scripts import check_upstream_delta as guard
+
+    manifest = _manifest()
+    manifest["upstream_revision"] = "34570c6624af037c998dfaed774de83db72313f1"
+    manifest[guard._UPGRADE024_APPROVAL] = {"decision": "approved"}
+    source = tmp_path / guard._ORDINARY_M_PROTECTED_PATH
+    source.parent.mkdir(parents=True)
+    source.write_text("configured_session_default = True\n")
+    delta = FileDelta(guard._ORDINARY_M_PROTECTED_PATH, 1, 0)
+    scope = {
+        "upstream_revision": manifest["upstream_revision"],
+        "private_base": "1" * 40,
+        "approval": manifest[guard._UPGRADE024_APPROVAL],
+        "budgets": dict(manifest["source_intrusion_budget"]),
+        "manifest_controls_sha256": {"baseline": guard._manifest_controls_sha256(manifest)},
+        "files": [
+            {
+                "path": delta.path,
+                "bytes": source.stat().st_size,
+                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            }
+        ],
+    }
+    path = tmp_path / guard._UPGRADE024_SCOPE_PATH
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(scope))
+    monkeypatch.setattr(
+        guard, "_UPGRADE024_SCOPE_SHA256", hashlib.sha256(path.read_bytes()).hexdigest()
+    )
+    monkeypatch.setattr(guard, "_git", lambda *_args: "")
+    actual = [delta]
+    monkeypatch.setattr(guard, "collect_deltas", lambda *_args: actual)
+    if fault == "postimage":
+        source.write_text("configured_session_default = False\n")
+    elif fault == "extra-path":
+        actual.append(FileDelta("omnigent/runtime/workflow.py", 1, 0))
+    elif fault == "budget":
+        manifest["source_intrusion_budget"]["max_direct_upstream_files"] += 1
+    elif fault == "scope":
+        path.write_text("{}")
+    report = evaluate_delta(
+        [*actual, FileDelta("saas/private_fixture.py", 1000, 0)],
+        manifest,
+        active_patch_count=0,
+        reverse_dependencies=[],
+        lineage_ok=True,
+        version_ok=True,
+        source_root=tmp_path,
+    )
+    assert report["status"] == ("pass" if fault is None else "fail")
+    if fault is not None:
+        assert "fixed 0.24 source scope is missing or mismatched" in report["violations"]
+
+
 def test_saas_workflows_and_sdks_are_owned_without_hiding_official_source() -> None:
     report = evaluate_delta(
         [
@@ -739,11 +797,42 @@ def test_source_isolation_floor_remains_enforced_at_085(
     )
 
 
-@pytest.fixture
-def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch):
+@pytest.fixture(scope="session")
+def historical_ordinary_m_scope(tmp_path_factory):
+    import tarfile
+
     from saas.scripts import check_upstream_delta as guard
 
-    root = Path(__file__).resolve().parents[2]
+    repo = Path(__file__).resolve().parents[2]
+    scope = json.loads((repo / guard._ORDINARY_M_SCOPE_PATH).read_text())
+    paths = {
+        "pyproject.toml",
+        "saas/upstream-baseline.json",
+        ".github/workflows/saas-controller-source-budget.json",
+        ".github/workflows/saas-upstream-compat.yml",
+        guard._ORDINARY_M_SCOPE_PATH,
+        *(item["path"] for item in scope["files"]),
+        *scope["governance_paths"],
+    }
+    root = tmp_path_factory.mktemp("historical-finite-source")
+    archive = root / "source.tar"
+    with archive.open("wb") as output:
+        subprocess.run(
+            ["git", "archive", "73e8d4fba01a3b0a7183c172f44961928376805c", *sorted(paths)],
+            cwd=repo,
+            stdout=output,
+            check=True,
+        )
+    with tarfile.open(archive) as source:
+        source.extractall(root, filter="data")
+    return root
+
+
+@pytest.fixture
+def ordinary_m_finite_scope(monkeypatch: pytest.MonkeyPatch, historical_ordinary_m_scope):
+    from saas.scripts import check_upstream_delta as guard
+
+    root = historical_ordinary_m_scope
     manifest = json.loads((root / "saas/upstream-baseline.json").read_text())
     scope = json.loads((root / guard._ORDINARY_M_SCOPE_PATH).read_text())
     manifest["source_intrusion_budget"] = dict(scope["budgets"])

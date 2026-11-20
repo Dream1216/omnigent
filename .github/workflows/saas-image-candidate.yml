@@ -147,7 +147,16 @@ jobs:
         id: context
         run: |
           set -euo pipefail
-          if [[ -f saas/governance/main22-retained-recovery-controller.json ]]; then
+          if [[ -f saas/governance/upgrade-024-source-scope.json ]]; then
+            python -m saas.scripts.check_upstream_delta > "${RUNNER_TEMP}/source-budget.json"
+            python - <<'PY' > "${RUNNER_TEMP}/source-context.json"
+          import json
+          import os
+
+          revision = os.environ["CANDIDATE_REVISION"]
+          print(json.dumps({"mode": "same-main", "product_revision": revision, "controller_revision": revision}))
+          PY
+          elif [[ -f saas/governance/main22-retained-recovery-controller.json ]]; then
             python -m saas.scripts.main22_retained_recovery classify \
               --candidate-revision "$CANDIDATE_REVISION" > "${RUNNER_TEMP}/source-context.json"
           else
@@ -268,7 +277,8 @@ jobs:
           if-no-files-found: error
 
   build-candidate:
-    if: ${{ !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' && needs.source-context.outputs.mode == 'same-main' }}
+    # PRs run preflight and migration checks; trusted OCI production starts at Main.
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !inputs.diagnostic_host_only && inputs.promotion_source_run_id == '' && needs.source-context.outputs.mode == 'same-main' }}
     needs:
       - source-context
       - verify-candidate-preflight

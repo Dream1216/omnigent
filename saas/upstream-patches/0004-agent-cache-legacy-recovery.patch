@@ -1,23 +1,23 @@
 diff --git a/omnigent/onboarding/harness_install.py b/omnigent/onboarding/harness_install.py
-index 514a2a5aacf7814c23759b9677f3feaf7f019059..a13e52ec8283126214f237c54144338f12ee7c71 100644
+index 0e02d3de1..db8ac0939 100644
 --- a/omnigent/onboarding/harness_install.py
 +++ b/omnigent/onboarding/harness_install.py
-@@ -76,3 +76,2 @@ CURSOR_KEY = "cursor"
+@@ -83,3 +83,2 @@
 -# Kimi authenticates against Moonshot AI's backend (``kimi login`` OAuth or a
 -# Moonshot API key), not via the ambient provider config; like Cursor it ships
 -# via a curl installer rather than npm, so it carries an ``install_hint``.
 +# Kimi Code publishes an official npm package. It can authenticate with its own
 +# Moonshot login or consume Omnigent's OpenAI-compatible Provider per session.
-@@ -118,2 +117,2 @@ KIRO_KEY = "kiro"
+@@ -125,2 +124,2 @@
 -#   ``kimi-cli`` project, which numbers from 1.x. Its first release after
 -#   2026-06-01 is 0.7.0.
 +#   ``kimi-cli`` project, which numbers from 1.x. Managed Provider injection
 +#   through KIMI_MODEL_* requires 0.43.0 or newer.
-@@ -131 +130,2 @@ _CURSOR_MIN_VERSION = "2026.06.02"
+@@ -138 +137,2 @@
 -_KIMI_MIN_VERSION = "0.7.0"
 +# KIMI_MODEL_* temporary Provider injection is the managed-SaaS auth boundary.
 +_KIMI_MIN_VERSION = "0.43.0"
-@@ -262,4 +262,4 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+@@ -285,4 +285,4 @@
 -    # Kimi Code CLI ships a single-binary ``kimi`` via a curl installer (no
 -    # npm). ``kimi login`` is the interactive OAuth device flow (membership);
 -    # pay-per-use users instead set a Kimi API key in
@@ -26,11 +26,11 @@ index 514a2a5aacf7814c23759b9677f3feaf7f019059..a13e52ec8283126214f237c54144338f
 +    # the optional interactive OAuth device flow. Managed SaaS sessions instead
 +    # receive an in-memory KIMI_MODEL_* Provider. ``status_args`` is
 +    # intentionally ``None``:
-@@ -277 +277 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+@@ -300 +300 @@
 -        package=None,
 +        package="@moonshot-ai/kimi-code",
-@@ -279 +278,0 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+@@ -302 +301,0 @@
 -        install_hint="curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
-@@ -287,0 +287,2 @@ _HARNESS_INSTALL: dict[str, HarnessInstallSpec] = {
+@@ -310,0 +310,2 @@
 +        login_args=("login", "--use-device-flow"),
 +        status_args=("whoami",),

@@ -19,7 +19,6 @@ minimumReleaseAgeExclude:
   - 'http-cache-semantics@4.3.0'
   # Exact security fixes for compressed-body DoS and revoked TLS intermediates.
   - 'body-parser@2.4.0'
-  - 'electron@42.11.16'
   # Exact security fixes for URI host, scheme and relative-path normalization.
   - 'fast-uri@3.1.9'
   # Security-only exception: fixes GHSA-68fv-2mgg-jv7q. The exact artifact is
@@ -44,6 +43,7 @@ minimumReleaseAgeExclude:
   - 'opencode-windows-arm64@1.18.31'
   - 'opencode-windows-x64-baseline@1.18.31'
   - 'opencode-windows-x64@1.18.31'
+  - 'electron@45.2.1'
 
 autoInstallPeers: false
 strictPeerDependencies: false
@@ -192,6 +192,7 @@ overrides:
 
 allowBuilds:
   '@anthropic-ai/claude-code': true
+  '@bufbuild/buf': false
   '@google/genai': true
   # Kimi Code selects its integrity-locked native payload during postinstall.
   '@moonshot-ai/kimi-code': true

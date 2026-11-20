@@ -23,6 +23,10 @@ constraint-dependencies = [
     "mlflow-tracing>=3.17.2,<4",
 ]
 
+# Sandboxed workers must not be able to change installed code through a
+# hard-linked copy in a writable workspace.
+link-mode = "copy"
+
 # Dependency cooldown: never resolve a distribution uploaded within the
 # last 7 days, so a compromised or yanked release has a window to surface
 # before it gets pinned. uv records the relative span in uv.lock (as

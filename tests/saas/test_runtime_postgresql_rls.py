@@ -142,7 +142,7 @@ def production_runtime_engines(
 def test_runtime_rls_contract_covers_every_official_workspace_table() -> None:
     contracts = load_runtime_rls_contract()
 
-    assert len(contracts) == 19
+    assert len(contracts) == 26
     assert next(contract for contract in contracts if contract.table_name == "connections") == (
         RuntimeRlsTableContract(
             table_name="connections",
@@ -240,7 +240,7 @@ def test_real_postgresql_runtime_rls_and_store_adapter_context(
         ).scalar_one()
     assert role_flags == (False, False)
     assert alembic_privileges == (True, False, False, False)
-    assert official_revision == "d0a1f879a01d"
+    assert official_revision == "5ab01aaca219"
 
     with runtime_engine.begin() as connection:
         connection.execute(

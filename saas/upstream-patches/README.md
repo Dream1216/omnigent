@@ -1,6 +1,19 @@
 # Upstream patch queue
 
-## Current replay target: v0.21.0.dev20261031 (2026-11-01)
+## Current replay target: 0.24.0.dev0 (2026-11-20)
+
+The fixed official revision is `34570c6624af037c998dfaed774de83db72313f1`.
+All nine owning patches are regenerated from the resolved integration against
+that revision. Officially covered changes are absent from the new private delta.
+The accepted full upgrade retains SaaS isolation, the configured Session default,
+owned listener handoff, trusted workspace binding and required sandbox policy.
+The historical records below describe their original scope and removal criteria;
+they do not extend the old release waiver to this upgrade. The current finite
+source postimages and measured budget are in `saas/upstream-baseline.json` and
+`saas/governance/upgrade-024-source-scope.json`. Replay proves source equality,
+not signed artifacts, real business, recovery or production admission.
+
+## Historical replay target: v0.21.0.dev20261031 (2026-11-01)
 
 The fixed upstream revision is `ee728a02004749e7f6971beee6c66d990bfbd216`.
 All nine patches are regenerated from the resolved product against this exact

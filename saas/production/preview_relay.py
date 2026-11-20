@@ -555,7 +555,7 @@ class ProductionPreviewRelayOwner:
                 raise ProductionPreviewRelayError("Preview Relay owner identity is not active")
 
         if self._engine.dialect.name == "postgresql":
-            self._directory.resolve(self.config)
+            self._directory.assert_routable(self.config.gateway_instance_id)
 
     def assert_production_ready(self) -> None:
         self._assert_authority_ready()
