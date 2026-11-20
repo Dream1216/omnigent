@@ -275,8 +275,7 @@ jobs:
 
       - name: Enable Bubblewrap
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap ripgrep tmux
+          bash saas/scripts/ci_install_ubuntu_packages.sh bubblewrap ripgrep tmux
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
 

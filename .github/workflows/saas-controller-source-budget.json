@@ -25,7 +25,7 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 269,
-    "max_upstream_net_added_loc": 13921,
+    "max_upstream_net_added_loc": 13920,
     "min_isolated_custom_code_ratio": 0.85
   },
   "upgrade_024_finite_approval": {

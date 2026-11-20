@@ -172,7 +172,11 @@ install_ci_ubuntu_packages() {
   "$@" -o Acquire::ForceHash=SHA256 --print-uris > "$inputs" || return "$?"
   if grep -q "^'" "$inputs"; then
     local -a recovery_args=(--distribution ubuntu --inputs "$inputs" --output /var/cache/apt/archives)
-    if [[ "$archive_recovery" == 1 ]]; then recovery_args+=(--allow-ubuntu-archive); fi
+    if [[ "$archive_recovery" == 1 ]]; then
+      verify_archive_index_state || return "$?"
+      "$@" -o Acquire::ForceHash=SHA256 --download-only || return "$?"
+      recovery_args+=(--allow-ubuntu-archive --cache-only)
+    fi
     sudo python3 "$OMNIGENT_CI_PACKAGE_MATERIALIZER" "${recovery_args[@]}" || return "$?"
   fi
   verify_archive_index_state || return "$?"

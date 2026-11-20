@@ -13,11 +13,11 @@
   "budgets": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 269,
-    "max_upstream_net_added_loc": 13921,
+    "max_upstream_net_added_loc": 13920,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "fc8050c58053c1399d0a18c99c5f6cbb15d7bcc4841ce8b15c5e409d454c7b2f",
+    "baseline": "e22118a16806e7c9d075cb12a459631ba668adafa84ea4c48fd282ca4a950791",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -83,8 +83,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 30102,
-      "sha256": "c1e22ecfd604d2766c0d73517c02b42af3331a0e2c133804e92f8a8d75824701"
+      "bytes": 30096,
+      "sha256": "b1c9c6c763a7327adc8be57c1b6e2fa140893081c5a4f209b0c3009b07c45768"
     },
     {
       "path": ".github/workflows/code-coverage.yml",

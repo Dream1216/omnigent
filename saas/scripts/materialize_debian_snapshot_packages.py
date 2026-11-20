@@ -75,7 +75,13 @@ def parse_inputs(
     return inputs
 
 
-def fetch(item: AptPackageInput, output: Path, *, distribution: str = "debian") -> AptPackageInput:
+def fetch(
+    item: AptPackageInput,
+    output: Path,
+    *,
+    distribution: str = "debian",
+    cache_only: bool = False,
+) -> AptPackageInput:
     if distribution not in {"debian", "ubuntu"}:
         raise ValueError("unsupported signed snapshot distribution")
     target = output / str(item["name"])
@@ -87,6 +93,8 @@ def fetch(item: AptPackageInput, output: Path, *, distribution: str = "debian") 
         ):
             raise ValueError("existing package cache differs from authenticated APT input")
         return item
+    if cache_only:
+        raise ValueError("authenticated APT package is missing from the verified download cache")
     # Dependency versions and hashes come from the signed snapshot indexes, not
     # from this mirror's current package index. APT verifies them again on install.
     uri = str(item["uri"])
@@ -127,6 +135,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--distribution", choices=("debian", "ubuntu"), default="debian")
     parser.add_argument("--allow-ubuntu-archive", action="store_true")
+    parser.add_argument("--cache-only", action="store_true")
     args = parser.parse_args()
     inputs = parse_inputs(
         args.inputs.read_text(),
@@ -137,7 +146,10 @@ def main() -> None:
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         results = list(
             executor.map(
-                lambda item: fetch(item, args.output, distribution=args.distribution), inputs
+                lambda item: fetch(
+                    item, args.output, distribution=args.distribution, cache_only=args.cache_only
+                ),
+                inputs,
             )
         )
     print(json.dumps({"schema_version": 1, "production_admission": False, "packages": results}))
