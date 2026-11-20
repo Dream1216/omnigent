@@ -17,6 +17,7 @@ import pytest
 from _pytest.junitxml import LogXML
 from _pytest.reports import TestReport as _TestReport
 
+from omnigent.harnesses.codex_native import bridge as bridge_module
 from omnigent.harnesses.codex_native.bridge import (
     CodexNativeBridgeState,
     CodexNativeBridgeStateRead,
@@ -27,17 +28,20 @@ _PRIVATE = "synthetic-private-fresh-turn"
 
 
 class _Scenario:
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         self.events = []
         self.frames = []
         self.errors = []
         self.ticks = 0
-        self.state = CodexNativeBridgeState("session-under-test", _PRIVATE, _PRIVATE, _PRIVATE)
+        self.state = CodexNativeBridgeState("session-under-test", _PRIVATE, _PRIVATE, None)
+        self.prep_state = self.state
+        self.pane = None
+        self.literal = ""
         self.bridge_results = [CodexNativeBridgeStateRead(self.state, "ready")]
         self.mode = "ready"
         self.payload = {"requests": []}
         self.session = subject._Session("session-under-test", Path("unused-bridge"), {})
-        self.session.tmux = Mock(return_value="")
+        self.session.tmux = Mock(side_effect=self.tmux)
         self.model = Mock(spec=httpx.Client)
         self.model.get.side_effect = self.get
         self.model.post.return_value = httpx.Response(
@@ -50,21 +54,30 @@ class _Scenario:
         monkeypatch.setattr(
             subject, "time", SimpleNamespace(monotonic=self.monotonic, sleep=self.sleep)
         )
-        log = Mock(spec=Path)
-        log.read_text.return_value = "not ready yet (no/empty rollout)"
-        logs = Mock(spec=Path)
-        logs.glob.return_value = [log]
-        runner_home = Mock()
-        runner_home.__truediv__ = Mock(return_value=logs)
-        self.rig = SimpleNamespace(
-            model=self.model, stack=SimpleNamespace(runner_home=runner_home)
+        self.logs = tmp_path / ".omnigent/logs/runner"
+        self.logs.mkdir(parents=True)
+        self.log = self.logs / "runner.log"
+        self.log.write_text(
+            f"Codex thread {_PRIVATE} is not ready yet (no/empty rollout); retrying subscription"
         )
+
+        def read_state(_bridge):
+            return self.prep_state
+
+        monkeypatch.setattr(subject, "read_bridge_state", read_state)
+        monkeypatch.setattr(bridge_module, "read_bridge_state", read_state)
+        self.rig = SimpleNamespace(model=self.model, stack=SimpleNamespace(runner_home=tmp_path))
 
         @contextmanager
         def session(*_args, **_kwargs):
             yield self.session
 
         monkeypatch.setattr(subject, "_session", session)
+
+    def tmux(self, *args: str) -> str:
+        if args[:2] == ("send-keys", "-l"):
+            self.literal = args[2]
+        return self.pane if self.pane is not None else f"› {self.literal}"
 
     def monotonic(self) -> float:
         return self.ticks / 10
@@ -136,8 +149,8 @@ class _Scenario:
 
 
 @pytest.fixture
-def scenario(monkeypatch: pytest.MonkeyPatch) -> _Scenario:
-    return _Scenario(monkeypatch)
+def scenario(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Scenario:
+    return _Scenario(monkeypatch, tmp_path)
 
 
 def _capture(action) -> pytest.ExceptionInfo:
@@ -264,6 +277,21 @@ def test_poll_uses_the_identity_from_each_single_bridge_read(scenario: _Scenario
     scenario.native.assert_not_called()
 
 
+def test_fresh_preparation_retains_bounded_redacted_failure_evidence(scenario: _Scenario) -> None:
+    scenario.pane = (
+        "x" * 9000 + "\nAuthorization: Bearer synthetic-private-token\n› Input disabled."
+    )
+    with pytest.raises(pytest.fail.Exception, match="current fresh thread"):
+        subject._start_fresh_terminal_turn(scenario.rig, scenario.session, "FRESH_MARKER")
+    evidence = json.loads((scenario.logs / "fresh-terminal-input.log").read_text())
+    assert len(evidence) == 1
+    assert len(evidence[0]["pane"]) <= 8192
+    assert "synthetic-private-token" not in evidence[0]["pane"]
+    assert "Input disabled." in evidence[0]["pane"]
+    assert not any(call.args[0] == "send-keys" for call in scenario.session.tmux.call_args_list)
+    scenario.native.assert_not_called()
+
+
 @pytest.mark.parametrize("matching", [0, 1, 2])
 def test_original_count_one_oracle_and_bounded_history(scenario: _Scenario, matching: int) -> None:
     scenario.payload = {"requests": _mixed_requests(matching)}
@@ -385,10 +413,11 @@ def test_real_owning_case_keeps_input_order_cleanup_and_observer_gate(scenario: 
     info = _capture(scenario.owning_case)
     assert "input acceptance unknown" in str(info.value)
     calls = scenario.session.tmux.call_args_list
-    assert len(calls) == 2
-    assert calls[0].args[:2] == ("send-keys", "-l")
-    assert calls[0].args[2].startswith("Reply with FRESH_QUIET_")
-    assert calls[1].args == ("send-keys", "Enter")
+    sends = [call for call in calls if call.args[0] == "send-keys"]
+    assert len(sends) == 2
+    assert sends[0].args[:2] == ("send-keys", "-l")
+    assert sends[0].args[2].startswith("Reply with FRESH_QUIET_")
+    assert sends[1].args == ("send-keys", "Enter")
     assert scenario.events[0] == ("sleep", 0.5)
     assert scenario.events[1:3] == ["bridge", "get"]
     assert scenario.model.get.call_count == scenario.read.call_count == 200
@@ -397,4 +426,81 @@ def test_real_owning_case_keeps_input_order_cleanup_and_observer_gate(scenario: 
         "/mock/configure",
         "/gate/release",
     ]
+    scenario.native.assert_not_called()
+
+
+@pytest.mark.parametrize("unready", ["old_thread", "wrong_session", "disabled_composer"])
+def test_fresh_preparation_rejects_unrelated_or_disabled_terminal(
+    scenario: _Scenario, unready: str
+) -> None:
+    if unready == "old_thread":
+        scenario.log.write_text(
+            "Codex thread previous-thread is not ready yet "
+            "(no/empty rollout); retrying subscription"
+        )
+    elif unready == "wrong_session":
+        scenario.prep_state = CodexNativeBridgeState("another-session", _PRIVATE, _PRIVATE, None)
+    else:
+        scenario.pane = "› Input disabled."
+    with pytest.raises(pytest.fail.Exception, match="current fresh thread"):
+        subject._start_fresh_terminal_turn(scenario.rig, scenario.session, "FRESH_MARKER")
+    assert not any(call.args[0] == "send-keys" for call in scenario.session.tmux.call_args_list)
+    assert scenario.ticks == 100
+    scenario.model.get.assert_not_called()
+    scenario.native.assert_not_called()
+
+
+def test_fresh_preparation_stops_on_thread_change_before_enter(scenario: _Scenario) -> None:
+    def change_after_literal(*args: str) -> str:
+        pane = scenario.tmux(*args)
+        if args[:2] == ("send-keys", "-l"):
+            scenario.prep_state = CodexNativeBridgeState(
+                scenario.session.id, _PRIVATE, "replacement-thread", None
+            )
+        return pane
+
+    scenario.session.tmux.side_effect = change_after_literal
+    with pytest.raises(AssertionError, match="identity changed before Enter"):
+        subject._start_fresh_terminal_turn(scenario.rig, scenario.session, "FRESH_MARKER")
+    sends = [
+        call.args for call in scenario.session.tmux.call_args_list if call.args[0] == "send-keys"
+    ]
+    assert sends == [("send-keys", "-l", "Reply with FRESH_MARKER")]
+    scenario.model.get.assert_not_called()
+    scenario.native.assert_not_called()
+
+
+@pytest.mark.parametrize("same_thread", [True, False])
+def test_fresh_preparation_sends_once_and_binds_observed_request(
+    scenario: _Scenario, monkeypatch: pytest.MonkeyPatch, same_thread: bool
+) -> None:
+    observed = (
+        scenario.state
+        if same_thread
+        else CodexNativeBridgeState(scenario.session.id, _PRIVATE, "replacement-thread", None)
+    )
+    wait = Mock(return_value=observed)
+    monkeypatch.setattr(subject, "_wait_for_fresh_terminal_request", wait)
+    if same_thread:
+        assert (
+            subject._start_fresh_terminal_turn(scenario.rig, scenario.session, "FRESH_MARKER")
+            is observed
+        )
+    else:
+        with pytest.raises(AssertionError, match="another session or thread"):
+            subject._start_fresh_terminal_turn(scenario.rig, scenario.session, "FRESH_MARKER")
+    sends = [
+        call.args for call in scenario.session.tmux.call_args_list if call.args[0] == "send-keys"
+    ]
+    assert sends == [("send-keys", "-l", "Reply with FRESH_MARKER"), ("send-keys", "Enter")]
+    wait.assert_called_once_with(scenario.model, scenario.session)
+    evidence = json.loads((scenario.logs / "fresh-terminal-input.log").read_text())
+    assert [sample["phase"] for sample in evidence] == [
+        "before_input",
+        "literal_rendered",
+        "before_enter",
+        "awaiting_request",
+    ]
+    assert evidence[1]["marker_visible"] and evidence[1]["composer_enabled"]
+    assert all(len(sample["pane"]) <= 8192 for sample in evidence)
     scenario.native.assert_not_called()

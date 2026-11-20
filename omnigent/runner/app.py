@@ -1618,6 +1618,7 @@ def create_runner_app(
     _repl_terminal_ensure_locks: dict[str, asyncio.Lock] = {}
     _active_turns: dict[str, asyncio.Task[None] | None] = {}
     app.state.active_turns = _active_turns
+    _turn_settlement_waiters: dict[asyncio.Task[None], set[asyncio.Future[None]]] = {}
     # Conversations whose claude-sdk `/compact` published an up-front
     # `response.compaction.in_progress`. Used to (a) swallow the executor's own
     # later `in_progress` so the web shows a single spinner, and (b) publish a
@@ -4813,7 +4814,7 @@ def create_runner_app(
             )
             return
 
-        _active_turns.pop(conv_id, None)
+        finished_task = _active_turns.pop(conv_id, None)
         _turn_pending_ids.pop(conv_id, None)
         _release_live_turn_markers(conv_id)
         # A claude-sdk `/compact` turn that ended without emitting
@@ -4923,6 +4924,10 @@ def create_runner_app(
                 arm_subagent_child_start_timeout(
                     conv_id, acceptance=native_acceptance, request=acceptance_request
                 )
+        if isinstance(finished_task, asyncio.Task):
+            for waiter in _turn_settlement_waiters.get(finished_task, ()):
+                if not waiter.done():
+                    waiter.set_result(None)
         if inbox_recovery_checked:
             return
         try:
@@ -5040,23 +5045,36 @@ def create_runner_app(
             # later messages) — sweep it, tokens included.
             _sweep_dead_turn_slot(conv_id, target)
             return
-        _interrupted_sessions.add(conv_id)
-        await _forward_harness_interrupt(conv_id, turn_epoch=turn_epoch)
-        # Floor: force-cancel the runner Task when we own one. In stream mode
-        # there is no Task here — ``_resync_turn_state`` owns the sentinel pop,
-        # and direct interrupt/stop callers rely on the forwarded interrupt
-        # ending proxy_stream.
-        if isinstance(target, asyncio.Task):
-            # Retired turns may still be draining transport cleanup after their terminal.
-            if (
-                settle_grace_s > 0
-                and not target.done()
-                and _active_turns.get(conv_id) is target
-                and _turn_bind_epoch.get(conv_id, 0) == turn_epoch
-            ):
-                await asyncio.wait({target}, timeout=settle_grace_s)
-            if _turn_bind_epoch.get(conv_id, 0) == turn_epoch:
-                await _cancel_active_turn(conv_id, expected_task=target)
+        settled = None
+        if isinstance(target, asyncio.Task) and settle_grace_s > 0:
+            settled = asyncio.get_running_loop().create_future()
+            _turn_settlement_waiters.setdefault(target, set()).add(settled)
+        try:
+            _interrupted_sessions.add(conv_id)
+            await _forward_harness_interrupt(conv_id, turn_epoch=turn_epoch)
+            # Stream-mode turns have no owned Task; the forwarded interrupt ends them.
+            if isinstance(target, asyncio.Task):
+                if (
+                    settled is not None
+                    and not target.done()
+                    and _active_turns.get(conv_id) is target
+                    and _turn_bind_epoch.get(conv_id, 0) == turn_epoch
+                ):
+                    # Terminal handling settles the turn before transport cleanup finishes.
+                    await asyncio.wait(
+                        {target, settled},
+                        timeout=settle_grace_s,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                if _turn_bind_epoch.get(conv_id, 0) == turn_epoch:
+                    await _cancel_active_turn(conv_id, expected_task=target)
+        finally:
+            if settled is not None and isinstance(target, asyncio.Task):
+                waiters = _turn_settlement_waiters[target]
+                waiters.discard(settled)
+                if not waiters:
+                    _turn_settlement_waiters.pop(target)
+                settled.cancel()
 
     async def _resync_turn_state(
         conv_id: str, reason: str, *, owner_response_id: str | None = None

@@ -34,9 +34,11 @@ import pytest
 from omnigent.harnesses.codex_native.app_server import client_for_transport
 from omnigent.harnesses.codex_native.bridge import (
     CodexNativeBridgeState,
+    codex_terminal_interactive,
     read_bridge_state,
     read_bridge_state_result,
 )
+from omnigent.process_logging import redact_log_text
 from tests._helpers.live_server import terminate_process
 from tests._helpers.native_session import create_native_session
 from tests._helpers.server_runner import ServerRunner, server_runner
@@ -308,6 +310,97 @@ def _wait_for_fresh_terminal_request(
         return state
     finally:
         model = session = state = None
+
+
+def _start_fresh_terminal_turn(
+    rig: _Rig, session: _Session, marker: str
+) -> CodexNativeBridgeState:
+    logs = rig.stack.runner_home / ".omnigent/logs/runner"
+    evidence: list[dict[str, Any]] = []
+    state = expected_thread = pane = waiting = composers = None
+    phase = "before_input"
+
+    def record() -> None:
+        evidence.append(
+            {
+                "phase": phase,
+                "session_matches": bool(state and state.session_id == session.id),
+                "thread_matches": bool(state and state.thread_id == expected_thread),
+                "turn_active": bool(state and state.active_turn_id),
+                "composer_enabled": codex_terminal_interactive(session.bridge, pane or ""),
+                "marker_visible": marker in (pane or ""),
+                "pane": redact_log_text(pane or "", include_whitespace_credentials=True)[-8192:],
+            }
+        )
+
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            state = read_bridge_state(session.bridge)
+            pane = session.tmux("capture-pane", "-p")
+            if state and expected_thread and state.thread_id != expected_thread:
+                pytest.fail("The fresh terminal changed threads before input")
+            if (
+                state
+                and state.session_id == session.id
+                and state.thread_id
+                and not state.active_turn_id
+            ):
+                expected_thread = state.thread_id
+                waiting = (
+                    f"Codex thread {expected_thread} is not ready yet "
+                    "(no/empty rollout); retrying subscription"
+                )
+                if codex_terminal_interactive(session.bridge, pane) and any(
+                    waiting in path.read_text() for path in logs.glob("*.log")
+                ):
+                    break
+            time.sleep(0.1)
+        else:
+            pytest.fail("The current fresh thread never reached its interactive no-rollout wait")
+        record()
+        assert time.monotonic() + 0.5 < deadline, "The original input preparation budget expired"
+        session.tmux("send-keys", "-l", f"Reply with {marker}")
+        phase = "literal_rendered"
+        time.sleep(0.5)
+        while time.monotonic() < deadline:
+            state = read_bridge_state(session.bridge)
+            pane = session.tmux("capture-pane", "-p")
+            assert (
+                state and state.session_id == session.id and state.thread_id == expected_thread
+            ), "The fresh terminal identity changed before Enter"
+            composers = [
+                line.lstrip() for line in pane.splitlines() if line.lstrip().startswith("›")
+            ]
+            if (
+                not state.active_turn_id
+                and codex_terminal_interactive(session.bridge, pane)
+                and composers
+                and marker in composers[-1]
+                and pane.count(marker) == 1
+            ):
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("The single input never appeared in the current enabled composer")
+        record()
+        phase = "before_enter"
+        record()
+        session.tmux("send-keys", "Enter")
+        phase = "awaiting_request"
+        state = _wait_for_fresh_terminal_request(rig.model, session)
+        assert state.session_id == session.id and state.thread_id == expected_thread, (
+            "The observed request belongs to another session or thread"
+        )
+        return state
+    finally:
+        with suppress(Exception):
+            pane = session.tmux("capture-pane", "-p")
+            state = read_bridge_state(session.bridge)
+            record()
+            logs.mkdir(parents=True, exist_ok=True)
+            (logs / "fresh-terminal-input.log").write_text(json.dumps(evidence, indent=2))
+        rig = session = state = expected_thread = pane = waiting = composers = None
 
 
 @dataclass
@@ -867,22 +960,8 @@ def test_fresh_terminal_turn_reports_running_before_first_model_output(
                 json={"key": _STANDARD_MODEL, "responses": [{"text": marker, "block": True}] * 12},
             )
         )
-        logs = rig.stack.runner_home / ".omnigent/logs/runner"
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if any(
-                "not ready yet (no/empty rollout)" in path.read_text()
-                for path in logs.glob("*.log")
-            ):
-                break
-            time.sleep(0.1)
-        else:
-            pytest.fail("The fresh native thread never reached its no-rollout subscription wait")
-        session.tmux("send-keys", "-l", f"Reply with {marker}")
-        time.sleep(0.5)
-        session.tmux("send-keys", "Enter")
         try:
-            state = _wait_for_fresh_terminal_request(rig.model, session)
+            state = _start_fresh_terminal_turn(rig, session, marker)
             assert state is not None
 
             async def native_snapshot() -> dict[str, Any]:

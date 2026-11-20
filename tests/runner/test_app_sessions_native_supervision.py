@@ -346,19 +346,18 @@ async def test_cancel_relays_terminal_the_harness_sends_after_acknowledging(
     retired_tasks: list[asyncio.Task[None]] = []
     next_turn_gate = asyncio.Event()
     next_tasks: list[asyncio.Task[None]] = []
-    if retire_before_ack:
 
-        class PendingCleanupResponse(runner_app.StreamingResponse):
-            def __init__(self, content: Any, *args: Any, **kwargs: Any) -> None:
-                async def pending_cleanup():
-                    async for chunk in content:
-                        yield chunk
-                    cleanup_started.set()
-                    await release_cleanup.wait()
+    class PendingCleanupResponse(runner_app.StreamingResponse):
+        def __init__(self, content: Any, *args: Any, **kwargs: Any) -> None:
+            async def pending_cleanup():
+                async for chunk in content:
+                    yield chunk
+                cleanup_started.set()
+                await release_cleanup.wait()
 
-                super().__init__(pending_cleanup(), *args, **kwargs)
+            super().__init__(pending_cleanup(), *args, **kwargs)
 
-        monkeypatch.setattr(runner_app, "StreamingResponse", PendingCleanupResponse)
+    monkeypatch.setattr(runner_app, "StreamingResponse", PendingCleanupResponse)
 
     usage = {"input_tokens": 50, "output_tokens": 25, "total_tokens": 75}
     gate = asyncio.Event()
@@ -381,8 +380,8 @@ async def test_cancel_relays_terminal_the_harness_sends_after_acknowledging(
     ) -> Any:
         response = await acknowledge(url, json=json, timeout=timeout)
         if json.get("type") == "interrupt":
+            retired_tasks.append(app.state.active_turns[conv_id])
             if retire_before_ack:
-                retired_tasks.append(app.state.active_turns[conv_id])
                 gate.set()
                 await asyncio.wait_for(cleanup_started.wait(), timeout=5)
                 assert conv_id not in app.state.active_turns
@@ -438,12 +437,12 @@ async def test_cancel_relays_terminal_the_harness_sends_after_acknowledging(
                     f"/v1/sessions/{conv_id}/events",
                     json={"type": event_type},
                 ),
-                timeout=0.2 if retire_before_ack else 5,
+                timeout=0.2,
             )
             assert cancel_resp.status_code == 204, cancel_resp.text
-            if retire_before_ack:
-                assert not retired_tasks[0].done()
-                assert not retired_tasks[0].cancelling()
+            assert cleanup_started.is_set()
+            assert not retired_tasks[0].done()
+            assert not retired_tasks[0].cancelling()
             if next_turn_before_ack:
                 assert app.state.active_turns[conv_id] is next_tasks[0]
                 assert not next_tasks[0].done()

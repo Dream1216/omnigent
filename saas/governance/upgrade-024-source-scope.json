@@ -12,12 +12,12 @@
   },
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 283,
-    "max_upstream_net_added_loc": 14094,
+    "max_direct_upstream_files": 285,
+    "max_upstream_net_added_loc": 14296,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "272c2ca96d98905ed4d482f768f626e56d4a0efae9ec1fb98182cdcb943784f8",
+    "baseline": "018743ace0617296c0cebdfc0c7cf23788fc24205016c825d6aae67e6f6bd16a",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -423,8 +423,8 @@
     },
     {
       "path": "omnigent/runner/app.py",
-      "bytes": 487561,
-      "sha256": "62860e8aa4517243f9b1143e1085e7d72ae6fd26b4e044ad32ee4ee715be42c1"
+      "bytes": 488442,
+      "sha256": "fe32268e0d16d95b654e1eb40003b7d6603a16f76d89ba80798932a32646aad0"
     },
     {
       "path": "omnigent/runner/app_support.py",
@@ -630,6 +630,11 @@
       "path": "tests/e2e/test_codex_native_parent_independent_child_wake_e2e.py",
       "bytes": 12295,
       "sha256": "eab693d3251c0849289720157597c56b622685432f63042879555fb3945b0235"
+    },
+    {
+      "path": "tests/e2e/test_codex_native_supported_efforts_e2e.py",
+      "bytes": 44710,
+      "sha256": "fdbe8fb301869357c35e9d8128619aa75131d0e25ab76b6d0e6860504797b4ba"
     },
     {
       "path": "tests/e2e/test_kimi_needs_upgrade_and_config_path_e2e.py",
@@ -948,8 +953,8 @@
     },
     {
       "path": "tests/runner/test_app_sessions_native_supervision.py",
-      "bytes": 142000,
-      "sha256": "b93d74cfcf684ef4e91024f4af28001283630906a5727dde755668e4676c5443"
+      "bytes": 141908,
+      "sha256": "9eb0bdb061156d30c8331ff708c9b26744b84c214ebfb2501b5805aed6fae160"
     },
     {
       "path": "tests/runner/test_app_sessions_native_terminals_autocreate.py",
@@ -1130,6 +1135,11 @@
       "path": "tests/test_agent_spawn_env_canary.py",
       "bytes": 18306,
       "sha256": "f90a687a7ec8bb7fd0f6e3ab16e902a7ecd377cf8f8334a20546694a6a0e7cb5"
+    },
+    {
+      "path": "tests/test_codex_fresh_terminal_diagnostics.py",
+      "bytes": 20408,
+      "sha256": "4d3975414a17b4134276c5813f02d48c14feb7dbe996a53157650a1a0e9dd7a3"
     },
     {
       "path": "tests/test_harness_readiness.py",
