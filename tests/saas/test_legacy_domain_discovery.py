@@ -666,6 +666,7 @@ def reviewed_source_bytes(root, relative, expected):
     if isinstance(expected, str):
         return body
     for name in (
+        "upstream024_opencode_cli_correction",
         "runtime_git_security_correction",
         "upstream024_integration_correction",
         "main22_retained_recovery_classifier_correction",
@@ -711,6 +712,7 @@ def reviewed_source_bytes(root, relative, expected):
 @pytest.mark.parametrize(
     ("relative", "correction_name"),
     [
+        ("saas/scripts/check_image_supply_chain.py", "upstream024_opencode_cli_correction"),
         ("saas/scripts/check_image_supply_chain.py", "runtime_git_security_correction"),
         ("saas/scripts/check_image_supply_chain.py", "upstream024_integration_correction"),
         (

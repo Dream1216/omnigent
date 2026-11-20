@@ -63,8 +63,8 @@
     },
     {
       "path": ".github/ci-deps/package.json",
-      "bytes": 448,
-      "sha256": "293bfe2102df619c36f685553ff43d6d35052341f530bcc4274ce91e96f98866"
+      "bytes": 449,
+      "sha256": "83255cad6f1ef0bdbfc47e86eec749eb211ba289183dfed839221d7f42e79e06"
     },
     {
       "path": ".github/model-usage.json",
@@ -183,8 +183,8 @@
     },
     {
       "path": "deploy/docker/Dockerfile",
-      "bytes": 53923,
-      "sha256": "76c3a891c2255fdf9b77608ac3c34829b0dbf6a39b5bed00280ecea0f7a0055b"
+      "bytes": 53924,
+      "sha256": "e28d5bec9f9022370ad0d27ce12446e60a2b13ea33ca5255a0251e5fb7192cd2"
     },
     {
       "path": "deploy/docker/Dockerfile.dockerignore",
@@ -543,13 +543,13 @@
     },
     {
       "path": "pnpm-lock.yaml",
-      "bytes": 666937,
-      "sha256": "636789ead7afe85e7b02df7fa3065581484412fc8c8beab5c5f0634b44863b42"
+      "bytes": 667110,
+      "sha256": "25ec7a53bc53a58c7df67d06c9b07254b9fa04cc4694673011e73ff32fcf8b65"
     },
     {
       "path": "pnpm-workspace.yaml",
-      "bytes": 8460,
-      "sha256": "73720d51a25bcdf16f3b6caeece118258d57691e2512a38c7ff3fcbb4b422ffb"
+      "bytes": 7974,
+      "sha256": "a6a3f0637b9810afeec7830b778c7ecba8e503537a2f305de0b1f5f4e499dffb"
     },
     {
       "path": "pyproject.toml",

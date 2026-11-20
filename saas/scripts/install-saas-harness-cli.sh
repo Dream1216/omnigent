@@ -124,6 +124,11 @@ done
 
 # Version probes can write logs and a background session-pruning marker.
 # Remove probe state before normalizing the retained executable tree.
+probe="$(mktemp -d)"
+HOME="$probe" python -B -I -c \
+    'from omnigent.onboarding.harness_install import harness_cli_installed; assert harness_cli_installed("opencode", timeout=30), "unsupported managed OpenCode CLI"'
+rm -rf "$probe"
+
 rm -rf -- /opt/jcode/.jcode/logs
 rm -f -- /opt/jcode/.jcode/sessions-bak-prune.stamp
 test ! -e /opt/jcode/.jcode/sessions-bak-prune.stamp

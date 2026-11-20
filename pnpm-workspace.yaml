@@ -30,19 +30,6 @@ minimumReleaseAgeExclude:
   - '@moonshot-ai/kimi-code@0.43.1'
   - '@qwen-code/audio-capture@0.23.4'
   - '@qwen-code/qwen-code@0.23.4'
-  - 'opencode-ai@1.18.31'
-  - 'opencode-darwin-arm64@1.18.31'
-  - 'opencode-darwin-x64-baseline@1.18.31'
-  - 'opencode-darwin-x64@1.18.31'
-  - 'opencode-linux-arm64-musl@1.18.31'
-  - 'opencode-linux-arm64@1.18.31'
-  - 'opencode-linux-x64-baseline-musl@1.18.31'
-  - 'opencode-linux-x64-baseline@1.18.31'
-  - 'opencode-linux-x64-musl@1.18.31'
-  - 'opencode-linux-x64@1.18.31'
-  - 'opencode-windows-arm64@1.18.31'
-  - 'opencode-windows-x64-baseline@1.18.31'
-  - 'opencode-windows-x64@1.18.31'
   - 'electron@45.2.1'
 
 autoInstallPeers: false
@@ -219,7 +206,7 @@ allowBuilds:
   # The pinned OpenCode wrapper selects the integrity-locked platform binary in
   # postinstall. Without this, the CLI package is present but `opencode` cannot
   # start in the Host image.
-  opencode-ai: true
+  '@opencode/cli': true
   playwright: true
   protobufjs: true
   sharp: true

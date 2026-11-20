@@ -1212,9 +1212,9 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
     repo = _material_lock_repo(tmp_path)
     workspace = repo / "pnpm-workspace.yaml"
     source = workspace.read_text(encoding="utf-8")
-    target = "opencode-ai: true"
+    target = "'@opencode/cli': true"
     assert target in source
-    workspace.write_text(source.replace(target, "opencode-ai: false", 1), encoding="utf-8")
+    workspace.write_text(source.replace(target, "'@opencode/cli': false", 1), encoding="utf-8")
 
     assert (
         "host CLI install scripts must be explicitly allowed by pnpm policy"
@@ -1232,9 +1232,12 @@ def test_image_material_lock_rejects_unapproved_host_cli_install_script(
         ("'source-map-js@1.2.2'", "'source-map-js@*'"),
         ("'@modelcontextprotocol/sdk@1.32.0'", "'@modelcontextprotocol/sdk@*'"),
         ("'@moonshot-ai/kimi-code@0.43.1'", "'@moonshot-ai/kimi-code@*'"),
-        ("'opencode-ai@1.18.31'", "'opencode-ai@*'"),
+        (
+            "minimumReleaseAgeExclude:\n",
+            "minimumReleaseAgeExclude:\n  - '@opencode/cli@2.0.32'\n",
+        ),
         ("'@qwen-code/qwen-code@0.23.4'", "'@qwen-code/qwen-code@0.23.5'"),
-        ("'opencode-linux-x64@1.18.31'", "'unrelated-package@1.0.0'"),
+        ("'decode-uri-component@0.5.1'", "'unrelated-package@1.0.0'"),
     ],
 )
 def test_image_material_lock_rejects_release_age_exclusion_drift(

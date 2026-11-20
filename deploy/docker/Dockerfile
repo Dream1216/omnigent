@@ -467,7 +467,7 @@ ARG CODEX_CLI_VERSION=0.142.0
 ARG PI_CODING_AGENT_VERSION=1.3.0
 ARG KIMI_CODE_VERSION=0.43.1
 ARG QWEN_CODE_VERSION=0.23.4
-ARG OPENCODE_VERSION=1.18.31
+ARG OPENCODE_VERSION=2.0.32
 ARG SOURCE_REVISION
 ARG UPSTREAM_REVISION
 ARG CONTROL_PLANE_SCHEMA_REVISION
@@ -665,7 +665,7 @@ RUN export OMNIGENT_CLI_STATE=/tmp/omnigent-cli-state \
       "    \"@moonshot-ai/kimi-code\": \"${KIMI_CODE_VERSION}\"," \
       "    \"@openai/codex\": \"${CODEX_CLI_VERSION}\"," \
       "    \"@qwen-code/qwen-code\": \"${QWEN_CODE_VERSION}\"," \
-      "    \"opencode-ai\": \"${OPENCODE_VERSION}\"" \
+      "    \"@opencode/cli\": \"${OPENCODE_VERSION}\"" \
       '  }' \
       '}' > .github/ci-deps/package.json \
  && pnpm install --frozen-lockfile --prod --filter e2e-ci-deps \
