@@ -754,6 +754,71 @@ def test_native_input_echo_preserves_turn_evidence(
     assert store.get_session_recovery(conv.id) == (before if input_kind == "echo" else None)
 
 
+def test_finished_relay_uses_fresh_episode_absence_without_hydrating_sessions(
+    recovery: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, conv = recovery.store, recovery.conv
+    state = store.get_session_recovery(conv.id)
+    assert store.replace_session_recovery(conv.id, state, None)
+    read = Mock(wraps=store.get_conversation)
+    monkeypatch.setattr(store, "get_conversation", read)
+    classify = Mock(return_value=False)
+    monkeypatch.setattr("omnigent.server.routes.sessions._is_native_terminal_session", classify)
+    monkeypatch.setattr(session_live_state, "_host_session_recoverer", recovery.service)
+
+    session_live_state.record_recovery_turn(store, conv.id, "old", None, finished=True)
+
+    read.assert_not_called()
+    classify.assert_not_called()
+    assert store.get_session_recovery(conv.id) is None
+
+    # A negative read cannot suppress an episode created before the next frame.
+    assert store.replace_session_recovery(conv.id, None, state)
+    session_live_state.record_recovery_turn(store, conv.id, "old", None, finished=True)
+    assert read.call_count == 2
+    classify.assert_called_once()
+    assert store.get_session_recovery(conv.id).phase == "stopped"
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_finished_relay_keeps_original_path_when_episode_read_is_unsupported(
+    recovery: Any, monkeypatch: pytest.MonkeyPatch, native: bool
+) -> None:
+    store, conv = recovery.store, recovery.conv
+    original_read = store.get_session_recovery
+    before = original_read(conv.id)
+
+    def unsupported_once(session_id: str) -> None:
+        monkeypatch.setattr(store, "get_session_recovery", original_read)
+        raise NotImplementedError
+
+    monkeypatch.setattr(store, "get_session_recovery", unsupported_once)
+    classify = Mock(return_value=native)
+    monkeypatch.setattr("omnigent.server.routes.sessions._is_native_terminal_session", classify)
+    monkeypatch.setattr(session_live_state, "_host_session_recoverer", recovery.service)
+
+    session_live_state.record_recovery_turn(store, conv.id, "old", None, finished=True)
+
+    classify.assert_called_once()
+    assert store.get_session_recovery(conv.id) == (
+        before if native else replace(before, phase="stopped")
+    )
+
+
+def test_finished_relay_episode_lookup_is_workspace_scoped(
+    recovery: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omnigent.db.db_models import workspace_scope
+
+    store, conv = recovery.store, recovery.conv
+    before = store.get_session_recovery(conv.id)
+    monkeypatch.setattr(session_live_state, "_host_session_recoverer", recovery.service)
+    with workspace_scope(424242):
+        assert store.get_session_recovery(conv.id) is None
+        session_live_state.record_recovery_turn(store, conv.id, "old", None, finished=True)
+    assert store.get_session_recovery(conv.id) == before
+
+
 def test_hostless_relay_uses_fresh_runner_index_without_hydrating_sessions(
     recovery: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -764,14 +829,14 @@ def test_hostless_relay_uses_fresh_runner_index_without_hydrating_sessions(
     native = Mock(side_effect=AssertionError("Hostless turns need no native resolution"))
     monkeypatch.setattr("omnigent.server.routes.sessions._is_native_terminal_session", native)
     monkeypatch.setattr(session_live_state, "_host_session_recoverer", recovery.service)
-    session_live_state.record_recovery_turn(store, conv.id, "external", "turn", finished=True)
+    session_live_state.record_recovery_turn(store, conv.id, "external", "turn", finished=False)
     read.assert_not_called()
     native.assert_not_called()
     assert store.get_session_recovery(conv.id) is None
 
     # A later binding must be observed; an earlier empty index result is not cached.
     store.replace_runner_id(recovery.conv.id, "external")
-    session_live_state.record_recovery_turn(store, conv.id, "external", "turn", finished=True)
+    session_live_state.record_recovery_turn(store, conv.id, "external", "turn", finished=False)
     read.assert_called_once_with(conv.id)
     native.assert_not_called()
     assert store.get_session_recovery(conv.id) is None

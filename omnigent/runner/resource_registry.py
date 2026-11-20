@@ -697,6 +697,9 @@ class SessionResourceRegistry:
         # which the turn-start hook also writes — deduping against that one
         # would swallow the turn's real ``running``.
         self._published_session_status: dict[str, tuple[str, str | None]] = {}
+        # Forwarded hooks and reconnects supersede queued watcher publications.
+        # Watcher edges in the same window retain their normal FIFO order.
+        self._forwarded_status_generation: dict[str, int] = {}
         # Per-session pollers need re-arming after reconnects or forwarded
         # idle statuses because they keep their own edge/mtime baselines.
         self._status_pollers: dict[str, SessionStatusPoller | ClaudeProgramStatusPoller] = {}
@@ -869,8 +872,8 @@ class SessionResourceRegistry:
         *,
         explicit_activity: bool = False,
         replay_activity_epoch: int | None = None,
-    ) -> bool:
-        """Record an edge as published, reporting whether it was a change.
+    ) -> tuple[int, int] | None:
+        """Claim a changed edge together with its publication freshness token.
 
         Keyed on the ``(status, blocked_on)`` pair so a session that stays
         ``running`` while it parks on a dialog still delivers the reason.
@@ -881,8 +884,9 @@ class SessionResourceRegistry:
         :param explicit_activity: Record native working state, even if deduplicated.
         :param replay_activity_epoch: Activity at an unchanged native read; a replay
             cannot clear failure or overwrite work that started after that read.
-        :returns: ``True`` when this differs from the last published edge
-            (so the caller should publish), ``False`` when it is a duplicate.
+        :returns: The forwarded-status and turn generations, or ``None`` for an
+            unchanged or superseded observation. Queued publication must still
+            match both parts when the event loop delivers it.
         """
         with self._lock:
             published = self._published_session_status.get(session_id)
@@ -890,15 +894,18 @@ class SessionResourceRegistry:
                 self._session_activity_epoch.get(session_id, 0) != replay_activity_epoch
                 or (published is not None and published[0] == "failed")
             ):
-                return False
+                return None
             if explicit_activity:
                 self._set_session_status_memo_locked(session_id, status, True)
             if published == (status, blocked_on):
-                return False
+                return None
             self._published_session_status[session_id] = (status, blocked_on)
             if not explicit_activity:
                 self._set_session_status_memo_locked(session_id, status, False)
-            return True
+            return (
+                self._forwarded_status_generation.get(session_id, 0),
+                self._session_turn_generation.get(session_id, 0),
+            )
 
     def _published_status_edge(self, session_id: str) -> tuple[str, str | None] | None:
         """Return the last ``(status, blocked_on)`` edge published for a session."""
@@ -954,6 +961,9 @@ class SessionResourceRegistry:
         """Adopt an external status and let native state reconcile a missing edge."""
         with self._lock:
             self._published_session_status[session_id] = (status, None)
+            self._forwarded_status_generation[session_id] = (
+                self._forwarded_status_generation.get(session_id, 0) + 1
+            )
             poller = self._status_pollers.get(session_id)
         # Replayed native state is guarded separately from genuine transitions.
         if status != "failed" and poller is not None:
@@ -982,6 +992,10 @@ class SessionResourceRegistry:
         """
         with self._lock:
             sessions = sorted(self._published_session_status)
+            for session_id in sessions:
+                self._forwarded_status_generation[session_id] = (
+                    self._forwarded_status_generation.get(session_id, 0) + 1
+                )
             self._published_session_status.clear()
             pollers = list(self._status_pollers.values())
         for poller in pollers:
@@ -2153,10 +2167,26 @@ class SessionResourceRegistry:
         last_activity_emit: dict[str, float | None] = {"value": None}
 
         def _publish_status_if_current(
-            status: str, blocked_on: str | None, failure_detail: str | None = None
+            status: str,
+            blocked_on: str | None,
+            failure_detail: str | None,
+            claim: tuple[int, int],
         ) -> None:
             if not _owns_terminal():
                 return
+            with self._lock:
+                # Keep same-window watcher edges in FIFO order. A native working
+                # read can activate a queued PTY running edge; only completion
+                # edges must still belong to the turn that observed them.
+                if (
+                    session_id not in self._published_session_status
+                    or self._forwarded_status_generation.get(session_id, 0) != claim[0]
+                    or (
+                        status != "running"
+                        and self._session_turn_generation.get(session_id, 0) != claim[1]
+                    )
+                ):
+                    return
             if status == "failed" and failure_detail is not None and failure_publisher is not None:
                 failure_publisher(session_id, failure_detail)
             elif status_publisher is not None:
@@ -2197,13 +2227,14 @@ class SessionResourceRegistry:
             # A ``waiting`` hold comes after Claude's turn ended, so only
             # ``running`` reopens the turn.
             explicit_activity = record_activity and status == "running"
-            if not self._claim_status_edge(
+            claim = self._claim_status_edge(
                 session_id,
                 status,
                 blocked_on,
                 explicit_activity=explicit_activity,
                 replay_activity_epoch=replay_activity_epoch,
-            ):
+            )
+            if claim is None:
                 return
             with contextlib.suppress(Exception):
                 reader = getattr(instance, "program_status", None)
@@ -2216,9 +2247,11 @@ class SessionResourceRegistry:
                     else "pane_activity",
                 )
             if status == "failed" or replay_activity_epoch is not None:
-                _publish_status_if_current(status, blocked_on, failure_detail)
+                _publish_status_if_current(status, blocked_on, failure_detail, claim)
             else:
-                loop.call_soon_threadsafe(_publish_status_if_current, status, blocked_on, None)
+                loop.call_soon_threadsafe(
+                    _publish_status_if_current, status, blocked_on, None, claim
+                )
 
         def _publish_replayed_status(status: str, blocked_on: str | None) -> None:
             if status_poller is None:
@@ -2991,6 +3024,7 @@ class SessionResourceRegistry:
                         )
                 self._active_session_turns.discard(source_session_id)
                 self._session_turn_generation.pop(source_session_id, None)
+                self._forwarded_status_generation.pop(source_session_id, None)
                 if role == CLAUDE_NATIVE_TERMINAL_ROLE:
                     # The watcher restart below rebuilds the poller under the
                     # target, so drop the source's entry rather than leaving a
@@ -3052,6 +3086,7 @@ class SessionResourceRegistry:
             ):
                 self._native_executor_initializing = False
             self._session_turn_generation.pop(session_id, None)
+            self._forwarded_status_generation.pop(session_id, None)
             self._client_surfaces.pop(session_id, None)
             primary = self._primary_envs.pop(session_id, None)
             self._primary_env_specs.pop(session_id, None)

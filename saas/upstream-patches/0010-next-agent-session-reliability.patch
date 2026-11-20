@@ -3547,24 +3547,24 @@ index 5443ce0ba..61f6e898a 100644
 +        raise AgentStartPolicyError("server", "returned an invalid hard sandbox scope") from None
 +    return OSEnvSpec(type="caller_process", cwd=".", fork=False, sandbox=parsed)
 diff --git a/omnigent/runner/resource_registry.py b/omnigent/runner/resource_registry.py
-index 42e836aa4..c97b84dd3 100644
+index 42e836aa4..141393c7a 100644
 --- a/omnigent/runner/resource_registry.py
 +++ b/omnigent/runner/resource_registry.py
-@@ -27 +27 @@
+@@ -27 +27 @@ from pathlib import Path
 -from typing import TYPE_CHECKING, Literal, Protocol, TypedDict
 +from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
-@@ -48,0 +49 @@
+@@ -48,0 +49 @@ from omnigent.native.native_dispatch import resolve_hook_for_key
 +from omnigent.runner.session_channels import SessionRelayChannel, session_ids_match
-@@ -52,0 +54,2 @@
+@@ -52,0 +54,2 @@ if TYPE_CHECKING:
 +    import httpx
 +
-@@ -55,0 +59,3 @@
+@@ -55,0 +59,3 @@ if TYPE_CHECKING:
 +    from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
 +    from omnigent.harnesses.codex_native.executor_backend import SessionExecutorBackend
 +    from omnigent.harnesses.codex_native.executor_policy import SessionExecutionPolicy
-@@ -623,0 +630 @@
+@@ -623,0 +630 @@ class SessionResourceRegistry:
 +        session_model_channel: SessionRelayChannel | None = None,
-@@ -632,0 +640,13 @@
+@@ -632,0 +640,13 @@ class SessionResourceRegistry:
 +        self._required_os_envs: dict[str, OSEnvSpec] = {}
 +        self._model_channel = session_model_channel
 +        self._policy_channel: SessionRelayChannel | None = None
@@ -3578,7 +3578,43 @@ index 42e836aa4..c97b84dd3 100644
 +                runner_id=session_model_channel.runner_id,
 +            )
 +        self._require_sandbox_binding = False
-@@ -1388,0 +1409,199 @@
+@@ -679,0 +700,3 @@ class SessionResourceRegistry:
++        # Forwarded hooks and reconnects supersede queued watcher publications.
++        # Watcher edges in the same window retain their normal FIFO order.
++        self._forwarded_status_generation: dict[str, int] = {}
+@@ -852,2 +875,2 @@ class SessionResourceRegistry:
+-    ) -> bool:
+-        """Record an edge as published, reporting whether it was a change.
++    ) -> tuple[int, int] | None:
++        """Claim a changed edge together with its publication freshness token.
+@@ -864,2 +887,3 @@ class SessionResourceRegistry:
+-        :returns: ``True`` when this differs from the last published edge
+-            (so the caller should publish), ``False`` when it is a duplicate.
++        :returns: The forwarded-status and turn generations, or ``None`` for an
++            unchanged or superseded observation. Queued publication must still
++            match both parts when the event loop delivers it.
+@@ -873 +897 @@ class SessionResourceRegistry:
+-                return False
++                return None
+@@ -877 +901 @@ class SessionResourceRegistry:
+-                return False
++                return None
+@@ -881 +905,4 @@ class SessionResourceRegistry:
+-            return True
++            return (
++                self._forwarded_status_generation.get(session_id, 0),
++                self._session_turn_generation.get(session_id, 0),
++            )
+@@ -936,0 +964,3 @@ class SessionResourceRegistry:
++            self._forwarded_status_generation[session_id] = (
++                self._forwarded_status_generation.get(session_id, 0) + 1
++            )
+@@ -964,0 +995,4 @@ class SessionResourceRegistry:
++            for session_id in sessions:
++                self._forwarded_status_generation[session_id] = (
++                    self._forwarded_status_generation.get(session_id, 0) + 1
++                )
+@@ -1388,0 +1423,199 @@ class SessionResourceRegistry:
 +    def required_os_env(self, session_id: str) -> OSEnvSpec | None:
 +        """Return a private copy of the server-owned session sandbox."""
 +        with self._lock:
@@ -3778,7 +3814,7 @@ index 42e836aa4..c97b84dd3 100644
 +                self._primary_env_specs.pop(session_id, None)
 +            self._required_os_envs[session_id] = enforced
 +
-@@ -1402,0 +1622,11 @@
+@@ -1402,0 +1636,11 @@ class SessionResourceRegistry:
 +            enforced = self._required_os_envs.get(session_id)
 +            if (
 +                self._require_sandbox_binding
@@ -3790,12 +3826,12 @@ index 42e836aa4..c97b84dd3 100644
 +                raise AgentStartPolicyError("server", "has not bound the required sandbox")
 +            if enforced is not None:
 +                os_env_spec = deepcopy(enforced)
-@@ -1486,0 +1717,4 @@
+@@ -1486,0 +1731,4 @@ class SessionResourceRegistry:
 +        if self._native_channel_session == session_id:
 +            self.native_channels_for(session_id)
 +            self.native_runtime_for(session_id)
 +
-@@ -1513,0 +1748,14 @@
+@@ -1513,0 +1762,14 @@ class SessionResourceRegistry:
 +            sandbox_policy = None
 +            if self._model_channel is not None:
 +                from omnigent.inner.sandbox import resolve_sandbox
@@ -3810,21 +3846,56 @@ index 42e836aa4..c97b84dd3 100644
 +                    )
 +                if self._native_runtime is not None:
 +                    sandbox_policy = self._native_runtime.apply(sandbox_policy)
-@@ -1515,0 +1764 @@
+@@ -1515,0 +1778 @@ class SessionResourceRegistry:
 +                sandbox_policy=sandbox_policy,
-@@ -1686 +1935 @@
+@@ -1686 +1949 @@ class SessionResourceRegistry:
 -        program_status_args: _ProgramStatusLaunchArgs = (
 +        launch_args: dict[str, Any] = (
-@@ -1691,0 +1941,5 @@
+@@ -1691,0 +1955,5 @@ class SessionResourceRegistry:
 +        if resource_role == CODEX_NATIVE_TERMINAL_ROLE and self._native_runtime is not None:
 +            self.native_runtime_for(session_id)
 +            launch_args["parent_environment"] = self.resolve_environment(
 +                session_id, DEFAULT_ENVIRONMENT_ID
 +            )
-@@ -1701 +1955 @@
+@@ -1701 +1969 @@ class SessionResourceRegistry:
 -                **program_status_args,
 +                **launch_args,
-@@ -2689,8 +2942,0 @@
+@@ -1902 +2170,4 @@ class SessionResourceRegistry:
+-            status: str, blocked_on: str | None, failure_detail: str | None = None
++            status: str,
++            blocked_on: str | None,
++            failure_detail: str | None,
++            claim: tuple[int, int],
+@@ -1905,0 +2177,13 @@ class SessionResourceRegistry:
++            with self._lock:
++                # Keep same-window watcher edges in FIFO order. A native working
++                # read can activate a queued PTY running edge; only completion
++                # edges must still belong to the turn that observed them.
++                if (
++                    session_id not in self._published_session_status
++                    or self._forwarded_status_generation.get(session_id, 0) != claim[0]
++                    or (
++                        status != "running"
++                        and self._session_turn_generation.get(session_id, 0) != claim[1]
++                    )
++                ):
++                    return
+@@ -1946 +2230 @@ class SessionResourceRegistry:
+-            if not self._claim_status_edge(
++            claim = self._claim_status_edge(
+@@ -1952 +2236,2 @@ class SessionResourceRegistry:
+-            ):
++            )
++            if claim is None:
+@@ -1965 +2250 @@ class SessionResourceRegistry:
+-                _publish_status_if_current(status, blocked_on, failure_detail)
++                _publish_status_if_current(status, blocked_on, failure_detail, claim)
+@@ -1967 +2252,3 @@ class SessionResourceRegistry:
+-                loop.call_soon_threadsafe(_publish_status_if_current, status, blocked_on, None)
++                loop.call_soon_threadsafe(
++                    _publish_status_if_current, status, blocked_on, None, claim
++                )
+@@ -2689,8 +2975,0 @@ class SessionResourceRegistry:
 -            moved = self._terminal_registry.transfer(
 -                source_session_id,
 -                target_session_id,
@@ -3833,7 +3904,7 @@ index 42e836aa4..c97b84dd3 100644
 -            )
 -            if not moved:
 -                return None
-@@ -2697,0 +2944,30 @@
+@@ -2697,0 +2977,30 @@ class SessionResourceRegistry:
 +                source_policy = self._required_os_envs.get(source_session_id)
 +                target_policy = self._required_os_envs.get(target_session_id)
 +                managed = (
@@ -3864,18 +3935,22 @@ index 42e836aa4..c97b84dd3 100644
 +                    self._primary_env_specs[target_session_id] = self._primary_env_specs.pop(
 +                        source_session_id
 +                    )
-@@ -2773,0 +3050,4 @@
+@@ -2717,0 +3027 @@ class SessionResourceRegistry:
++                self._forwarded_status_generation.pop(source_session_id, None)
+@@ -2773,0 +3084,4 @@ class SessionResourceRegistry:
 +            if self._native_channel_session is not None and session_ids_match(
 +                self._native_channel_session, session_id
 +            ):
 +                self._native_executor_initializing = False
-@@ -2789,0 +3070 @@
+@@ -2774,0 +3089 @@ class SessionResourceRegistry:
++            self._forwarded_status_generation.pop(session_id, None)
+@@ -2789,0 +3105 @@ class SessionResourceRegistry:
 +        resources_closed = True
-@@ -2798,0 +3080 @@
+@@ -2798,0 +3115 @@ class SessionResourceRegistry:
 +                resources_closed = False
-@@ -2819,0 +3102 @@
+@@ -2819,0 +3137 @@ class SessionResourceRegistry:
 +                resources_closed = False
-@@ -2824,0 +3108,18 @@
+@@ -2824,0 +3143,18 @@ class SessionResourceRegistry:
 +        runtime = self._native_runtime
 +        executor = self._native_executor
 +        if (
@@ -5226,19 +5301,29 @@ index 8c510e246..77f16a767 100644
 +                ) or self._pending_launches.get(target_conversation_id):
 +                    raise RuntimeError("Cannot transfer a terminal while a launch is pending")
 diff --git a/omnigent/server/session_live_state.py b/omnigent/server/session_live_state.py
-index ba43f0add..d5b16171e 100644
+index ba43f0add..7abafd67c 100644
 --- a/omnigent/server/session_live_state.py
 +++ b/omnigent/server/session_live_state.py
-@@ -142,0 +143,8 @@ def record_recovery_turn(
+@@ -142,0 +143,18 @@ def record_recovery_turn(
 +        if not store.supports_session_recovery or not runner_id:
 +            return
-+        try:
-+            if not store.get_runner_host_ids(runner_id):
-+                return
-+        except (NotImplementedError, ValueError):
-+            # Unsupported or over-budget discovery retains per-session validation.
-+            pass
-@@ -145,0 +154,7 @@ def record_recovery_turn(
++        if finished:
++            # Terminal frames only amend existing episodes; absence cannot create one.
++            try:
++                previous = store.get_session_recovery(session_id)
++            except NotImplementedError:
++                pass
++            else:
++                if previous is None:
++                    return
++        else:
++            try:
++                if not store.get_runner_host_ids(runner_id):
++                    return
++            except (NotImplementedError, ValueError):
++                # Unsupported or over-budget discovery retains per-session validation.
++                pass
+@@ -145,0 +164,7 @@ def record_recovery_turn(
 +        if (
 +            conv is None
 +            or not conv.host_id
@@ -5246,6 +5331,6 @@ index ba43f0add..d5b16171e 100644
 +            or conv.parent_conversation_id is not None
 +        ):
 +            return
-@@ -147 +162 @@ def record_recovery_turn(
+@@ -147 +172 @@ def record_recovery_turn(
 -        if conv is not None and _is_native_terminal_session(conv):
 +        if _is_native_terminal_session(conv):

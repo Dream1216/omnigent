@@ -1423,6 +1423,85 @@ async def test_hook_status_resyncs_watcher_dedup(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("queued_status", ["running", "waiting", "idle"])
+@pytest.mark.parametrize("newer_status", ["idle", "failed", "new-turn", "same-running-hook"])
+async def test_queued_native_status_does_not_overwrite_newer_hook(
+    tmp_path: Path, queued_status: str, newer_status: str
+) -> None:
+    """An observed native edge cannot cross a Stop or the next turn's start."""
+    session_id = "conv_queued_native_status"
+    _, statuses, pollers, registry = await _observe_native_with_fake_poller(tmp_path, session_id)
+    pollers[0].emit(queued_status)
+    # The watcher has claimed this edge, but its loop callback has not run.
+    registry.note_external_session_status(
+        session_id,
+        "idle" if newer_status in {"new-turn", "same-running-hook"} else newer_status,
+    )
+    if newer_status == "new-turn":
+        # A runner turn-start changes activity without publishing an edge.
+        registry.note_session_turn_started(session_id)
+    elif newer_status == "same-running-hook":
+        registry.note_external_session_status(session_id, "running")
+    epoch = registry.session_activity_epoch(session_id)
+
+    await asyncio.sleep(0)
+
+    assert statuses == []
+    assert registry.session_activity_epoch(session_id) == epoch
+    assert registry.session_turn_is_active(session_id) == (
+        newer_status in {"new-turn", "same-running-hook"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconnect_supersedes_queued_status_without_suppressing_fresh_read(
+    tmp_path: Path,
+) -> None:
+    """A new tunnel receives a fresh observation, never a superseded queued edge."""
+    session_id = "conv_queued_reconnect"
+    _, statuses, pollers, registry = await _observe_native_with_fake_poller(tmp_path, session_id)
+    pollers[0].emit("running")
+    registry.resync_session_statuses()
+    await asyncio.sleep(0)
+    assert statuses == []
+
+    pollers[0].emit("running")
+    await asyncio.sleep(0)
+    assert statuses == ["running"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queued_status", ["idle", "waiting"])
+async def test_queued_native_completion_cannot_finish_direct_runner_turn_start(
+    tmp_path: Path, queued_status: str
+) -> None:
+    """A turn-start alone supersedes a queued completion without a forwarded edge."""
+    session_id = "conv_direct_queued_turn"
+    _, statuses, pollers, registry = await _observe_native_with_fake_poller(tmp_path, session_id)
+    pollers[0].emit(queued_status)
+    registry.note_session_turn_started(session_id)
+
+    await asyncio.sleep(0)
+
+    assert statuses == []
+    assert registry.session_turn_is_active(session_id)
+
+
+@pytest.mark.asyncio
+async def test_queued_native_running_publishes_repeated_observation_once(tmp_path: Path) -> None:
+    """Repeated working observations cannot swallow the only queued running edge."""
+    session_id = "conv_repeated_queued_running"
+    _, statuses, pollers, registry = await _observe_native_with_fake_poller(tmp_path, session_id)
+    pollers[0].emit("running")
+    pollers[0].emit("running")
+
+    await asyncio.sleep(0)
+
+    assert statuses == ["running"]
+    assert registry.session_turn_is_active(session_id)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("intervening_event", ["none", "failed-hook", "idle-hook", "new-turn"])
 @pytest.mark.parametrize("with_detail", [False, True])
 async def test_queued_fallback_failure_preserves_newer_turn_state(

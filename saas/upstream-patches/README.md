@@ -539,3 +539,15 @@ reject runners without a Host binding in a fresh workspace-scoped snapshot.
 Unsupported or over-budget discovery falls back to the original session reads.
 Fresh session eligibility checks precede native harness resolution; applicable
 Host sessions retain the original second read and recovery compare-and-swap.
+Terminal frames first use the existing workspace-scoped recovery lookup: a
+missing episode cannot be stopped or created by that frame. This negative result
+is never cached; an episode present on the next frame retains all original
+session, native exclusion and compare-and-swap checks. Unsupported episode reads
+fall back to that original path. Nonterminal frames keep runner discovery.
+
+Queued native status publications carry the forwarded-status invalidation and
+turn generations. A forwarded hook or tunnel resync supersedes older queued
+watcher edges, and a new turn supersedes its predecessor's queued completion.
+Same-window watcher edges keep FIFO order, including PTY fallback and repeated
+native working observations; a real queued turn may still publish running after
+the prior Stop. The counters follow existing transfer and session cleanup.

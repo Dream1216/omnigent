@@ -13,11 +13,11 @@
   "budgets": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 287,
-    "max_upstream_net_added_loc": 14402,
+    "max_upstream_net_added_loc": 14591,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "4fe43ae0645138a5ca7692327a9514fc49884ea68fb3036b993256dd9834bc9a",
+    "baseline": "3100420bfccea305f171d58ab7972c5e0a6503665ac35b9e702d40af294ab50e",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -448,8 +448,8 @@
     },
     {
       "path": "omnigent/runner/resource_registry.py",
-      "bytes": 142494,
-      "sha256": "0181f324cdb778e037229dfbff2f2988bad0c56bc81336639ae83e9440224e9b"
+      "bytes": 144248,
+      "sha256": "beaef44136535c40f5b3849139e3394f20e062786bd95997c6f4c1e3d6bf41f9"
     },
     {
       "path": "omnigent/runner/resource_routes.py",
@@ -518,8 +518,8 @@
     },
     {
       "path": "omnigent/server/session_live_state.py",
-      "bytes": 26280,
-      "sha256": "5c074ab302af2343492a8231e0ff32d4504d3f0587d57034a9be5e947e08627d"
+      "bytes": 26652,
+      "sha256": "d8b544c2f0c01a0868b10daf00e04fef7c9d5ea37881ebf706343b520f575c3e"
     },
     {
       "path": "omnigent/server/startup_inputs.py",
@@ -1003,8 +1003,8 @@
     },
     {
       "path": "tests/runner/test_resource_registry.py",
-      "bytes": 193129,
-      "sha256": "2d681d6feafcc19db480ba6675aa2ff25d9431be20ad8aa4d27ab7d6af88da75"
+      "bytes": 196274,
+      "sha256": "bf3b20d6c820280af19edc1abad48288c68b2f4e3fffa83265d99ac9043e0839"
     },
     {
       "path": "tests/runner/test_runner_entry.py",
@@ -1123,8 +1123,8 @@
     },
     {
       "path": "tests/server/test_host_session_recovery.py",
-      "bytes": 43698,
-      "sha256": "4977bd1cb7ca6f95fe1a486c7892acd2f23f0f9ce3e3c901d01cdde59edb7a74"
+      "bytes": 46554,
+      "sha256": "4ab22df837b697f191fb818f5e49933b8a005459e1f8cdaf9b7a7c10a0c14ac2"
     },
     {
       "path": "tests/server/test_managed_hosts.py",

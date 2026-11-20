@@ -142,12 +142,22 @@ def record_recovery_turn(
     if _host_session_recoverer is not None and _host_session_recoverer.store is store:
         if not store.supports_session_recovery or not runner_id:
             return
-        try:
-            if not store.get_runner_host_ids(runner_id):
-                return
-        except (NotImplementedError, ValueError):
-            # Unsupported or over-budget discovery retains per-session validation.
-            pass
+        if finished:
+            # Terminal frames only amend existing episodes; absence cannot create one.
+            try:
+                previous = store.get_session_recovery(session_id)
+            except NotImplementedError:
+                pass
+            else:
+                if previous is None:
+                    return
+        else:
+            try:
+                if not store.get_runner_host_ids(runner_id):
+                    return
+            except (NotImplementedError, ValueError):
+                # Unsupported or over-budget discovery retains per-session validation.
+                pass
         from omnigent.server.routes.sessions import _is_native_terminal_session
 
         conv = store.get_conversation(session_id)
