@@ -1031,6 +1031,24 @@
           "after": "\"apk add --no-cache git=2.56.1-r1\""
         }
       ]
+    },
+    "upstream024_opencode_cli_correction": {
+      "corrected_sha256": "20ea6d962a442ad0070cb776e64614119e788f8c0a55561fbc0343956a0d700f",
+      "restored_sha256": "b3f677d34e1fad2b6c961564894ee2179a8fcfc21bca43001293532b694b62fe",
+      "inverse_fragments": [
+        {
+          "before": "_APPROVED_HOST_CLI_VERSIONS = {\n    \"@anthropic-ai/claude-code\": (\"CLAUDE_CODE_VERSION\", \"2.1.295\"),\n    \"@earendil-works/pi-coding-agent\": (\"PI_CODING_AGENT_VERSION\", \"1.3.0\"),\n    \"@moonshot-ai/kimi-code\": (\"KIMI_CODE_VERSION\", \"0.43.1\"),\n    \"@openai/codex\": (\"CODEX_CLI_VERSION\", \"0.142.0\"),\n    \"@qwen-code/qwen-code\": (\"QWEN_CODE_VERSION\", \"0.23.4\"),\n    \"opencode-ai\": (\"OPENCODE_VERSION\", \"1.18.31\"),\n}\n_APPROVED_MCP_SDK_VERSION = \"1.32.0\"\n_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {\n    \"decode-uri-component@0.5.1\",\n    \"http-cache-semantics@4.3.0\",\n    \"body-parser@2.4.0\",\n    \"electron@45.2.1\",\n    \"fast-uri@3.1.9\",\n    \"source-map-js@1.2.2\",\n    \"@modelcontextprotocol/sdk@1.32.0\",\n    \"@moonshot-ai/kimi-code@0.43.1\",\n    \"@qwen-code/audio-capture@0.23.4\",\n    \"@qwen-code/qwen-code@0.23.4\",\n    \"opencode-ai@1.18.31\",\n    \"opencode-darwin-arm64@1.18.31\",\n    \"opencode-darwin-x64-baseline@1.18.31\",\n    \"opencode-darwin-x64@1.18.31\",\n    \"opencode-linux-arm64-musl@1.18.31\",\n    \"opencode-linux-arm64@1.18.31\",\n    \"opencode-linux-x64-baseline-musl@1.18.31\",\n    \"opencode-linux-x64-baseline@1.18.31\",\n    \"opencode-linux-x64-musl@1.18.31\",\n    \"opencode-linux-x64@1.18.31\",\n    \"opencode-windows-arm64@1.18.31\",\n    \"opencode-windows-x64-baseline@1.18.31\",\n    \"opencode-windows-x64@1.18.31\",\n}\n",
+          "after": "_APPROVED_HOST_CLI_VERSIONS = {\n    \"@anthropic-ai/claude-code\": (\"CLAUDE_CODE_VERSION\", \"2.1.295\"),\n    \"@earendil-works/pi-coding-agent\": (\"PI_CODING_AGENT_VERSION\", \"1.3.0\"),\n    \"@moonshot-ai/kimi-code\": (\"KIMI_CODE_VERSION\", \"0.43.1\"),\n    \"@openai/codex\": (\"CODEX_CLI_VERSION\", \"0.142.0\"),\n    \"@qwen-code/qwen-code\": (\"QWEN_CODE_VERSION\", \"0.23.4\"),\n    \"@opencode/cli\": (\"OPENCODE_VERSION\", \"2.0.32\"),\n}\n_APPROVED_MCP_SDK_VERSION = \"1.32.0\"\n_APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {\n    \"decode-uri-component@0.5.1\",\n    \"http-cache-semantics@4.3.0\",\n    \"body-parser@2.4.0\",\n    \"electron@45.2.1\",\n    \"fast-uri@3.1.9\",\n    \"source-map-js@1.2.2\",\n    \"@modelcontextprotocol/sdk@1.32.0\",\n    \"@moonshot-ai/kimi-code@0.43.1\",\n    \"@qwen-code/audio-capture@0.23.4\",\n    \"@qwen-code/qwen-code@0.23.4\",\n}\n"
+        },
+        {
+          "before": "\"opencode-ai: true\"",
+          "after": "\"'@opencode/cli': true\""
+        },
+        {
+          "before": "r\"@earendil-works/pi-coding-agent|@moonshot-ai/kimi-code|@qwen-code/qwen-code|opencode-ai)\",",
+          "after": "r\"@earendil-works/pi-coding-agent|@moonshot-ai/kimi-code|@qwen-code/qwen-code|@opencode/cli|opencode-ai)\","
+        }
+      ]
     }
   },
   "saas/scripts/scan_oci_candidates.py": {

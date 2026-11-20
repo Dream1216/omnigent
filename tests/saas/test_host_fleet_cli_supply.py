@@ -1,6 +1,9 @@
 """SaaS Host fleet CLI supply-chain contracts."""
 
+import json
 from pathlib import Path
+
+from omnigent.onboarding.harness_install import harness_install_spec
 
 _ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,6 +42,23 @@ def test_devin_fleet_cli_is_version_and_hash_pinned() -> None:
     )
     assert 'echo "$sha  $archive" | sha256sum -c -' in script
     assert 'devin@*) install_devin "${spec#*@}" ;;' in script
+
+
+def test_managed_opencode_pin_matches_the_supported_runtime() -> None:
+    spec = harness_install_spec("opencode")
+    assert spec is not None and spec.package is not None
+    package, version = spec.package.rsplit("@", 1)
+    dependencies = json.loads((_ROOT / ".github/ci-deps/package.json").read_text())["dependencies"]
+    assert dependencies[package] == version
+    assert "opencode-ai" not in dependencies
+    dockerfile = (_ROOT / "deploy/docker/Dockerfile").read_text()
+    assert f"ARG OPENCODE_VERSION={version}" in dockerfile
+    assert f'"{package}": "${{OPENCODE_VERSION}}"' in dockerfile.replace("\\", "")
+    installer = (_ROOT / "saas/scripts/install-saas-harness-cli.sh").read_text()
+    assert 'harness_cli_installed("opencode", timeout=30)' in installer
+    assert installer.index('harness_cli_installed("opencode", timeout=30)') < installer.index(
+        "python -B /tmp/normalize_host_cli_tree.py"
+    )
 
 
 def test_extra_cli_failures_are_fatal_and_sandbox_probe_is_portable() -> None:

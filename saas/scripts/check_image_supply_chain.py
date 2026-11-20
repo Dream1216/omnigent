@@ -44,7 +44,7 @@ _APPROVED_HOST_CLI_VERSIONS = {
     "@moonshot-ai/kimi-code": ("KIMI_CODE_VERSION", "0.43.1"),
     "@openai/codex": ("CODEX_CLI_VERSION", "0.142.0"),
     "@qwen-code/qwen-code": ("QWEN_CODE_VERSION", "0.23.4"),
-    "opencode-ai": ("OPENCODE_VERSION", "1.18.31"),
+    "@opencode/cli": ("OPENCODE_VERSION", "2.0.32"),
 }
 _APPROVED_MCP_SDK_VERSION = "1.32.0"
 _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
@@ -58,19 +58,6 @@ _APPROVED_MINIMUM_RELEASE_AGE_EXCLUSIONS = {
     "@moonshot-ai/kimi-code@0.43.1",
     "@qwen-code/audio-capture@0.23.4",
     "@qwen-code/qwen-code@0.23.4",
-    "opencode-ai@1.18.31",
-    "opencode-darwin-arm64@1.18.31",
-    "opencode-darwin-x64-baseline@1.18.31",
-    "opencode-darwin-x64@1.18.31",
-    "opencode-linux-arm64-musl@1.18.31",
-    "opencode-linux-arm64@1.18.31",
-    "opencode-linux-x64-baseline-musl@1.18.31",
-    "opencode-linux-x64-baseline@1.18.31",
-    "opencode-linux-x64-musl@1.18.31",
-    "opencode-linux-x64@1.18.31",
-    "opencode-windows-arm64@1.18.31",
-    "opencode-windows-x64-baseline@1.18.31",
-    "opencode-windows-x64@1.18.31",
 }
 _REQUIRED_BUILD_ARGS = {
     "PYTHON_IMAGE",
@@ -1845,7 +1832,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
         "'@moonshot-ai/kimi-code': true",
         "'@qwen-code/audio-capture': true",
         "node-pty: true",
-        "opencode-ai: true",
+        "'@opencode/cli': true",
     }
     if any(fragment not in pnpm_workspace for fragment in required_host_cli_builds):
         violations.append("host CLI install scripts must be explicitly allowed by pnpm policy")
@@ -1884,7 +1871,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
             violations.append(f"pnpm-lock.yaml must bind {package} to {version}")
     if re.search(
         r"npm install -g[^\n]*(?:@anthropic-ai/claude-code|@openai/codex|"
-        r"@earendil-works/pi-coding-agent|@moonshot-ai/kimi-code|@qwen-code/qwen-code|opencode-ai)",
+        r"@earendil-works/pi-coding-agent|@moonshot-ai/kimi-code|@qwen-code/qwen-code|@opencode/cli|opencode-ai)",
         dockerfile,
     ):
         violations.append("host CLIs must not bypass pnpm-lock.yaml via npm install")
