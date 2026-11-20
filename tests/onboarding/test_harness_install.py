@@ -572,7 +572,7 @@ def test_harness_cli_logged_in_kiro_uses_whoami_exit_code(
             args=argv, returncode=returncode, stdout=stdout, stderr=""
         )
 
-    monkeypatch.setattr(hi.subprocess, "run", _run)
+    monkeypatch.setattr(hi, "run_isolated", _run)
     assert hi.harness_cli_logged_in(hi.KIRO_KEY) is expected
 
 

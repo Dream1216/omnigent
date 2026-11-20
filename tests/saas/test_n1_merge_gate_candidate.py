@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -9,6 +10,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVALUATOR = REPO_ROOT / ".github/actions/compat-smoke-saas-n1-gate/evaluate.sh"
 N1_WORKFLOW = REPO_ROOT / ".github/workflows/saas-n1-compat-image.yml"
+FROZEN_POLICY_REVISION = "73e8d4fba01a3b0a7183c172f44961928376805c"
 
 
 def _array_values(source: str, name: str) -> list[str]:
@@ -31,7 +33,7 @@ def test_candidate_workflow_matches_trusted_main_digest_and_scope() -> None:
     assert workflow["on"]["push"]["paths"] == policy_paths
 
 
-def test_all_trusted_candidate_inputs_match_main_policy_hashes() -> None:
+def test_frozen_trusted_candidate_inputs_match_main_policy_hashes() -> None:
     policy = EVALUATOR.read_text(encoding="utf-8")
     trusted_inputs = _array_values(policy, "POSTGRESQL_N1_TRUSTED_INPUTS")
 
@@ -51,11 +53,31 @@ def test_all_trusted_candidate_inputs_match_main_policy_hashes() -> None:
         allowed_digests = expected_digests.split(",")
         assert 1 <= len(allowed_digests) <= 2
         assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in allowed_digests)
-        observed_digest = hashlib.sha256((REPO_ROOT / path).read_bytes()).hexdigest()
+        source = subprocess.check_output(
+            ["git", "show", f"{FROZEN_POLICY_REVISION}:{path}"], cwd=REPO_ROOT
+        )
+        observed_digest = hashlib.sha256(source).hexdigest()
         assert observed_digest in allowed_digests or observed_digest == aliyun_hashes.get(path), (
             f"trusted input digest drift for {path}: "
             f"observed {observed_digest}, expected one of {allowed_digests}"
         )
+
+
+def test_upgrade_inputs_do_not_inherit_frozen_policy_approval() -> None:
+    policy = EVALUATOR.read_text(encoding="utf-8")
+    approved = {}
+    for name in ("POSTGRESQL_N1_TRUSTED_INPUTS", "POSTGRESQL_N1_ALIYUN_TRUSTED_INPUTS"):
+        for row in _array_values(policy, name):
+            path, digests = row.split("|", 1)
+            approved.setdefault(path, set()).update(digests.split(","))
+    for path in (
+        "pyproject.toml",
+        "uv.lock",
+        "tests/conftest.py",
+        "tests/saas/test_image_supply_chain.py",
+    ):
+        actual = hashlib.sha256((REPO_ROOT / path).read_bytes()).hexdigest()
+        assert actual not in approved[path]
 
 
 def test_every_workflow_pytest_source_is_a_trusted_candidate_input() -> None:

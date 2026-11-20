@@ -111,7 +111,7 @@ def test_composer_input_font_setting_and_alignment(
     hint = landing if mobile else page.get_by_text("Describe a task, or try a skill", exact=True)
     expect(hint).to_be_visible(timeout=30_000)
     if mobile:
-        expect(landing).to_have_attribute("placeholder", "Describe a task...")
+        expect(landing).to_have_attribute("placeholder", "Describe a task to start a new session…")
     observed = {"landing-hint": _metrics(hint)}
     skill_metrics = None if mobile else _metrics(page.get_by_test_id("skill-pill-context"))
     # Visibility checks can finish before Chromium paints its first captureable frame.

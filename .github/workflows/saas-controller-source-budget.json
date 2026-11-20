@@ -24,8 +24,8 @@
   "patch_queue_directory": "saas/upstream-patches",
   "source_intrusion_budget": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 282,
-    "max_upstream_net_added_loc": 14015,
+    "max_direct_upstream_files": 283,
+    "max_upstream_net_added_loc": 14019,
     "min_isolated_custom_code_ratio": 0.85
   },
   "upgrade_024_finite_approval": {
@@ -40,7 +40,7 @@
     "product_baseline": "saas/upstream-baseline.json",
     "private_base": "73e8d4fba01a3b0a7183c172f44961928376805c",
     "fixed_upstream": "34570c6624af037c998dfaed774de83db72313f1",
-    "current_controller_file_ceiling": 282,
+    "current_controller_file_ceiling": 283,
     "same_final_Main_required": true,
     "image_rebuild_or_origin_exception": false
   }

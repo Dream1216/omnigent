@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import copy
+import json
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, replace
+from importlib.resources import files
 from threading import Barrier, RLock
 from types import SimpleNamespace
 from uuid import uuid4
@@ -656,7 +658,9 @@ def t_composition_boundary(recovery_boundary, runtime_boundary, monkeypatch):
         runtime_boundary.operation,
         recovery=operation,
         runtime_version=VERSION,
-        upstream_revision="ee728a02004749e7f6971beee6c66d990bfbd216",
+        upstream_revision=json.loads(files("saas").joinpath("upstream-baseline.json").read_text())[
+            "upstream_revision"
+        ],
     )
     events, checkpoints = [], []
     control.checkpoint = lambda phase, state: checkpoints.append((phase, copy.deepcopy(state)))
@@ -893,7 +897,9 @@ def test_t_composition_accepts_only_independently_pinned_repaired_target_contrac
         runtime_boundary.operation,
         recovery=operation,
         runtime_version=VERSION,
-        upstream_revision="ee728a02004749e7f6971beee6c66d990bfbd216",
+        upstream_revision=json.loads(files("saas").joinpath("upstream-baseline.json").read_text())[
+            "upstream_revision"
+        ],
     )
     calls = []
 
@@ -942,7 +948,9 @@ def test_t_composition_wrong_upstream_is_not_an_original_t_target(
         runtime_boundary.operation,
         recovery=operation,
         runtime_version=VERSION,
-        upstream_revision="ee728a02004749e7f6971beee6c66d990bfbd216",
+        upstream_revision=json.loads(files("saas").joinpath("upstream-baseline.json").read_text())[
+            "upstream_revision"
+        ],
     )
     with pytest.raises(db.Refused, match="original_t_runtime_contract_required"):
         runtime.FencedTRuntimeRecovery(

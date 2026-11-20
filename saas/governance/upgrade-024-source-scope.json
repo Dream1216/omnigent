@@ -12,12 +12,12 @@
   },
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 282,
-    "max_upstream_net_added_loc": 14015,
+    "max_direct_upstream_files": 283,
+    "max_upstream_net_added_loc": 14019,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "b97b470ca9836df56390599628581a1e959e6b3710b0052abaf229d7be666e6d",
+    "baseline": "49fc1057650931589009e2f9b6ff015640ed0dbd83a5d0bd4f0cb539603efdcc",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -693,8 +693,8 @@
     },
     {
       "path": "tests/e2e_ui/desktop/test_browser_permission_prompt.py",
-      "bytes": 3153,
-      "sha256": "5b11f37f63e9d85164d752475bbb2b9e8c24012a73c402aa068280841ab366e4"
+      "bytes": 3166,
+      "sha256": "f8364d05d7e91d7f62ca92354afd520548218ad9688c6b734c2263adee9ce611"
     },
     {
       "path": "tests/e2e_ui/desktop/test_databricks_browser_auth.py",
@@ -717,6 +717,11 @@
       "sha256": "18653944cdb588721b3f2b63f17da3ee9e65f31b45216c12294762e48f2b3326"
     },
     {
+      "path": "tests/e2e_ui/mobile/test_composer_input_font_size.py",
+      "bytes": 9971,
+      "sha256": "9d23087176d72d64187eaccf7fddf74e471f3678d6dc5fadfc492c42386f28cf"
+    },
+    {
       "path": "tests/e2e_ui/sessions/test_initial_prompt_session_switch.py",
       "bytes": 12769,
       "sha256": "8fee1411f7c4d6b3e45bcbedf9e993892e2e799c0ee5b3a4a394a0982bcb722f"
@@ -728,8 +733,8 @@
     },
     {
       "path": "tests/e2e_ui/sessions/test_session_host_offline.py",
-      "bytes": 9932,
-      "sha256": "e8e855fa10256c89b36a40492f6bc477be3b526fe2ff73295f56e3f1df3b349c"
+      "bytes": 10153,
+      "sha256": "f133ef9ecb30e86a0f95c49535ba52619f61ec6d7794ddce20a2802e8aeb2f0a"
     },
     {
       "path": "tests/e2e_ui/shells/test_terminal_bridge_reconnect.py",
@@ -933,8 +938,8 @@
     },
     {
       "path": "tests/onboarding/test_harness_install.py",
-      "bytes": 88396,
-      "sha256": "7d7d84175c0f13b496d7ecef10505164f02819debb50d1af7d251f7e66bd705c"
+      "bytes": 88394,
+      "sha256": "d2ec333f59d50d06e63a70b7e63963fa8f4c7b34d59566b3d504e80e9c9fcddc"
     },
     {
       "path": "tests/onboarding/test_harness_readiness.py",

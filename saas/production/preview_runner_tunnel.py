@@ -33,7 +33,6 @@ from starlette.types import Receive, Scope, Send
 from websockets.exceptions import ConnectionClosed, WebSocketException
 from websockets.typing import Origin
 
-from omnigent.host.frames import CAP_MCP_REGISTRY
 from omnigent.runner.identity import (
     OMNIGENT_INTERNAL_WS_ORIGIN,
     RUNNER_TUNNEL_TOKEN_HEADER,
@@ -71,9 +70,9 @@ _PRIVATE_CONTRACT_HASHES = MappingProxyType(
             "a2da0dc05ff42f8e36c5d9ecd289ed14a0e618004cd424b268b810821f0c216a"
         ),
         "_handle_tunnel_frame": (
-            "6978a7e047c7e9efc7417e25e571edb678f283d3d6d8bec4115f5fd8f3541de1"
+            "53370d88a196f8653bdec8575dd6800b0cc4a8c9a82b16ac5ccf1afc2771041f"
         ),
-        "_send_hello": ("51782dbae36cf510670c137bac84ef1c74029df0c87f0afc41b642b27842e75c"),
+        "_send_hello": ("85843ac0820955a810a4f09ea99c2850d21182eba6f6a249e14ae864ed1ff4ab"),
     }
 )
 
@@ -412,11 +411,8 @@ class ProductionPreviewRunnerTunnel:
                 frame = decode_frame(data)
                 if not isinstance(frame, HelloFrame):
                     raise ProductionPreviewRunnerTunnelError("Preview Runner hello is invalid")
-                # The Preview-only ASGI app does not implement managed MCP execution.
-                frame = replace(
-                    frame,
-                    capabilities=[cap for cap in frame.capabilities if cap != CAP_MCP_REGISTRY],
-                )
+                # Preview-only routes do not implement agent or egress capabilities.
+                frame = replace(frame, capabilities=[])
                 await websocket.send(encode_frame(frame))
 
             await _send_hello(send_preview_hello, self.config.product_revision)

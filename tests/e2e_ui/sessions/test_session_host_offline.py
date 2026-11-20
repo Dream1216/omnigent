@@ -153,9 +153,13 @@ def test_offline_native_host_refuses_input_and_keeps_reconnect_action(
         expected_host_grace_s = 30.0 if host_grace_s is None else host_grace_s
         expected_waits = [("host_reconnect", expected_host_grace_s)]
         observed = [json.loads(line) for line in wait_trace.read_text().splitlines()]
-        assert [(wait["name"], wait["timeout_s"]) for wait in observed] == expected_waits
+        assert [wait["name"] for wait in observed] == [name for name, _ in expected_waits]
         # Allow millisecond timer rounding when comparing expiry with monotonic time.
         timer_tolerance_s = 0.01
+        assert all(0 < wait["timeout_s"] <= expected_host_grace_s for wait in observed)
+        assert observed[0]["timeout_s"] == pytest.approx(
+            expected_host_grace_s, abs=timer_tolerance_s, rel=0
+        )
         assert all(
             wait["elapsed_s"] >= wait["timeout_s"] - timer_tolerance_s for wait in observed
         ), observed

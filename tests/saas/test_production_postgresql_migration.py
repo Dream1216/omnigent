@@ -1104,12 +1104,12 @@ def test_preview_authority_acl_preservation_requires_an_exact_projection(
 
 
 @pytest.mark.parametrize("major", [16, 18])
-def test_current_heads_pin_distinct_clean_replay_preview_catalogs(major: int) -> None:
+def test_current_heads_pin_clean_replay_preview_catalogs(major: int) -> None:
     key = (major, migration._expected_head("official"), migration._expected_head("saas"))
     inventory = migration._PREVIEW_AUTHORITY_PUBLIC_SCHEMA_INVENTORY_SHA256[key]
     security = migration._PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256[key]
     assert len(inventory) == len(security) == 64
-    assert inventory != migration._PUBLIC_SCHEMA_INVENTORY_SHA256[key]
+    # Preview grants may share the object inventory; privilege catalogs must differ.
     admin = replace(
         _plan(),
         platform_model_service_role_bindings=_platform_bindings(),

@@ -70,7 +70,7 @@ def test_local_network_prompt_submits_one_native_decision(
     expect(page.locator("#reload")).to_be_visible()
     page.locator(control).click()
 
-    footer_buttons = page.locator("footer button")
+    footer_buttons = page.locator("#permission-choices button")
     expect(footer_buttons).to_have_count(3)
     assert footer_buttons.evaluate_all("buttons => buttons.every(button => button.disabled)")
     assert page.evaluate("() => window.__permissionTest.choices") == [decision]
