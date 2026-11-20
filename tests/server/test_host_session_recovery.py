@@ -13,6 +13,7 @@ import pytest
 
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import MessageData, NewConversationItem
+from omnigent.server import session_live_state
 from omnigent.server.host_session_recovery import HostSessionRecoverer, record_turn
 from omnigent.server.managed_hosts import ManagedSandboxConfig, ManagedSandboxDeployment
 from omnigent.session_recovery import (
@@ -751,6 +752,96 @@ def test_native_input_echo_preserves_turn_evidence(
         ],
     )
     assert store.get_session_recovery(conv.id) == (before if input_kind == "echo" else None)
+
+
+def test_hostless_relay_uses_fresh_runner_index_without_hydrating_sessions(
+    recovery: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = recovery.store
+    conv = store.create_conversation(agent_id=recovery.conv.agent_id, runner_id="external")
+    read = Mock(wraps=store.get_conversation)
+    monkeypatch.setattr(store, "get_conversation", read)
+    native = Mock(side_effect=AssertionError("Hostless turns need no native resolution"))
+    monkeypatch.setattr("omnigent.server.routes.sessions._is_native_terminal_session", native)
+    monkeypatch.setattr(session_live_state, "_host_session_recoverer", recovery.service)
+    session_live_state.record_recovery_turn(store, conv.id, "external", "turn", finished=True)
+    read.assert_not_called()
+    native.assert_not_called()
+    assert store.get_session_recovery(conv.id) is None
+
+    # A later binding must be observed; an earlier empty index result is not cached.
+    store.replace_runner_id(recovery.conv.id, "external")
+    session_live_state.record_recovery_turn(store, conv.id, "external", "turn", finished=True)
+    read.assert_called_once_with(conv.id)
+    native.assert_not_called()
+    assert store.get_session_recovery(conv.id) is None
+
+
+@pytest.mark.parametrize("index", ["host", "unsupported", "overflow"])
+@pytest.mark.parametrize("native", [False, True])
+def test_eligible_relay_keeps_native_exclusion_and_original_fence(
+    recovery: Any, monkeypatch: pytest.MonkeyPatch, index: str, native: bool
+) -> None:
+    store, conv = recovery.store, recovery.conv
+    if index != "host":
+        error = NotImplementedError if index == "unsupported" else ValueError
+        monkeypatch.setattr(store, "get_runner_host_ids", Mock(side_effect=error))
+    read = Mock(wraps=store.get_conversation)
+    monkeypatch.setattr(store, "get_conversation", read)
+    classify = Mock(return_value=native)
+    monkeypatch.setattr("omnigent.server.routes.sessions._is_native_terminal_session", classify)
+    monkeypatch.setattr(session_live_state, "_host_session_recoverer", recovery.service)
+    before = store.get_session_recovery(conv.id)
+    session_live_state.record_recovery_turn(store, conv.id, "old", None, finished=True)
+    classify.assert_called_once()
+    if native:
+        assert read.call_count == 1
+        assert store.get_session_recovery(conv.id) == before
+    else:
+        assert read.call_count == 2
+        assert store.get_session_recovery(conv.id).phase == "stopped"
+
+
+@pytest.mark.parametrize("changed", ["missing", "hostless", "runner", "child"])
+def test_relay_declines_ineligible_fresh_conversation_before_native_resolution(
+    recovery: Any, monkeypatch: pytest.MonkeyPatch, changed: str
+) -> None:
+    store, conv = recovery.store, recovery.conv
+    current = {
+        "missing": None,
+        "hostless": replace(conv, host_id=None),
+        "runner": replace(conv, runner_id="new"),
+        "child": replace(conv, parent_conversation_id="parent"),
+    }[changed]
+    monkeypatch.setattr(store, "get_conversation", Mock(return_value=current))
+    classify = Mock(side_effect=AssertionError("Ineligible turns need no native resolution"))
+    monkeypatch.setattr("omnigent.server.routes.sessions._is_native_terminal_session", classify)
+    monkeypatch.setattr(session_live_state, "_host_session_recoverer", recovery.service)
+    before = store.get_session_recovery(conv.id)
+    session_live_state.record_recovery_turn(store, conv.id, "old", "turn-1", finished=True)
+    classify.assert_not_called()
+    assert store.get_session_recovery(conv.id) == before
+
+
+def test_relay_rechecks_runner_after_native_resolution(
+    recovery: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, conv = recovery.store, recovery.conv
+    before = store.get_session_recovery(conv.id)
+
+    def rotate_runner(_conversation: Any) -> bool:
+        store.replace_runner_id(conv.id, "new")
+        return False
+
+    read = Mock(wraps=store.get_conversation)
+    monkeypatch.setattr(store, "get_conversation", read)
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions._is_native_terminal_session", rotate_runner
+    )
+    monkeypatch.setattr(session_live_state, "_host_session_recoverer", recovery.service)
+    session_live_state.record_recovery_turn(store, conv.id, "old", "turn-1", finished=True)
+    assert read.call_count == 2
+    assert store.get_session_recovery(conv.id) == before
 
 
 def test_delayed_terminal_cannot_close_a_new_turn(recovery: Any) -> None:

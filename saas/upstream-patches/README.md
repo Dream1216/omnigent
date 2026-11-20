@@ -533,3 +533,9 @@ retaining the approval, cancellation, isolation and cleanup contracts.
 Remove this correction when upstream emits the same canonical identifiers.
 
 The fixed 0.24 interruption adapter keeps the one-second terminal/usage grace for a live captured turn. It waits for that Task's turn finalization or completion, so terminal handling before or after the interrupt acknowledgement can release the wait while transport cleanup continues. It rechecks the generation before the cancel floor, preserving a newer turn. The existing interrupt/stop tests cover delayed terminal usage, a stuck turn, and pending cleanup with a new active turn; the formal benchmark keeps its original boundaries and thresholds.
+
+The Host recovery lifecycle hook uses the existing bounded runner index only to
+reject runners without a Host binding in a fresh workspace-scoped snapshot.
+Unsupported or over-budget discovery falls back to the original session reads.
+Fresh session eligibility checks precede native harness resolution; applicable
+Host sessions retain the original second read and recovery compare-and-swap.

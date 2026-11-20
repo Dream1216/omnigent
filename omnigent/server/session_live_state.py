@@ -140,11 +140,26 @@ def record_recovery_turn(
 ) -> None:
     """Persist lifecycle fences only for an explicitly configured recovery integration."""
     if _host_session_recoverer is not None and _host_session_recoverer.store is store:
+        if not store.supports_session_recovery or not runner_id:
+            return
+        try:
+            if not store.get_runner_host_ids(runner_id):
+                return
+        except (NotImplementedError, ValueError):
+            # Unsupported or over-budget discovery retains per-session validation.
+            pass
         from omnigent.server.routes.sessions import _is_native_terminal_session
 
         conv = store.get_conversation(session_id)
+        if (
+            conv is None
+            or not conv.host_id
+            or conv.runner_id != runner_id
+            or conv.parent_conversation_id is not None
+        ):
+            return
         # Native response frames acknowledge delivery; external status owns the turn.
-        if conv is not None and _is_native_terminal_session(conv):
+        if _is_native_terminal_session(conv):
             return
         _host_session_recoverer.record_turn(session_id, runner_id, response_id, finished=finished)
 

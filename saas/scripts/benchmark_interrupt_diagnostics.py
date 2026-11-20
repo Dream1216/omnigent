@@ -13,7 +13,7 @@ from pathlib import Path
 from dev.benchmarks.omnigent.environment import BenchEnvironment
 from dev.benchmarks.omnigent.journeys import resolve_journeys, run_latency
 
-_BASE = "9cfa8329f03c01699fc09f7763d0f38a71f130df"
+_BASE = "ddcc2fda36de155575d4374abac16fa1f660fd07"
 _ROUTER = """from omnigent_benchmark_debug import DEBUG_ROUTERS
 import json
 import threading
@@ -24,6 +24,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConver
 
 local = threading.local()
 original_get = SqlAlchemyConversationStore.get_conversation
+original_index = SqlAlchemyConversationStore.get_runner_host_ids
 original_native = sessions._is_native_terminal_session
 original_record = session_live_state.record_recovery_turn
 
@@ -41,10 +42,15 @@ def timed(stage, action, *args, **kwargs):
         if stage == "conversation":
             row["host_present"] = bool(result and result.host_id)
             row["parent_present"] = bool(result and result.parent_conversation_id)
+        elif stage == "runner_index":
+            row["host_binding_present"] = bool(result)
         spans.append(row)
 
 def observed_get(*args, **kwargs):
     return timed("conversation", original_get, *args, **kwargs)
+
+def observed_index(*args, **kwargs):
+    return timed("runner_index", original_index, *args, **kwargs)
 
 def observed_native(*args, **kwargs):
     return timed("native", original_native, *args, **kwargs)
@@ -59,12 +65,27 @@ def observed_record(*args, **kwargs):
     finally:
         duration = time.perf_counter_ns() - start
         local.spans = previous
-        print("INTERRUPT_DIAGNOSTIC " + json.dumps({"recovery_ns": duration,
+        print("INTERRUPT_DIAGNOSTIC " + json.dumps({"start_ns": start, "recovery_ns": duration,
             "finished": kwargs.get("finished"), "spans": spans}), flush=True)
 
 SqlAlchemyConversationStore.get_conversation = observed_get
+SqlAlchemyConversationStore.get_runner_host_ids = observed_index
 sessions._is_native_terminal_session = observed_native
 session_live_state.record_recovery_turn = observed_record
+
+import importlib
+events = importlib.import_module("omnigent.server.routes.sessions.routes_events")
+original_control = events._get_runner_client
+async def observed_control(*args, **kwargs):
+    start = time.perf_counter_ns()
+    try:
+        return await original_control(*args, **kwargs)
+    finally:
+        if kwargs.get("for_control"):
+            print("CONTROL_DIAGNOSTIC " + json.dumps({
+                "start_ns": start, "control_ns": time.perf_counter_ns() - start,
+                "loaded_conversation": kwargs.get("conversation") is not None}), flush=True)
+events._get_runner_client = observed_control
 """
 
 
@@ -121,6 +142,11 @@ async def observe(output: Path) -> None:
             for line in (probe_root / "server.log").read_text().splitlines()
             if line.startswith("INTERRUPT_DIAGNOSTIC ")
         ]
+        control_rows = [
+            json.loads(line.split("CONTROL_DIAGNOSTIC ", 1)[1])
+            for line in (probe_root / "server.log").read_text().splitlines()
+            if line.startswith("CONTROL_DIAGNOSTIC ")
+        ]
         record = {
             "diagnostic_only": True,
             "production_slo_or_release_qualification": False,
@@ -129,11 +155,12 @@ async def observe(output: Path) -> None:
             "runtime_source_bytes_unchanged": True,
             "client": client_rows,
             "server": server_rows,
+            "control": control_rows,
             "sample_ms": result.latencies_ms,
             "failure_count": sum(result.failures.values()),
         }
         (output / "interrupt-observation.json").write_text(json.dumps(record, indent=2) + "\n")
-        assert server_rows and client_rows and not result.failures
+        assert server_rows and client_rows and control_rows and not result.failures
 
 
 def main() -> None:
