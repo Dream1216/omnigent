@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import shlex
 import shutil
@@ -53,36 +54,47 @@ def test_saas_harness_build_disables_gh_telemetry_before_delegation(
 
 
 @pytest.mark.parametrize(
-    ("architecture", "fault"),
+    ("cli", "architecture", "fault"),
     [
-        (architecture, fault)
+        (cli, architecture, fault)
+        for cli in ("jcode", "devin")
         for architecture in ("x86_64", "aarch64")
         for fault in (None, "hash", "download", "version", "smoke", "layout")
     ]
-    + [("s390x", None)],
+    + [("devin", architecture, "manifest") for architecture in ("x86_64", "aarch64")]
+    + [(cli, "s390x", None) for cli in ("jcode", "devin")],
 )
-def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
-    tmp_path: Path, architecture: str, fault: str | None
+def test_fixed_extra_cli_assets_preserve_layout_and_dual_user_checks(
+    tmp_path: Path, cli: str, architecture: str, fault: str | None
 ) -> None:
     repo = Path(__file__).resolve().parents[2]
     installer = (repo / "saas/scripts/install-saas-harness-cli.sh").read_text()
     phase = installer[: installer.index("# Version probes can write logs")]
-    target = "jcode-linux-" + architecture
+    version = "0.90.1" if cli == "jcode" else "3000.11.3"
+    target = "jcode-linux-" + architecture if cli == "jcode" else "package/bin/devin"
     archive = tmp_path / "release.tar.gz"
     main = b'#!/bin/sh\nprintf "%s\\n" "${PROBE_USER:-root}" >> "$PROBE_LOG"\n'
-    main += b'[ "${FAIL_SMOKE:-0}" != 1 ] || exit 1\nprintf "jcode v0.90.1\\n"\n'
+    main += (f'[ "${{FAIL_SMOKE:-0}}" != 1 ] || exit 1\nprintf "{cli} v{version}\\n"\n').encode()
     members = {target: main}
-    if architecture == "x86_64":
+    if cli == "jcode" and architecture == "x86_64":
         members[target + ".bin"] = b"actual native binary fixture"
+    if cli == "devin":
+        platform = "x64" if architecture == "x86_64" else "arm64"
+        members["package/package.json"] = json.dumps(
+            {
+                "name": "devin",
+                "version": "wrong" if fault == "manifest" else f"{version}-linux-{platform}",
+            }
+        ).encode()
     if fault == "layout":
-        members["unexpected"] = b"not in the fixed release"
+        members["../unexpected"] = b"not in the fixed release"
     with tarfile.open(archive, "w:gz") as bundle:
         for name, body in members.items():
             info = tarfile.TarInfo(name)
             info.size, info.mode = len(body), 0o755
             bundle.addfile(info, io.BytesIO(body))
     checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
-    for name in ("JCODE_SHA256_AMD64", "JCODE_SHA256_ARM64"):
+    for name in (f"{cli.upper()}_SHA256_AMD64", f"{cli.upper()}_SHA256_ARM64"):
         prefix = name + '="'
         old = phase.split(prefix, 1)[1].split('"', 1)[0]
         phase = phase.replace(prefix + old + '"', prefix + checksum + '"')
@@ -105,12 +117,14 @@ def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
         path = commands / name
         path.write_text("#!/bin/sh\nset -eu\n" + body)
         path.chmod(0o755)
-    home, binaries = tmp_path / "jcode home", tmp_path / "bin"
+    home, binaries = tmp_path / "cli home", tmp_path / "bin"
+    if cli == "devin":
+        phase = phase.replace("/opt/devin", shlex.quote(str(home)))
     binaries.mkdir()
     probe, curl = tmp_path / "probes", tmp_path / "curl arguments"
-    spec = "jcode@0.90.2" if fault == "version" else "jcode@v0.90.1"
+    spec = f"{cli}@wrong" if fault == "version" else f"{cli}@{version}"
     if fault is None and architecture == "x86_64":
-        spec = "jcode"
+        spec = cli
     result = subprocess.run(
         ["bash", "-euc", phase, "installer", spec],
         env={
@@ -132,20 +146,24 @@ def test_fixed_jcode_assets_preserve_layout_and_dual_user_checks(
     if fault or architecture == "s390x":
         assert result.returncode != 0
         if fault != "smoke":
-            assert not (binaries / "jcode").exists()
+            assert not (binaries / cli).exists()
             assert not probe.exists()
         assert "cargo" not in result.stderr and "building from source" not in result.stdout
         return
     assert result.returncode == 0, result.stderr
-    version = home / ".jcode/builds/versions/0.90.1"
-    assert (binaries / "jcode").resolve() == version / "jcode"
-    assert (version / "jcode").read_bytes() == main
-    assert (home / ".jcode/builds/stable-version").read_text() == "0.90.1\n"
-    if architecture == "x86_64":
-        assert (version / (target + ".bin")).read_bytes() == members[target + ".bin"]
+    installed = home / ".jcode/builds/versions/0.90.1" if cli == "jcode" else home / "bin"
+    assert (binaries / cli).resolve() == installed / cli
+    assert (installed / cli).read_bytes() == main
+    if cli == "jcode":
+        assert (home / ".jcode/builds/stable-version").read_text() == "0.90.1\n"
+        if architecture == "x86_64":
+            assert (installed / (target + ".bin")).read_bytes() == members[target + ".bin"]
     assert probe.read_text().splitlines() == ["root", "sandbox"]
     assert "--retry-all-errors" in curl.read_text()
-    assert f"/v0.90.1/{target}.tar.gz" in curl.read_text()
+    if cli == "jcode":
+        assert f"/v0.90.1/{target}.tar.gz" in curl.read_text()
+    else:
+        assert f"/devin/-/devin-{version}-linux-{platform}.tgz" in curl.read_text()
 
 
 @pytest.mark.parametrize("prune_marker_present", [False, True])
