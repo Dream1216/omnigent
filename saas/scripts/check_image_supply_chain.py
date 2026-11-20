@@ -1500,7 +1500,7 @@ def validate_image_material_lock(repo: Path) -> list[str]:
     ):
         violations.append("Wolfi scratch COPY must bind epoch in retained rootfs content")
     if (
-        "apk add --no-cache git=2.56.0-r0" not in runtime_stage
+        "apk add --no-cache git=2.56.1-r1" not in runtime_stage
         or "test -x /usr/bin/git" not in runtime_stage
     ):
         violations.append(

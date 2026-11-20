@@ -504,7 +504,7 @@ RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
       db=2026.10.7.1-r0 \
       findutils=4.11.0-r3 \
       gcc=16.2.0-r1 \
-      git=2.56.0-r0 \
+      git=2.56.1-r1 \
       glibc-2.44-dev=2.44-r16 \
       gmp=6.3.0-r11 \
       grep=3.12-r9 \
@@ -886,7 +886,7 @@ ENV PYTHONUNBUFFERED=1 \
 # Python standard library performs the health check and outbound HTTPS probes.
 # Bubblewrap supplies the hard sandbox used by managed SaaS Runner agents.
 RUN case "${SOURCE_DATE_EPOCH}" in *[!0-9]*|'') exit 2 ;; esac; \
-    apk add --no-cache git=2.56.0-r0 \
+    apk add --no-cache git=2.56.1-r1 \
       bubblewrap=0.13.0-r0 \
       cyrus-sasl-heimdal-libs=2.1.28-r58 \
       heimdal-libs=7.8.0-r54 \
