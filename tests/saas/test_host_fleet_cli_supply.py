@@ -35,8 +35,7 @@ def test_devin_fleet_cli_is_version_and_hash_pinned() -> None:
     assert "DEVIN_SHA256_AMD64" in script
     assert "DEVIN_SHA256_ARM64" in script
     assert (
-        "https://static.devin.ai/cli/${DEVIN_VERSION}/devin-${DEVIN_VERSION}-${target}.tar.gz"
-        in script
+        "https://registry.npmjs.org/devin/-/devin-${DEVIN_VERSION}-linux-${target}.tgz" in script
     )
     assert 'echo "$sha  $archive" | sha256sum -c -' in script
     assert 'devin@*) install_devin "${spec#*@}" ;;' in script

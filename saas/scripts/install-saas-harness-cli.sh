@@ -13,8 +13,8 @@ JCODE_VERSION="0.90.1"
 JCODE_SHA256_AMD64="9a46e0cd4b66416177e78384614787323be7a9d195832733664e8f0354a9927b"
 JCODE_SHA256_ARM64="85c095f6ec90bdf06cce2ee9666fa40fc74d05c6aca65e475bc12978af45f16e"
 DEVIN_VERSION="3000.11.3"
-DEVIN_SHA256_AMD64="83b3b113c01bf2a3e9e100db08d77e6b086806a7754f091e20831bdfe215157e"
-DEVIN_SHA256_ARM64="21a2d7a8dea67987067cde7eb3fe7193a48daa8f8c3d50d414c603c4a2b67f15"
+DEVIN_SHA256_AMD64="347e52b95c8477d5837e956bc7e59dd954187145c057753a3da8e73d89ee812f"
+DEVIN_SHA256_ARM64="da10208584fa4ffa74ac40cdd03628ef5c6431d1562e269528d52c8f7a78e5d7"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -78,29 +78,38 @@ install_jcode() (
     verify jcode
 )
 
-install_devin() {
-    local requested="$1" target sha archive
+install_devin() (
+    local requested="$1" target sha archive stage
     if [ -n "$requested" ] && [ "$requested" != "$DEVIN_VERSION" ]; then
         die "devin is pinned to $DEVIN_VERSION; got $requested"
     fi
     case "$(uname -m)" in
-        x86_64) target="x86_64-unknown-linux"; sha="$DEVIN_SHA256_AMD64" ;;
-        aarch64) target="aarch64-unknown-linux"; sha="$DEVIN_SHA256_ARM64" ;;
+        x86_64) target="x64"; sha="$DEVIN_SHA256_AMD64" ;;
+        aarch64) target="arm64"; sha="$DEVIN_SHA256_ARM64" ;;
         *) die "unsupported architecture '$(uname -m)' for devin" ;;
     esac
-    archive="/tmp/devin-${DEVIN_VERSION}.tar.gz"
+    stage="$(mktemp -d)"
+    trap 'rm -rf -- "$stage"' EXIT
+    archive="$stage/devin.tgz"
     curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
         --connect-timeout 30 --max-time 300 -o "$archive" \
-        "https://static.devin.ai/cli/${DEVIN_VERSION}/devin-${DEVIN_VERSION}-${target}.tar.gz"
+        "https://registry.npmjs.org/devin/-/devin-${DEVIN_VERSION}-linux-${target}.tgz"
     echo "$sha  $archive" | sha256sum -c -
+    python -B -I - "$archive" "$DEVIN_VERSION-linux-$target" <<'PY'
+import sys
+from pathlib import Path
+
+from saas.scripts.materialize_npm_release import _inspect_archive
+
+_inspect_archive(Path(sys.argv[1]).read_bytes(), name="devin", version=sys.argv[2])
+PY
     rm -rf /opt/devin
     mkdir -p /opt/devin
-    tar -xzf "$archive" -C /opt/devin
+    tar -xzf "$archive" -C /opt/devin --strip-components=1
     chmod -R a+rX /opt/devin
     ln -sf /opt/devin/bin/devin "$BIN_DIR/devin"
-    rm -f "$archive"
     verify devin
-}
+)
 
 [ "$#" -gt 0 ] || die "usage: install-saas-harness-cli.sh NAME[@VERSION]..."
 for spec in "$@"; do
