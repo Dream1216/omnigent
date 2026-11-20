@@ -130,7 +130,7 @@ async def observe(output: Path) -> None:
             "client": client_rows,
             "server": server_rows,
             "sample_ms": result.latencies_ms,
-            "failures": result.failures,
+            "failure_count": sum(result.failures.values()),
         }
         (output / "interrupt-observation.json").write_text(json.dumps(record, indent=2) + "\n")
         assert server_rows and client_rows and not result.failures

@@ -89,7 +89,7 @@
     {
       "path": ".github/workflows/benchmark-host.yml",
       "bytes": 5551,
-      "sha256": "d2f9731a369165279dfb4dc9ba77daf0c82cf75b17b858a6d1d6665f6b3f5be1"
+      "sha256": "55aa8961bc6e6f7d9e05a692483c96bc38e929c93c93b75e92eb19a0620d906b"
     },
     {
       "path": ".github/workflows/ci.yml",
