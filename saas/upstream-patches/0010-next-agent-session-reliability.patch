@@ -3052,17 +3052,17 @@ index 72dfca8a8..084cf753e 100644
 +        require_start_sandbox=(os.environ.get(REQUIRED_START_SANDBOX_ENV) == "1"),
 +        session_model_channel=session_model_channel,
 diff --git a/omnigent/runner/app.py b/omnigent/runner/app.py
-index a8f9f31fa..cc6748315 100644
+index a8f9f31fa..3974febfb 100644
 --- a/omnigent/runner/app.py
 +++ b/omnigent/runner/app.py
-@@ -35,0 +36 @@
+@@ -35,0 +36 @@ if TYPE_CHECKING:
 +    from omnigent.runner.session_channels import SessionRelayChannel
-@@ -1367,0 +1369,2 @@
+@@ -1367,0 +1369,2 @@ def create_runner_app(
 +    require_start_sandbox: bool = False,
 +    session_model_channel: SessionRelayChannel | None = None,
-@@ -2137,0 +2141 @@
+@@ -2137,0 +2141 @@ def create_runner_app(
 +            session_model_channel=session_model_channel,
-@@ -2138,0 +2143,8 @@
+@@ -2138,0 +2143,8 @@ def create_runner_app(
 +    elif (
 +        session_model_channel is not None
 +        and resource_registry.model_channel_for(session_model_channel.session_id)
@@ -3071,7 +3071,7 @@ index a8f9f31fa..cc6748315 100644
 +        raise ValueError("Runner resource registry has a different model binding")
 +    if require_start_sandbox:
 +        resource_registry.require_sandbox_binding()
-@@ -2140,0 +2153,59 @@
+@@ -2140,0 +2153,59 @@ def create_runner_app(
 +    async def _bind_server_start_sandbox(
 +        session_id: str, agent_name: str = "", harness: str = ""
 +    ) -> None:
@@ -3131,33 +3131,46 @@ index a8f9f31fa..cc6748315 100644
 +                resource_registry, session_id, directory, server_client
 +            )
 +
-@@ -3219,0 +3291,5 @@
+@@ -3219,0 +3291,5 @@ def create_runner_app(
 +                if _start_data is not None:
 +                    _apply_sandbox_override_from_start_data(spec, _start_data)
 +                if require_start_sandbox:
 +                    await _bind_server_start_sandbox(session_id, spec.name or "", harness_name)
 +                    spec.os_env = resource_registry.required_os_env(session_id)
-@@ -3242,3 +3317,0 @@
+@@ -3242,3 +3317,0 @@ def create_runner_app(
 -            if _start_data is not None:
 -                _apply_sandbox_override_from_start_data(spec, _start_data)
 -
-@@ -4354,0 +4428,3 @@
+@@ -4354,0 +4428,3 @@ def create_runner_app(
 +        harness = _session_harness_name(conv_id)
 +        if harness == "codex-native" and status in {"running", "idle"}:
 +            return
-@@ -4359 +4434,0 @@
+@@ -4359 +4434,0 @@ def create_runner_app(
 -        harness = _session_harness_name(conv_id)
-@@ -4371 +4446 @@
+@@ -4371 +4446 @@ def create_runner_app(
 -        if status == "idle" and harness in {"codex-native", "antigravity-native"}:
 +        if status == "idle" and harness == "antigravity-native":
-@@ -5772,0 +5848,4 @@
+@@ -4975 +5050,7 @@ def create_runner_app(
+-            if settle_grace_s > 0:
++            # Retired turns may still be draining transport cleanup after their terminal.
++            if (
++                settle_grace_s > 0
++                and not target.done()
++                and _active_turns.get(conv_id) is target
++                and _turn_bind_epoch.get(conv_id, 0) == turn_epoch
++            ):
+@@ -4977 +5058,2 @@ def create_runner_app(
+-            await _cancel_active_turn(conv_id, expected_task=target)
++            if _turn_bind_epoch.get(conv_id, 0) == turn_epoch:
++                await _cancel_active_turn(conv_id, expected_task=target)
+@@ -5772,0 +5855,4 @@ def create_runner_app(
 +        if session_model_channel is not None and resource_registry.owns_native_policy_channel(
 +            session_id, relay.port
 +        ):
 +            return
-@@ -5782,0 +5862 @@
+@@ -5782,0 +5869 @@ def create_runner_app(
 +        policy_transport_only: bool = False,
-@@ -5831,0 +5912,13 @@
+@@ -5831,0 +5919,13 @@ def create_runner_app(
 +        channel = (
 +            resource_registry.model_channel_for(session_id)
 +            if session_model_channel is not None
@@ -3171,11 +3184,11 @@ index a8f9f31fa..cc6748315 100644
 +            current.relay.start_private_socket(
 +                Path(channel.socket_path).parent / "policy.sock", generation=channel.generation
 +            )
-@@ -5836,0 +5930 @@
+@@ -5836,0 +5937 @@ def create_runner_app(
 +            and (policy_transport_only or current.tools_ready)
-@@ -5858,0 +5953 @@
+@@ -5858,0 +5960 @@ def create_runner_app(
 +            and (policy_transport_only or current.tools_ready)
-@@ -5868,3 +5963,6 @@
+@@ -5868,3 +5970,6 @@ def create_runner_app(
 -        relay_schemas: list[_JsonObject] = filter_workflow_tool_schemas(
 -            build_native_relay_tool_schemas(relay_spec),
 -            enabled=workflows_enabled,
@@ -3185,7 +3198,7 @@ index a8f9f31fa..cc6748315 100644
 +            else filter_workflow_tool_schemas(
 +                build_native_relay_tool_schemas(relay_spec), enabled=workflows_enabled
 +            )
-@@ -5874,7 +5972,8 @@
+@@ -5874,7 +5979,8 @@ def create_runner_app(
 -        relay_schemas = await filter_native_relay_browser_tools(
 -            relay_schemas,
 -            session_id=session_id,
@@ -3201,40 +3214,40 @@ index a8f9f31fa..cc6748315 100644
 +                session_labels=session_labels,
 +            )
 +        if not policy_transport_only and relay_spec is not None and relay_spec.mcp_servers:
-@@ -5896,0 +5996 @@
+@@ -5896,0 +6003 @@ def create_runner_app(
 +                and current.tools_ready
-@@ -6025,0 +6126,6 @@
+@@ -6025,0 +6133,6 @@ def create_runner_app(
 +                        private_socket_path=(Path(channel.socket_path).parent / "policy.sock")
 +                        if channel is not None
 +                        else None,
 +                        private_socket_generation=channel.generation
 +                        if channel is not None
 +                        else None,
-@@ -6039,0 +6146 @@
+@@ -6039,0 +6153 @@ def create_runner_app(
 +            tools_ready=not policy_transport_only,
-@@ -6041,0 +6149,6 @@
+@@ -6041,0 +6156,6 @@ def create_runner_app(
 +        notification_bridge_dir = bridge_dir
 +        if session_model_channel is not None and not policy_transport_only:
 +            runtime = resource_registry.native_runtime_for(session_id)
 +            _model, policy_channel = resource_registry.native_channels_for(session_id)
 +            runtime.refresh_projection(policy_channel)
 +            notification_bridge_dir = runtime.bridge
-@@ -6059 +6172,4 @@
+@@ -6059 +6179,4 @@ def create_runner_app(
 -                            post_tools_changed, bridge_dir, timeout_s=0.0, cancelled=cancelled
 +                            post_tools_changed,
 +                            notification_bridge_dir,
 +                            timeout_s=0.0,
 +                            cancelled=cancelled,
-@@ -8898,0 +9015,6 @@
+@@ -8898,0 +9022,6 @@ def create_runner_app(
 +                if require_start_sandbox:
 +                    enforced = resource_registry.required_os_env(session_id)
 +                    if enforced is not None:
 +                        resolved_spec = _unwrap_spec_entry(spec_entry)
 +                        if resolved_spec is not None:
 +                            resolved_spec.os_env = enforced
-@@ -8983,0 +9106 @@
+@@ -8983,0 +9113 @@ def create_runner_app(
 +        _bind_server_start_sandbox=_bind_server_start_sandbox,
-@@ -9945,0 +10069,4 @@
+@@ -9945,0 +10076,4 @@ def _build_spawn_env_from_spec(
 +    if resource_registry is not None and session_id is not None and not is_native_harness(harness):
 +        enforced = resource_registry.required_os_env(session_id)
 +        if enforced is not None:

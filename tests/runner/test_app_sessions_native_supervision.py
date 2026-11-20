@@ -324,8 +324,15 @@ async def test_stop_session_cancels_inprocess_turn() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("event_type", ["interrupt", "stop_session"])
+@pytest.mark.parametrize(
+    ("retire_before_ack", "next_turn_before_ack"),
+    [(False, False), (True, False), (True, True)],
+)
 async def test_cancel_relays_terminal_the_harness_sends_after_acknowledging(
     event_type: str,
+    retire_before_ack: bool,
+    next_turn_before_ack: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A turn's own ``response.cancelled`` relays before the cancel floor fires.
 
@@ -333,6 +340,25 @@ async def test_cancel_relays_terminal_the_harness_sends_after_acknowledging(
     streams the terminal, which carries the turn's usage, just afterwards.
     """
     from omnigent.runner.app import _session_event_queues_ref
+
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    retired_tasks: list[asyncio.Task[None]] = []
+    next_turn_gate = asyncio.Event()
+    next_tasks: list[asyncio.Task[None]] = []
+    if retire_before_ack:
+
+        class PendingCleanupResponse(runner_app.StreamingResponse):
+            def __init__(self, content: Any, *args: Any, **kwargs: Any) -> None:
+                async def pending_cleanup():
+                    async for chunk in content:
+                        yield chunk
+                    cleanup_started.set()
+                    await release_cleanup.wait()
+
+                super().__init__(pending_cleanup(), *args, **kwargs)
+
+        monkeypatch.setattr(runner_app, "StreamingResponse", PendingCleanupResponse)
 
     usage = {"input_tokens": 50, "output_tokens": 25, "total_tokens": 75}
     gate = asyncio.Event()
@@ -355,7 +381,33 @@ async def test_cancel_relays_terminal_the_harness_sends_after_acknowledging(
     ) -> Any:
         response = await acknowledge(url, json=json, timeout=timeout)
         if json.get("type") == "interrupt":
-            asyncio.get_running_loop().call_later(0.05, gate.set)
+            if retire_before_ack:
+                retired_tasks.append(app.state.active_turns[conv_id])
+                gate.set()
+                await asyncio.wait_for(cleanup_started.wait(), timeout=5)
+                assert conv_id not in app.state.active_turns
+                assert not retired_tasks[0].done()
+                if next_turn_before_ack:
+                    harness._gate = next_turn_gate
+                    harness.post_seen.clear()
+                    epoch = app.state.turn_bind_epoch[conv_id]
+                    following = await client.post(
+                        f"/v1/sessions/{conv_id}/events",
+                        json={
+                            "type": "message",
+                            "role": "user",
+                            "model": "test-agent",
+                            "content": [{"type": "input_text", "text": "following turn"}],
+                            "harness": "openai-agents",
+                        },
+                    )
+                    assert following.status_code == 202
+                    await asyncio.wait_for(harness.post_seen.wait(), timeout=5)
+                    next_tasks.append(app.state.active_turns[conv_id])
+                    assert next_tasks[0] is not retired_tasks[0]
+                    assert app.state.turn_bind_epoch[conv_id] != epoch
+            else:
+                asyncio.get_running_loop().call_later(0.05, gate.set)
         return response
 
     harness.post = acknowledge_then_finish  # type: ignore[method-assign]
@@ -380,12 +432,28 @@ async def test_cancel_relays_terminal_the_harness_sends_after_acknowledging(
         assert resp.status_code == 202
         await asyncio.wait_for(harness.post_seen.wait(), timeout=5.0)
 
-        cancel_resp = await client.post(
-            f"/v1/sessions/{conv_id}/events",
-            json={"type": event_type},
-        )
-        assert cancel_resp.status_code == 204, cancel_resp.text
-        published = _drain_session_event_queue(_session_event_queues_ref.get(conv_id))
+        try:
+            cancel_resp = await asyncio.wait_for(
+                client.post(
+                    f"/v1/sessions/{conv_id}/events",
+                    json={"type": event_type},
+                ),
+                timeout=0.2 if retire_before_ack else 5,
+            )
+            assert cancel_resp.status_code == 204, cancel_resp.text
+            if retire_before_ack:
+                assert not retired_tasks[0].done()
+                assert not retired_tasks[0].cancelling()
+            if next_turn_before_ack:
+                assert app.state.active_turns[conv_id] is next_tasks[0]
+                assert not next_tasks[0].done()
+                assert not next_tasks[0].cancelling()
+            published = _drain_session_event_queue(_session_event_queues_ref.get(conv_id))
+        finally:
+            release_cleanup.set()
+            next_turn_gate.set()
+            if retired_tasks or next_tasks:
+                await asyncio.wait_for(asyncio.gather(*retired_tasks, *next_tasks), timeout=5)
 
     terminals = [event for event in published if event.get("type") == "response.cancelled"]
     assert [event["response"].get("usage") for event in terminals] == [usage]

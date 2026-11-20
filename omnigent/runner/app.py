@@ -5047,9 +5047,16 @@ def create_runner_app(
         # and direct interrupt/stop callers rely on the forwarded interrupt
         # ending proxy_stream.
         if isinstance(target, asyncio.Task):
-            if settle_grace_s > 0:
+            # Retired turns may still be draining transport cleanup after their terminal.
+            if (
+                settle_grace_s > 0
+                and not target.done()
+                and _active_turns.get(conv_id) is target
+                and _turn_bind_epoch.get(conv_id, 0) == turn_epoch
+            ):
                 await asyncio.wait({target}, timeout=settle_grace_s)
-            await _cancel_active_turn(conv_id, expected_task=target)
+            if _turn_bind_epoch.get(conv_id, 0) == turn_epoch:
+                await _cancel_active_turn(conv_id, expected_task=target)
 
     async def _resync_turn_state(
         conv_id: str, reason: str, *, owner_response_id: str | None = None

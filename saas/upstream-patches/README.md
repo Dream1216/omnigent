@@ -531,3 +531,5 @@ policy correlation identifiers. Bare UUIDs are rejected before policy evaluation
 The existing workspace I/O regression checks both normal policy requests while
 retaining the approval, cancellation, isolation and cleanup contracts.
 Remove this correction when upstream emits the same canonical identifiers.
+
+The fixed 0.24 interruption adapter keeps the one-second terminal/usage grace for a live captured turn. It skips waiting on transport cleanup after that turn has retired and rechecks its generation before the cancel floor, preserving a newer turn. The existing interrupt/stop tests cover delayed terminal usage, a stuck turn, and a retired stream with a new active turn; the formal benchmark keeps its original boundaries and thresholds.

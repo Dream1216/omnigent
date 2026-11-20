@@ -13,11 +13,11 @@
   "budgets": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 283,
-    "max_upstream_net_added_loc": 14019,
+    "max_upstream_net_added_loc": 14094,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "49fc1057650931589009e2f9b6ff015640ed0dbd83a5d0bd4f0cb539603efdcc",
+    "baseline": "272c2ca96d98905ed4d482f768f626e56d4a0efae9ec1fb98182cdcb943784f8",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -423,8 +423,8 @@
     },
     {
       "path": "omnigent/runner/app.py",
-      "bytes": 487210,
-      "sha256": "a5964c1a254478ad7ea029dee66ef4df48f9c3592c5d177f6be405762342ecd1"
+      "bytes": 487561,
+      "sha256": "62860e8aa4517243f9b1143e1085e7d72ae6fd26b4e044ad32ee4ee715be42c1"
     },
     {
       "path": "omnigent/runner/app_support.py",
@@ -948,8 +948,8 @@
     },
     {
       "path": "tests/runner/test_app_sessions_native_supervision.py",
-      "bytes": 138919,
-      "sha256": "70b19e10c650d2efc1ccad99715f17ad1402e54e557fcd4a74d8e94660d3a142"
+      "bytes": 142000,
+      "sha256": "b93d74cfcf684ef4e91024f4af28001283630906a5727dde755668e4676c5443"
     },
     {
       "path": "tests/runner/test_app_sessions_native_terminals_autocreate.py",
