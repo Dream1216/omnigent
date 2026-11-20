@@ -13,11 +13,11 @@
   "budgets": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 280,
-    "max_upstream_net_added_loc": 13960,
+    "max_upstream_net_added_loc": 13961,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "e7494835c5b438971908f998f0ec07db07d3d218d3d05285b26acb0b15a7ff57",
+    "baseline": "c4ad2d7f92191300b5a6693108d011e7e49e4278ebd44a4d3177650ab9c0d8e2",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -863,8 +863,8 @@
     },
     {
       "path": "tests/harnesses/codex_native/test_codex_native_hook.py",
-      "bytes": 66312,
-      "sha256": "29b594a25444d8a5ed94cc911711fd08570df7b6e9c3747047c9daab99f667f3"
+      "bytes": 66343,
+      "sha256": "26484c237340c8b5035f3dd5e63d6ee97dd3e791a16d37593a01d7f8b2a4bcce"
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_artifact.py",

@@ -462,7 +462,8 @@ def test_required_hook_contains_request_and_conversion_errors(
     real_client = httpx.Client
 
     def client(**kwargs: object) -> httpx.Client:
-        return real_client(transport=httpx.MockTransport(handler), trust_env=False, **kwargs)
+        assert kwargs.get("trust_env") is False
+        return real_client(transport=httpx.MockTransport(handler), **kwargs)
 
     monkeypatch.setattr(httpx, "Client", client)
     monkeypatch.setattr(
