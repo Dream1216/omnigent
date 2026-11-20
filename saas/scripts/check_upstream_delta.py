@@ -34,7 +34,7 @@ _ORDINARY_M_SCOPE_PATH = "saas/governance/ordinary-m-native-0142-source-scope.js
 _ORDINARY_M_SCOPE_SHA256 = "ad0ace4fc2b789431df2b589f8c6f6d3928cdf7ded6213b1a16b9eb695e5cecc"
 _UPGRADE024_APPROVAL = "upgrade_024_finite_approval"
 _UPGRADE024_SCOPE_PATH = "saas/governance/upgrade-024-source-scope.json"
-_UPGRADE024_SCOPE_SHA256 = "ee3860cdfdccbdec6e4393376116535bf34c16f7c3edc7c7bbe138f0f89a3b50"
+_UPGRADE024_SCOPE_SHA256 = "a75fc0adce3d62816ce0c1cf0fe2ec9d40c4fc782a62b072fd6f274ca0b191a9"
 
 
 def _manifest_controls_sha256(manifest: dict[str, Any]) -> str:

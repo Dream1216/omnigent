@@ -12,12 +12,12 @@
   },
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 261,
+    "max_direct_upstream_files": 269,
     "max_upstream_net_added_loc": 13921,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "5c796af7319b1dc57dae0a1bd2adef0413c67c43b937a2c715718631f8af18e2",
+    "baseline": "fc8050c58053c1399d0a18c99c5f6cbb15d7bcc4841ce8b15c5e409d454c7b2f",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -28,13 +28,23 @@
     },
     {
       "path": ".github/actions/e2e-run/action.yml",
-      "bytes": 13333,
-      "sha256": "ef9d17491a3d72f19f0dfed56e77510a7848274ba9f8155f6aadc0ebbaeffb1a"
+      "bytes": 13327,
+      "sha256": "e7702811e6221692524fe0d7da7d604a4d5910c775525ad53c18155595f70758"
     },
     {
       "path": ".github/actions/integration-run/action.yml",
-      "bytes": 7958,
-      "sha256": "75faec1dc16538339ae57fad81c43e9c1df1402299021a0c46c0cef1b399c293"
+      "bytes": 7952,
+      "sha256": "b9dd5e10eed0ce7ebd49721509b70d225b62bcae22650b8cc70c86dee3496c5f"
+    },
+    {
+      "path": ".github/actions/run-omnigent-agent/action.yml",
+      "bytes": 5402,
+      "sha256": "ca2fd3b662725a78b749147ad7150d56b7120ea940d4596514d88926ffe5884a"
+    },
+    {
+      "path": ".github/actions/setup-agy/action.yml",
+      "bytes": 411,
+      "sha256": "b6955cb465f4a6689106cf1c04d462fc6697fd85e63f8e72feb7d4a8cc079861"
     },
     {
       "path": ".github/actions/setup-harness-cli/locks/pi/package-lock.json",
@@ -73,8 +83,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 30112,
-      "sha256": "1caac37a90ac9e58804f22a21c1e396bcb15607ac47c78b8504dbdccc8c8302c"
+      "bytes": 30102,
+      "sha256": "c1e22ecfd604d2766c0d73517c02b42af3331a0e2c133804e92f8a8d75824701"
     },
     {
       "path": ".github/workflows/code-coverage.yml",
@@ -82,9 +92,14 @@
       "sha256": "71bae2bea8fe75d6c501de32b683a5d248d0f46a2b123f23db244df297debeec"
     },
     {
+      "path": ".github/workflows/doc-sync.yml",
+      "bytes": 41122,
+      "sha256": "73e917f1b6949d71e5c3f67b30baae7e27ec84a740b55e7e4d97f7450218c0dc"
+    },
+    {
       "path": ".github/workflows/e2e-ui.yml",
-      "bytes": 26004,
-      "sha256": "8b212d325c74631437f61bb0d9b3bafd27d8e294a7a8ee3521fde4835299b810"
+      "bytes": 26000,
+      "sha256": "9734cbffc3a0af029bf803f87081c655194bfad3b42c320c88667b0e6f0adc0c"
     },
     {
       "path": ".github/workflows/e2e.yml",
@@ -92,14 +107,39 @@
       "sha256": "8ceb7db849ee45bfc20e715e9dccef431cb822e63cc9f0315d9ca7e978e5b0c5"
     },
     {
+      "path": ".github/workflows/flake-stress-e2e.yml",
+      "bytes": 19956,
+      "sha256": "fb52899321dc95f080381d31b76ef34499a3680a3ccc67e22430722e871d6197"
+    },
+    {
+      "path": ".github/workflows/flake-stress-ui.yml",
+      "bytes": 19938,
+      "sha256": "dfa1ba628154c3ffe2434e4702ec1c25635ebbfdd4e6721ab1e385cf40862839"
+    },
+    {
       "path": ".github/workflows/integration.yml",
       "bytes": 4626,
       "sha256": "a198c25f9b1d69ebd176d5d1f30be52231df7b7799922e4fb415d986dba7b8c4"
     },
     {
+      "path": ".github/workflows/issue-triage.yml",
+      "bytes": 35537,
+      "sha256": "5940bb5762e71a33e4c228b928ebb2224d95d4cd3dec5897e9e53aa5820a13ef"
+    },
+    {
       "path": ".github/workflows/lint.yml",
       "bytes": 8151,
       "sha256": "6fc3b1efa70e215f8227f142518a202f7122a140fc56fe807512b186f8b1f495"
+    },
+    {
+      "path": ".github/workflows/polly-review.yml",
+      "bytes": 58474,
+      "sha256": "209126616513909d83f25d9262e0d207f9ef4aa0a00cac418a876654559334b3"
+    },
+    {
+      "path": ".github/workflows/security-triage.yml",
+      "bytes": 24724,
+      "sha256": "6a877ff53d650c85f55e4cf353672ba61eaaa08e078dbb928cdf2ffbbe5da216"
     },
     {
       "path": ".github/workflows/server-compat.yml",

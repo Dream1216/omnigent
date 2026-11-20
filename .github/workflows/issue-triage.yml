@@ -234,7 +234,7 @@ jobs:
 
       - name: Install Claude Code CLI
         if: steps.creds.outputs.available == 'true'
-        uses: omnigent-ai/omnigent/.github/actions/setup-harness-cli@75d817057138bd2cf5cd5af1cd954fdaca12e03d
+        uses: Dream1216/omnigent/.github/actions/setup-harness-cli@f67721ea41c7cb79ac0cdd348af796c038a5bc69
         with:
           harness: claude
 
