@@ -41,7 +41,7 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
     assert runtime["runtime_contract"]["server_packages"] == {
         "bubblewrap": "0.13.0-r0",
         "cyrus-sasl-heimdal-libs": "2.1.28-r58",
-        "git": "2.56.0-r0",
+        "git": "2.56.1-r1",
         "heimdal-libs": "7.8.0-r54",
         "keyutils-libs": "1.6.3-r41",
         "krb5-conf": "1.0-r10",
@@ -92,7 +92,7 @@ def test_wolfi_runtime_materials_are_closed_and_pinned() -> None:
         hashlib.sha256(
             json.dumps(host_packages, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
-        == "8620bf9eb7a4014046bf86e305d43e7d23d6066d73dc8fcc776e8f3e4276bec2"
+        == "bcba3e9593d17b5b800a5548ba74690eb8410cfef1c6e8996de13c119374f335"
     )
 
 
@@ -168,7 +168,7 @@ def test_dockerfile_uses_locked_wolfi_runtime_without_gate_exceptions() -> None:
     assert "ca-certificates-bundle=20260909-r3" in dockerfile
     assert "curl=8.23.0-r1" in dockerfile
     assert "libstdc++=16.2.0-r1" in dockerfile
-    assert "git=2.56.0-r0" in dockerfile
+    assert "git=2.56.1-r1" in dockerfile
     assert "/usr/bin/bwrap --version" in dockerfile
     seccomp_probe = (
         "/opt/venv/bin/python -B -I -c "
