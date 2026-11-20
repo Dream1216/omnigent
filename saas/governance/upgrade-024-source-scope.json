@@ -12,12 +12,12 @@
   },
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 285,
-    "max_upstream_net_added_loc": 14296,
+    "max_direct_upstream_files": 287,
+    "max_upstream_net_added_loc": 14402,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "018743ace0617296c0cebdfc0c7cf23788fc24205016c825d6aae67e6f6bd16a",
+    "baseline": "4fe43ae0645138a5ca7692327a9514fc49884ea68fb3036b993256dd9834bc9a",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -515,6 +515,11 @@
       "path": "omnigent/server/routes/sessions/routes_hooks.py",
       "bytes": 101748,
       "sha256": "c37c26266bc30a0ad5981ee3933f6e038217390220ca35e652cc5bd5c7ba2b0a"
+    },
+    {
+      "path": "omnigent/server/session_live_state.py",
+      "bytes": 26280,
+      "sha256": "5c074ab302af2343492a8231e0ff32d4504d3f0587d57034a9be5e947e08627d"
     },
     {
       "path": "omnigent/server/startup_inputs.py",
@@ -1115,6 +1120,11 @@
       "path": "tests/server/scheduled/test_dispatch_scheduler.py",
       "bytes": 104119,
       "sha256": "290ad04039b577cf6710024925d3673ba7148d568ace67f35a4c1a6b46508b61"
+    },
+    {
+      "path": "tests/server/test_host_session_recovery.py",
+      "bytes": 43698,
+      "sha256": "4977bd1cb7ca6f95fe1a486c7892acd2f23f0f9ce3e3c901d01cdde59edb7a74"
     },
     {
       "path": "tests/server/test_managed_hosts.py",

@@ -5225,3 +5225,27 @@ index 8c510e246..77f16a767 100644
 +                    source_conversation_id
 +                ) or self._pending_launches.get(target_conversation_id):
 +                    raise RuntimeError("Cannot transfer a terminal while a launch is pending")
+diff --git a/omnigent/server/session_live_state.py b/omnigent/server/session_live_state.py
+index ba43f0add..d5b16171e 100644
+--- a/omnigent/server/session_live_state.py
++++ b/omnigent/server/session_live_state.py
+@@ -142,0 +143,8 @@ def record_recovery_turn(
++        if not store.supports_session_recovery or not runner_id:
++            return
++        try:
++            if not store.get_runner_host_ids(runner_id):
++                return
++        except (NotImplementedError, ValueError):
++            # Unsupported or over-budget discovery retains per-session validation.
++            pass
+@@ -145,0 +154,7 @@ def record_recovery_turn(
++        if (
++            conv is None
++            or not conv.host_id
++            or conv.runner_id != runner_id
++            or conv.parent_conversation_id is not None
++        ):
++            return
+@@ -147 +162 @@ def record_recovery_turn(
+-        if conv is not None and _is_native_terminal_session(conv):
++        if _is_native_terminal_session(conv):
