@@ -3318,7 +3318,7 @@ async def test_launch_constrains_linux_sandbox_locale_after_late_overrides(
     monkeypatch.setattr(
         terminal_mod,
         "asyncio",
-        SimpleNamespace(create_subprocess_exec=spawn, subprocess=asyncio.subprocess),
+        SimpleNamespace(**{**vars(asyncio), "create_subprocess_exec": spawn}),
     )
     monkeypatch.setattr(
         terminal_mod, "create_exec_launcher", lambda *_args, **_kwargs: "/sandbox/launcher"

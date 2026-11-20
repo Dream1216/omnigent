@@ -1513,6 +1513,8 @@ async def test_runner_connect_wait_shares_the_host_reconnect_deadline(
     set_runner_client(None)
     monkeypatch.setattr(sessions_module, "_HOST_BOUND_RUNNER_CONNECT_GRACE_S", 0.2)
     monkeypatch.setattr(sessions_module, "_HOST_RECONNECT_GRACE_S", 0.3)
+    # The host disappears after its liveness lookup, so the initial runner grace runs.
+    monkeypatch.setattr(routes_events, "_session_offline_host_id", AsyncMock(return_value=None))
     waits = []
 
     async def runner_wait(*_args, **_kwargs):
@@ -1553,6 +1555,7 @@ async def test_recovered_host_runner_spawn_uses_remaining_reconnect_budget(
     set_runner_client(None)
     monkeypatch.setattr(sessions_module, "_HOST_BOUND_RUNNER_CONNECT_GRACE_S", 0.2)
     monkeypatch.setattr(sessions_module, "_HOST_RECONNECT_GRACE_S", 0.3)
+    monkeypatch.setattr(routes_events, "_session_offline_host_id", AsyncMock(return_value=None))
     waits: list[float] = []
     responders: list[tuple[ApplicationCommunicator, asyncio.Task[Any]]] = []
     launches: list[HostLaunchRunnerFrame] = []

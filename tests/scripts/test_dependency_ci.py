@@ -384,6 +384,17 @@ def test_each_test_path_belongs_to_one_pytest_group(scope_module):
     matrix = _pytest_matrix()
     assert len({row["group"] for row in matrix}) == len(matrix)
     rows = [row for row in matrix if row.get("markexpr") != "databricks"]
+    compatibility = yaml.safe_load(
+        (ROOT / ".github/workflows/saas-upstream-compat.yml").read_text()
+    )
+    lane = compatibility["jobs"]["compatibility-tests"]
+    assert lane["strategy"]["matrix"]["shard"] == [0, 1]
+    command = next(
+        step["run"] for step in lane["steps"] if step.get("name") == "Run SaaS compatibility tests"
+    )
+    assert "tests/saas" in command.split() and "--num-shards=2" in command.split()
+    assert not any(token.startswith("--ignore") for token in command.split())
+    rows = [*rows, {"group": "saas-compatibility", "paths": "tests/saas"}]
     owner: dict[str, str] = {}
     for row in rows:
         for rel in _collected_matrix_files(row["paths"]):

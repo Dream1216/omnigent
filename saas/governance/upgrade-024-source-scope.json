@@ -12,12 +12,12 @@
   },
   "budgets": {
     "max_active_patches": 9,
-    "max_direct_upstream_files": 280,
-    "max_upstream_net_added_loc": 13961,
+    "max_direct_upstream_files": 282,
+    "max_upstream_net_added_loc": 14015,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
-    "baseline": "c4ad2d7f92191300b5a6693108d011e7e49e4278ebd44a4d3177650ab9c0d8e2",
+    "baseline": "b97b470ca9836df56390599628581a1e959e6b3710b0052abaf229d7be666e6d",
     "controller": "170886eaa80cb9b1b2b05420af5f4b6cae1e800e564a38941219e192369a2744"
   },
   "files": [
@@ -67,14 +67,19 @@
       "sha256": "293bfe2102df619c36f685553ff43d6d35052341f530bcc4274ce91e96f98866"
     },
     {
+      "path": ".github/model-usage.json",
+      "bytes": 6081,
+      "sha256": "86669ba21d6347375aa81aa538f3eaa8afe9dfca92ad8a58c48c65e16e9e79d9"
+    },
+    {
       "path": ".github/scripts/ci/check_npm_peers.py",
       "bytes": 4171,
       "sha256": "6b7e24e17575cb4e278c828a647db5e47db6856b1d18e20517761db5a07e6366"
     },
     {
       "path": ".github/scripts/ci/python-matrix.json",
-      "bytes": 4152,
-      "sha256": "bf0da8b387fe1b11d40700aeb1ea95e17b7a4ed2e3bcdc9132c838a82deb3985"
+      "bytes": 4135,
+      "sha256": "05aca64b0133d0a1ea6ad1a9cc65151d51b9af505a466389ba2b7939bfd8ed64"
     },
     {
       "path": ".github/triage_v2/pyproject.toml",
@@ -918,8 +923,8 @@
     },
     {
       "path": "tests/inner/test_terminal.py",
-      "bytes": 165320,
-      "sha256": "34b4a2e8ec6d4a612eccfb1b4cc55758bc2d8697674dfca7cdce7ead5eb18bef"
+      "bytes": 165313,
+      "sha256": "044b0bdfecfcae68d1b84c1067493e82839b390de686163d3c2605863e7a5f6b"
     },
     {
       "path": "tests/onboarding/sandboxes/test_agent_sandbox.py",
@@ -1018,8 +1023,8 @@
     },
     {
       "path": "tests/scripts/test_dependency_ci.py",
-      "bytes": 61972,
-      "sha256": "c8dddf3087944d13b5bc2db693449a75b507cd68de1d0ac94d9862154484407d"
+      "bytes": 62563,
+      "sha256": "0668d677d1482046629145b358a479b1ac6d5152890edd52f4efaab29a6e98fb"
     },
     {
       "path": "tests/server/helpers.py",
@@ -1035,6 +1040,11 @@
       "path": "tests/server/integration/test_host_session_binding.py",
       "bytes": 196134,
       "sha256": "2ed8b2bfd1b8db590ff25e33f58fbe34e8001f9bb4519f94e2656eea641b0345"
+    },
+    {
+      "path": "tests/server/integration/test_host_tunnel_route.py",
+      "bytes": 93703,
+      "sha256": "379957b63d459c0c4553ab83c51298b770c3ac85b6cdb39e89ed834dffbdfd78"
     },
     {
       "path": "tests/server/integration/test_kiro_permission_delivery.py",
@@ -1053,8 +1063,8 @@
     },
     {
       "path": "tests/server/integration/test_session_host_launch.py",
-      "bytes": 257582,
-      "sha256": "8083694d9c316efd6b3c2a359cf57c3a34de621358942b94a83ea469bd85f8eb"
+      "bytes": 257863,
+      "sha256": "89c2766ebdcc29a5ac0cd2f9358312128ea05eecaf287b5576c35911f76e7d4c"
     },
     {
       "path": "tests/server/integration/test_sessions_archive.py",

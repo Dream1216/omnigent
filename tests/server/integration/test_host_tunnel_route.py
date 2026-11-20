@@ -1816,17 +1816,36 @@ async def test_managed_heartbeat_renews_token_for_reconnect(
     assert (await communicator.receive_output(timeout=budget(1.0)))["type"] == "websocket.accept"
     await _send_hello_and_wait(communicator, registry)
     try:
-        # Advance past every expiry the initial connection could have issued.
-        renewed_at = now_epoch() + 7 * 24 * 3600
-        elapsed += 7 * 24 * 3600
+        with Session(get_or_create_engine(db_uri)) as session:
+            original_expiry = session.scalar(
+                select(SqlHost.token_expires_at).where(SqlHost.host_id == _HOST_ID)
+            )
+        assert original_expiry is not None
+        # Renew while authenticated, then verify use beyond the original expiry.
+        renewed_at = original_expiry - token_ttl_s // 2
+        elapsed += renewed_at - now_epoch()
         monkeypatch.setattr(store_mod, "now_epoch", lambda: renewed_at)
         monkeypatch.setattr(tunnel_mod, "now_epoch", lambda: renewed_at)
         await _wait_updated_at_at_least(store, _HOST_ID, renewed_at)
         if should_renew:
+
+            def token_renewed() -> bool:
+                with Session(get_or_create_engine(db_uri)) as session:
+                    return (
+                        session.scalar(
+                            select(SqlHost.token_expires_at).where(SqlHost.host_id == _HOST_ID)
+                        )
+                        == renewed_at + token_ttl_s
+                    )
+
             await poll_until_async(
-                lambda: store.resolve_launch_token(_HOST_ID, token) is not None,
+                token_renewed,
                 timeout_s=budget(1.0),
             )
+        checked_at = original_expiry + 1
+        elapsed += checked_at - renewed_at
+        monkeypatch.setattr(store_mod, "now_epoch", lambda: checked_at)
+        monkeypatch.setattr(tunnel_mod, "now_epoch", lambda: checked_at)
         assert (store.resolve_launch_token(_HOST_ID, token) is not None) == should_renew
         with Session(get_or_create_engine(db_uri)) as session:
             row = session.execute(select(SqlHost).where(SqlHost.host_id == _HOST_ID)).scalar_one()
@@ -1834,7 +1853,7 @@ async def test_managed_heartbeat_renews_token_for_reconnect(
             if should_renew:
                 assert row.token_expires_at == renewed_at + token_ttl_s
             else:
-                assert row.token_expires_at < renewed_at
+                assert row.token_expires_at < checked_at
     finally:
         await communicator.send_input({"type": "websocket.disconnect", "code": 1000})
         await communicator.wait(timeout=budget(2.0))
