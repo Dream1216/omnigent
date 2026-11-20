@@ -1044,6 +1044,8 @@ def test_official_config_is_nonsecret_integrity_protected_and_never_expands_env(
             "llm:\n  model: bedrock/model\n  connection:\n    aws_secret_access_key: leaked\n",
             "llm:\n  model: openai/model\n  temperature: ${LEAKED_SECRET}\n",
             "sandbox:\n  provider: kubernetes\n",
+            "branding:\n  app_name: ${LEAKED_SECRET}\n",
+            "branding:\n  api_key: synthetic-not-a-credential\n",
         )
     ):
         candidate = tmp_path / f"unsafe-{index}.yaml"
@@ -1140,17 +1142,39 @@ def _reviewed_production_sandbox_config(*, aliyun_only: bool = False) -> dict[st
 
 @pytest.mark.parametrize("aliyun_only", [False, True])
 def test_official_config_admits_only_reviewed_dual_kubernetes_runtime(
-    tmp_path: Path, aliyun_only: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, aliyun_only: bool
 ) -> None:
+    from omnigent.server.server_config import load_branding_snapshot
+    from tests.server.test_server_config import _image_bytes
+
     path = tmp_path / "official.yaml"
     document = {
         "execution_timeout": 7200,
         "sandbox": _reviewed_production_sandbox_config(aliyun_only=aliyun_only),
+        "branding": {
+            "app_name": "Example Agent",
+            "logo": {"main": "main.png", "favicon": "favicon.png"},
+            "powered_by": False,
+        },
     }
     path.write_text(yaml.safe_dump(document, sort_keys=True), encoding="utf-8")
     path.chmod(0o644)
 
     loaded = server_module._load_official_config(path)
+
+    assets = tmp_path / "branding-assets"
+    assets.mkdir()
+    content = _image_bytes("PNG")
+    for name in ("main.png", "favicon.png"):
+        (assets / name).write_bytes(content)
+    monkeypatch.setenv("OMNIGENT_CONFIG", str(path))
+    dependencies = replace(_official(), server_config=loaded).as_app_dependencies()
+    snapshot = load_branding_snapshot(dependencies["server_config"])
+    assert snapshot.app_name == "Example Agent"
+    assert snapshot.powered_by is False
+    for variant in ("main", "favicon"):
+        asset = snapshot.logo_asset(variant)
+        assert asset is not None and asset.content == content
 
     assert [entry["provider"] for entry in loaded["sandbox"]["providers"]] == (
         ["e2b"] if aliyun_only else ["agent_sandbox", "kubernetes"]

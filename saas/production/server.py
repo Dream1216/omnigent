@@ -76,7 +76,9 @@ from saas.runner_adapter.platform_models import (
 
 logger = logging.getLogger("omnigent-saas-server")
 
-_PRODUCTION_OFFICIAL_CONFIG_KEYS = frozenset({"execution_timeout", "llm", "policies", "sandbox"})
+_PRODUCTION_OFFICIAL_CONFIG_KEYS = frozenset(
+    {"branding", "execution_timeout", "llm", "policies", "sandbox"}
+)
 _PRODUCTION_LLM_KEYS = frozenset(
     {
         "fallback_models",
