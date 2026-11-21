@@ -1449,7 +1449,16 @@ def test_migration_executes_the_seven_authority_phases_in_order(
 
 
 @pytest.mark.parametrize(
-    "state", ["install", "verify", "missing_anchor", "catalog_drift", "legacy_owner"]
+    "state",
+    [
+        "install",
+        "verify",
+        "missing_anchor",
+        "catalog_drift",
+        "legacy_owner",
+        "legacy_install",
+        "unknown_owner",
+    ],
 )
 def test_preview_install_is_bounded_to_an_authenticated_existing_projection(monkeypatch, state):
     events = []
@@ -1465,14 +1474,31 @@ def test_preview_install_is_bounded_to_an_authenticated_existing_projection(monk
     class PreviewEngine(_FakeEngine):
         @contextmanager
         def connect(self):
-            owners = ["bootstrap"] * 2 if state == "legacy_owner" else [plan.saas_owner.login] * 2
-            yield SimpleNamespace(
-                execute=lambda _sql: SimpleNamespace(
-                    scalars=lambda: SimpleNamespace(all=lambda: owners)
-                )
+            owners = (
+                ["bootstrap"] * 2
+                if state in {"legacy_owner", "legacy_install"}
+                else ["other"] * 2
+                if state == "unknown_owner"
+                else [plan.saas_owner.login] * 2
             )
 
+            def execute(statement):
+                if "WHERE oid = 10" in str(statement):
+                    return SimpleNamespace(scalar_one=lambda: "bootstrap")
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: owners))
+
+            yield SimpleNamespace(execute=execute)
+
+    def verify_legacy(_connection, *, bootstrap_name):
+        assert bootstrap_name == "bootstrap"
+        if state == "legacy_owner":
+            raise migration.PostgreSqlMigrationError(
+                "saas_object_ownership_drifted", "verification"
+            )
+        events.append(("legacy_definers", "verified"))
+
     engines["saas_owner"] = PreviewEngine(events, "saas_owner")
+    monkeypatch.setattr(migration, "_verify_preview_owner_lease_definers", verify_legacy)
     monkeypatch.setattr(
         migration,
         "_apply_control_plane_authority",
@@ -1493,7 +1519,7 @@ def test_preview_install_is_bounded_to_an_authenticated_existing_projection(monk
             )
 
         monkeypatch.setattr(migration, "_verify_state", drift)
-    if state in {"missing_anchor", "catalog_drift", "legacy_owner"}:
+    if state in {"missing_anchor", "catalog_drift", "legacy_owner", "unknown_owner"}:
         with pytest.raises(migration.PostgreSqlMigrationError) as rejected:
             migration.run_production_postgresql_migration(plan)
         assert (
@@ -1501,13 +1527,17 @@ def test_preview_install_is_bounded_to_an_authenticated_existing_projection(monk
             == {
                 "missing_anchor": "preview_authority_baseline_missing",
                 "catalog_drift": "source_security_catalog_drifted",
-                "legacy_owner": "preview_authority_lease_owner_unsupported",
+                "legacy_owner": "saas_object_ownership_drifted",
+                "unknown_owner": "preview_authority_lease_owner_unsupported",
             }[state]
         )
         assert not any(isinstance(event, tuple) for event in events)
     else:
         migration.run_production_postgresql_migration(plan, verify_only=state == "verify")
-        assert (("preview", {"install_preview_authority": True}) in events) == (state == "install")
+        assert (("preview", {"install_preview_authority": True}) in events) == (
+            state in {"install", "legacy_install"}
+        )
+        assert (("legacy_definers", "verified") in events) == (state == "legacy_install")
         assert ("grants", {"require_full": True}) in events
     assert not any(
         event in events

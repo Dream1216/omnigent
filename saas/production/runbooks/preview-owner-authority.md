@@ -5,11 +5,12 @@ Gateway, platform, migration-owner or bootstrap authority. This installer adds
 only the source-pinned Preview projection on an already verified P0S18 database;
 it does not advance either Alembic head or change application rows. PG16 and
 PG18 and the platform-admin/model-projection role profiles have separate exact
-catalog anchors. The two existing gateway lease functions must retain native
-SaaS-owner ownership. A retained legacy bootstrap-owned pair is still recognized
-by existing verification, but this new projection has not qualified that owner
-variant: installation rejects it before mutation instead of changing ownership.
-Unknown heads, graphs and catalog drift fail closed.
+catalog anchors. The two existing gateway lease functions retain their existing
+SaaS-owner or qualified legacy bootstrap ownership. The legacy pair must match
+the pinned definitions, SECURITY DEFINER flag, search path and exact execution
+ACLs before the normal projection is installed. Both retained and projected
+catalogs have source-derived anchors; installation never changes ownership.
+Unknown heads, mixed owners, graphs and catalog drift fail closed.
 
 ## Release and rollback boundary
 

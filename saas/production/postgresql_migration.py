@@ -5368,6 +5368,42 @@ _PRODUCTION_PREVIEW_SOURCE_SECURITY_CATALOG_SHA256: dict[tuple[int, str, str], t
 }
 
 
+# Exact retained P18 construction, upgraded and projected on clean PG16/18.
+# Each profile retains both bootstrap-owned lease definers and their strict verifier.
+_RETAINED_BOOTSTRAP_PREVIEW_CATALOG_SHA256: dict[
+    tuple[int, str, str], dict[str, tuple[str, str]]
+] = {
+    (16, "5ab01aaca219", "p0s000000018"): {
+        "inventory": (
+            "6abc160254cad97dacce4ba559529665912ca8da9e685eab41a5419fec2a8b8f",
+            "401343a36a6d502b7f39666478306491d66f5ea4fe117ba8ae7582ff24be0a64",
+        ),
+        "admin": (
+            "39d4f8202f46c6aa0a7fade974d335d3559f56a3328bbdade3b357851af96719",
+            "1ce26ed1800f9170a660049b523482a5f0af95e921bef1ab010d95c45ff9e6ac",
+        ),
+        "projection": (
+            "fb78154b151152f6e34340565f7c062e422607c80211f7321030cb17a6a61301",
+            "79d1f93c03b44618684c10eb726adbc2614c10a38f88dce208184506a1963911",
+        ),
+    },
+    (18, "5ab01aaca219", "p0s000000018"): {
+        "inventory": (
+            "63a4174915be372de08c23b378929449939c30837c840a628de07eafadb42e15",
+            "a7ac5c96b59445a9602af589c23e82d23425136aa2866e7de799e60ece6dbec1",
+        ),
+        "admin": (
+            "21206e5d844c31dcecca9a616217bdb95dcaddf1664f2c6aa9c0529e2849e66f",
+            "fd9b3ea421e9b1628941ef3ad32f4fee72c0f2751834e4ab5fdd98ca35f77892",
+        ),
+        "projection": (
+            "8cfe8810b30a9ca2effe3baef57ebf655ffb986d315478283d403585fa850fe2",
+            "712b81cf9ed5404c21bb38718ee473b8cf94a1cace43cc3f44d7b763680c2555",
+        ),
+    },
+}
+
+
 def _verify_public_schema_inventory_digest(
     inventory: list[list[str]],
     *,
@@ -5388,6 +5424,9 @@ def _verify_public_schema_inventory_digest(
         if item is not None
     }
     accepted_digests.update(_PRODUCTION_PREVIEW_PUBLIC_SCHEMA_INVENTORY_SHA256.get(key, ()))
+    accepted_digests.update(
+        _RETAINED_BOOTSTRAP_PREVIEW_CATALOG_SHA256.get(key, {}).get("inventory", ())
+    )
     if digest not in accepted_digests:
         predecessor = _project_identity_guard_inventory_predecessor(inventory)
         predecessor_digest = hashlib.sha256(
@@ -5515,11 +5554,17 @@ def _verify_source_security_catalog_digest(
             accepted_digests.add(
                 _PREVIEW_AUTHORITY_PLATFORM_ADMIN_SOURCE_SECURITY_CATALOG_SHA256.get(key)
             )
+            accepted_digests.update(
+                _RETAINED_BOOTSTRAP_PREVIEW_CATALOG_SHA256.get(key, {}).get("admin", ())
+            )
         if observed == {**platform_admin, **dict(EXPECTED_MODEL_PROJECTION_SERVICE_ROLES)}:
             if native_preview is not None:
                 accepted_digests.add(native_preview[1])
             accepted_digests.add(
                 _PREVIEW_AUTHORITY_MODEL_PROJECTION_SOURCE_SECURITY_CATALOG_SHA256.get(key)
+            )
+            accepted_digests.update(
+                _RETAINED_BOOTSTRAP_PREVIEW_CATALOG_SHA256.get(key, {}).get("projection", ())
             )
     if digest not in accepted_digests:
         predecessor = _source_catalog_project_lock_predecessor(normalized)
@@ -7409,10 +7454,19 @@ def run_production_postgresql_migration(
                             .scalars()
                             .all()
                         )
-                    if lease_owners != [plan.saas_owner.login] * 2:
-                        raise PostgreSqlMigrationError(
-                            "preview_authority_lease_owner_unsupported", "preflight"
-                        )
+                        if lease_owners != [plan.saas_owner.login] * 2:
+                            bootstrap_name = str(
+                                connection.execute(
+                                    sa.text("SELECT rolname FROM pg_roles WHERE oid = 10")
+                                ).scalar_one()
+                            )
+                            if lease_owners != [bootstrap_name] * 2:
+                                raise PostgreSqlMigrationError(
+                                    "preview_authority_lease_owner_unsupported", "preflight"
+                                )
+                            _verify_preview_owner_lease_definers(
+                                connection, bootstrap_name=bootstrap_name
+                            )
                     phases.append("preview_predecessor:verified")
                     _phase(
                         "control_plane_authority",
