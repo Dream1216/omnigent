@@ -76,7 +76,7 @@ _FIXED_RELEASES = {
         "d1e7717809fc04f15c55245ee79f50eebae3cf64",
         44858828179,
         ORIGIN_FILE.with_name("main2f06-origin.json"),
-        ".github/workflows/saas-main2f06-current-evidence-renewal.yml",
+        ".github/workflows/saas-m-current-evidence-renewal.yml",
         "same_signed_Main2f06_current_scan_evidence",
     ),
 }

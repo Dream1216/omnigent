@@ -6,6 +6,7 @@ import copy
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -379,9 +380,37 @@ def test_protected_workflow_signs_only_new_evidence_for_its_fixed_origin(_fixed_
     assert "github.ref == 'refs/heads/main'" in job["if"]
     assert "inputs.policy_revision == github.sha" in job["if"]
     commands = "\n".join(step.get("run", "") for step in job["steps"])
-    assert f"git merge-base --is-ancestor {renewal.PRODUCT} HEAD" in commands
-    assert "--source-digest " + renewal.PRODUCT in commands
-    assert "'.images[$role]' " + renewal.ORIGIN_FILE.as_posix() + ")" in commands
+    if _fixed_release == "m2c":
+        assert f"git merge-base --is-ancestor {renewal.PRODUCT} HEAD" in commands
+        assert "--source-digest " + renewal.PRODUCT in commands
+        assert "'.images[$role]' " + renewal.ORIGIN_FILE.as_posix() + ")" in commands
+    else:
+        release_input = workflow["on"]["workflow_dispatch"]["inputs"]["release"]
+        assert release_input == {
+            "description": "Registered immutable signed product",
+            "required": True,
+            "type": "choice",
+            "default": "main4cb",
+            "options": ["main4cb", "main2f06"],
+        }
+        assert workflow["env"]["RELEASE"] == "${{ inputs.release || 'main4cb' }}"
+        selector = commands[commands.index('case "$RELEASE" in') : commands.index("\nesac") + 6]
+        selected = subprocess.run(
+            ["bash", "-c", selector + '\nprintf "%s\\n%s\\n" "$product" "$origin"'],
+            env={"RELEASE": _fixed_release},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert selected.stdout.splitlines() == [renewal.PRODUCT, renewal.ORIGIN_FILE.as_posix()]
+        for invalid in ("m2c", "../unregistered"):
+            rejected = subprocess.run(
+                ["bash", "-c", selector], env={"RELEASE": invalid}, capture_output=True
+            )
+            assert rejected.returncode != 0
+        assert 'git merge-base --is-ancestor "$product" HEAD' in commands
+        assert '--source-digest "$product"' in commands
+        assert "'.images[$role]' \"$origin\")" in commands
     assert '--image "server=$RUNNER_TEMP/origin/sealed/server-1.tar"' in commands
     assert '--image "host=$RUNNER_TEMP/origin/sealed/host-1.tar"' in commands
     signing = [
@@ -396,5 +425,6 @@ def test_protected_workflow_signs_only_new_evidence_for_its_fixed_origin(_fixed_
     assert all(access == "read" for access in independent["permissions"].values())
     verification = "\n".join(step.get("run", "") for step in independent["steps"])
     assert renewal.WORKFLOW in verification
-    assert commands.count("--release main4cb") == (4 if _fixed_release == "main4cb" else 0)
-    assert verification.count("--release main4cb") == (1 if _fixed_release == "main4cb" else 0)
+    if _fixed_release != "m2c":
+        assert commands.count('--release "$RELEASE"') == 4
+        assert verification.count('--release "$RELEASE"') == 1
