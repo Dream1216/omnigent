@@ -71,6 +71,14 @@ _FIXED_RELEASES = {
         ".github/workflows/saas-m-current-evidence-renewal.yml",
         "same_signed_M4cb_current_scan_evidence",
     ),
+    "main2f06": FixedRelease(
+        "2f06f228540be7f5ef3df50fb77c542877b208c4",
+        "d1e7717809fc04f15c55245ee79f50eebae3cf64",
+        44858828179,
+        ORIGIN_FILE.with_name("main2f06-origin.json"),
+        ".github/workflows/saas-main2f06-current-evidence-renewal.yml",
+        "same_signed_Main2f06_current_scan_evidence",
+    ),
 }
 
 
@@ -91,9 +99,11 @@ def origin() -> dict:
     value = read_json(ORIGIN_FILE)
     extra = (
         {"source_qualification_sha256", "original_main_ci", "original_environment_review"}
-        if _FIXED_RUN == 43755049480
+        if _FIXED_RUN in (43755049480, 44858828179)
         else set()
     )
+    if _FIXED_RUN == 44858828179:
+        extra |= {"source_producer", "publisher_required_job_names"}
     require(
         set(value) == _ORIGIN_FIELDS | extra
         and value["product_revision"] == PRODUCT
@@ -123,6 +133,14 @@ def origin() -> dict:
             and value["original_environment_review"]["no_rules_bypassed"] is True,
             "original Source qualification, Main CI or normal environment differs",
         )
+    if _FIXED_RUN == 44858828179:
+        require(
+            hashlib.sha256(
+                json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            == "9d282a079cfff8fc158d9f98ebda39d1a49212b3972b6abd2e90ce4586997296",
+            "fixed cross-run origin, Main CI or normal environment differs",
+        )
     return value
 
 
@@ -132,7 +150,9 @@ def instant(value: str) -> datetime:
     return parsed
 
 
-def verify_origin(run: dict, jobs: dict, tree: dict, artifacts: dict) -> None:
+def verify_origin(
+    run: dict, jobs: dict, tree: dict, artifacts: dict, source: dict | None = None
+) -> None:
     value = origin()
     require(
         run["id"] == value["run_id"]
@@ -160,15 +180,56 @@ def verify_origin(run: dict, jobs: dict, tree: dict, artifacts: dict) -> None:
             and "ubuntu-24.04" in job["labels"],
             "original required hosted job differs",
         )
+        if _FIXED_RUN == 44858828179:
+            require(
+                job.get("head_sha") == PRODUCT
+                and job["name"] == value["publisher_required_job_names"][str(job_id)],
+                "original protected publisher job identity differs",
+            )
+    if _FIXED_RUN == 44858828179:
+        require(isinstance(source, dict), "original push producer evidence is required")
+        producer = value["source_producer"]
+        original = source["run"]
+        require(
+            original["id"] == producer["run_id"]
+            and original["run_attempt"] == producer["attempt"]
+            and original["head_sha"] == PRODUCT
+            and original["head_branch"] == "main"
+            and original["path"] == value["workflow"]
+            and original["event"] == producer["event"] == "push"
+            and original["status"] == "completed"
+            and original["conclusion"] == "success"
+            and original["repository"]["full_name"] == value["repository"],
+            "original push producer identity differs",
+        )
+        source_jobs = {str(job["id"]): job for job in source["jobs"]["jobs"]}
+        for job_id, name in producer["required_jobs"].items():
+            job = source_jobs[job_id]
+            require(
+                job["run_id"] == producer["run_id"]
+                and job["run_attempt"] == producer["attempt"]
+                and job["head_sha"] == PRODUCT
+                and job["name"] == name
+                and job["status"] == "completed"
+                and job["conclusion"] == "success"
+                and job["runner_group_name"] == "GitHub Actions"
+                and "ubuntu-24.04" in job["labels"],
+                "original push producer required hosted job differs",
+            )
     actual = {item["id"]: item for item in artifacts["artifacts"]}
-    for expected in value["artifacts"].values():
-        item = actual[expected["id"]]
+    for role, expected in value["artifacts"].items():
+        artifact_run = value["run_id"]
+        selected = actual
+        if _FIXED_RUN == 44858828179 and role == "oci":
+            artifact_run = value["source_producer"]["run_id"]
+            selected = {item["id"]: item for item in source["artifacts"]["artifacts"]}
+        item = selected[expected["id"]]
         require(
             item["name"] == expected["name"]
             and item["size_in_bytes"] == expected["bytes"]
             and item["digest"] == "sha256:" + expected["sha256"]
             and item["expired"] is False
-            and item["workflow_run"]["id"] == value["run_id"]
+            and item["workflow_run"]["id"] == artifact_run
             and item["workflow_run"]["head_sha"] == PRODUCT,
             "original immutable artifact differs or expired",
         )
@@ -185,6 +246,14 @@ def download_origin(destination: Path) -> None:
         "tree": api(f"{prefix}/git/commits/{PRODUCT}"),
         "artifacts": api(f"{prefix}/actions/runs/{value['run_id']}/artifacts?per_page=100"),
     }
+    if _FIXED_RUN == 44858828179:
+        producer = value["source_producer"]
+        source_run = f"{prefix}/actions/runs/{producer['run_id']}"
+        native["source"] = {
+            "run": api(f"{source_run}/attempts/{producer['attempt']}"),
+            "jobs": api(f"{source_run}/attempts/{producer['attempt']}/jobs?per_page=100"),
+            "artifacts": api(f"{source_run}/artifacts?per_page=100"),
+        }
     verify_origin(**native)
     destination.mkdir(parents=True, exist_ok=False)
     (destination / "native-origin.json").write_text(json.dumps(native, sort_keys=True) + "\n")

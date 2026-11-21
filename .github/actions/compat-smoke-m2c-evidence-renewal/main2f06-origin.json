@@ -1,0 +1,109 @@
+{
+  "artifacts": {
+    "oci": {
+      "bytes": 5444626173,
+      "id": 14686741873,
+      "name": "saas-oci-promotion-2f06f228540be7f5ef3df50fb77c542877b208c4",
+      "sha256": "88a518036e41ca868ea2d8464e380ef05ae10f42825736f917d0ee41e6bdfc4e"
+    },
+    "signed": {
+      "bytes": 4012381,
+      "id": 14689890477,
+      "name": "signed-release-candidate-2f06f228540be7f5ef3df50fb77c542877b208c4",
+      "sha256": "9e6c09d0f666e028eaa216fe5e8c7f884c08c9b79afb9b3695af1149e8bd2cfb"
+    }
+  },
+  "attempt": 1,
+  "images": {
+    "host": "sha256:41a18ee7fefb950c22287b595c6ef8172a4ecef9f9db46807e308c26a76a7abf",
+    "server": "sha256:3078d19036573faa934144ab1d7b0fb9521a3f507082e27da7d9c70c5ad16946"
+  },
+  "manifest_sha256": "5502bd4656808830f1bc96a8e05871c95bf31008d29534f9b6c1c18cea064cd0",
+  "original_environment_review": {
+    "POST_response": {
+      "bytes": 3846,
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-upgrade-024-20261120/qualification-024-opencode-v2/P1.NORMAL-ENVIRONMENT-REVIEW.RESPONSE.ORIGINAL.json",
+      "sha256": "499fe9d0361d7faad8f1e44257901929481a737526e2ed3cd9d056d00e6b6a2d"
+    },
+    "actual_native_review_history": {
+      "bytes": 1512,
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-upgrade-024-20261120/qualification-024-opencode-v2/P1.NORMAL-ENVIRONMENT-REVIEW.HISTORY.ORIGINAL.json",
+      "sha256": "f8feb497347595a580f1fabe215de8ce4e549e2e669be5ae731edbf4ce2084dc"
+    },
+    "approval_POST_count": 1,
+    "at_UTC": "2026-11-21T03:01:42.644270+00:00",
+    "environment": "production-image",
+    "no_rules_bypassed": true,
+    "normal_API_review": true,
+    "pending_after": {
+      "bytes": 2,
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-upgrade-024-20261120/qualification-024-opencode-v2/P1.PENDING-DEPLOYMENTS.AFTER.ORIGINAL.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "pending_before": {
+      "bytes": 1405,
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-upgrade-024-20261120/qualification-024-opencode-v2/P1.PENDING-DEPLOYMENTS.REVIEWABLE.ORIGINAL.json",
+      "sha256": "9b1113a3a0573947c0d402bb5ce70860e8720f4fb8e84f3ce2d90fffbaa6c566"
+    },
+    "product_revision": "2f06f228540be7f5ef3df50fb77c542877b208c4",
+    "reviewer": "Dream1216",
+    "run": 44858828179,
+    "state": "PASS_NORMAL_PROTECTED_ENVIRONMENT_REVIEW_ACTUAL_NATIVE_HISTORY"
+  },
+  "original_main_ci": {
+    "expires_at": "2026-11-21T14:00:20+00:00",
+    "manual_CI_retry": 1,
+    "product_revision": "2f06f228540be7f5ef3df50fb77c542877b208c4",
+    "product_tree": "d1e7717809fc04f15c55245ee79f50eebae3cf64",
+    "qualification_sha256": "a3b916be428055f8b6c0119d6b83e6c9ff0b7547cc20218443e5eff7edfa03f7",
+    "required_workflow_count": 7
+  },
+  "platforms": {
+    "host-amd64": {
+      "config_digest": "sha256:7656f75dfa2ace2c4e119213da61834c257d96859a52361d0b8d8cdafd102fe2",
+      "manifest_digest": "sha256:bb08ac24d16511cbaa87e05b9a7b8dec81d16f7d549c1edb5fe982dcd8d73ee3"
+    },
+    "host-arm64": {
+      "config_digest": "sha256:66787f160d74020a79f9af77f2d7e4a9167ed5fae1021a9030034a05cfb02728",
+      "manifest_digest": "sha256:6df9508c1b31ef459690eba648df5684d81965efa14995198c05a5d88bb6a4d9"
+    },
+    "server-amd64": {
+      "config_digest": "sha256:d65b80744495fd7d88c17ca03697dfc68da2e61bbfd9c8791000bb06a0f01f21",
+      "manifest_digest": "sha256:5e694e5fee96ee652de8aee9d1712ae6fbbe685b3264036c398699ce81210533"
+    },
+    "server-arm64": {
+      "config_digest": "sha256:2f9a22f1503d187934acb911afd156a4027110351a98ae90fdc8a07f52552c00",
+      "manifest_digest": "sha256:61ea8b22ddf99a6555c538fdf5bd7c29c527a105c9e8d900b28bb4b70c6589fc"
+    }
+  },
+  "product_revision": "2f06f228540be7f5ef3df50fb77c542877b208c4",
+  "product_tree": "d1e7717809fc04f15c55245ee79f50eebae3cf64",
+  "publisher_required_job_names": {
+    "136707384378": "publish-signed",
+    "136712917148": "verify-published-source"
+  },
+  "rebuilt": false,
+  "repository": "Dream1216/omnigent",
+  "required_jobs": [
+    136707384378,
+    136712917148
+  ],
+  "run_id": 44858828179,
+  "schema_version": 1,
+  "source_date_epoch": 1795218727,
+  "source_producer": {
+    "attempt": 1,
+    "event": "push",
+    "qualification_sha256": "be133467ca38689cc0e575de2f38203147fbcba6fb0f4416201fb565878cb15a",
+    "required_jobs": {
+      "136645384069": "source-context",
+      "136645518022": "verify-candidate-preflight",
+      "136645518070": "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...",
+      "136645518200": "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...",
+      "136647370198": "build-candidate"
+    },
+    "run_id": 44839895879
+  },
+  "source_qualification_sha256": "8b4d5a8c6108630934aa3a4db17e4b01e4abce85e78c4a97a9428de6f1d1db8e",
+  "workflow": ".github/workflows/saas-image-candidate.yml"
+}

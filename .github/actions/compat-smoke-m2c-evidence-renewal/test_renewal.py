@@ -6,6 +6,7 @@ import copy
 import importlib.util
 import json
 import shutil
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -22,7 +23,7 @@ spec.loader.exec_module(renewal)
 POLICY = "b" * 40
 
 
-@pytest.fixture(params=["m2c", "main4cb"])
+@pytest.fixture(params=["m2c", "main4cb", "main2f06"])
 def _fixed_release(request, monkeypatch):
     for name in (
         "PRODUCT",
@@ -61,6 +62,8 @@ def native_origin(_fixed_release):
                 "conclusion": "success",
                 "runner_group_name": "GitHub Actions",
                 "labels": ["ubuntu-24.04"],
+                "head_sha": renewal.PRODUCT,
+                "name": value.get("publisher_required_job_names", {}).get(str(job), "original"),
             }
             for job in value["required_jobs"]
         ]
@@ -75,15 +78,46 @@ def native_origin(_fixed_release):
                 "expired": False,
                 "workflow_run": {"id": value["run_id"], "head_sha": renewal.PRODUCT},
             }
-            for row in value["artifacts"].values()
+            for role, row in value["artifacts"].items()
+            if _fixed_release != "main2f06" or role == "signed"
         ]
     }
-    return {
+    native = {
         "run": run,
         "jobs": jobs,
         "artifacts": artifacts,
         "tree": {"sha": renewal.PRODUCT, "tree": {"sha": value["product_tree"]}},
     }
+    if _fixed_release == "main2f06":
+        producer = value["source_producer"]
+        source_run = {**run, "id": producer["run_id"], "event": "push"}
+        native["source"] = {
+            "run": source_run,
+            "jobs": {
+                "jobs": [
+                    {
+                        **jobs["jobs"][0],
+                        "id": int(job),
+                        "name": name,
+                        "run_id": producer["run_id"],
+                    }
+                    for job, name in producer["required_jobs"].items()
+                ]
+            },
+            "artifacts": {
+                "artifacts": [
+                    {
+                        **artifacts["artifacts"][0],
+                        "id": value["artifacts"]["oci"]["id"],
+                        "name": value["artifacts"]["oci"]["name"],
+                        "size_in_bytes": value["artifacts"]["oci"]["bytes"],
+                        "digest": "sha256:" + value["artifacts"]["oci"]["sha256"],
+                        "workflow_run": {"id": producer["run_id"], "head_sha": renewal.PRODUCT},
+                    }
+                ]
+            },
+        }
+    return native
 
 
 def test_actual_fixed_origin_native_bindings(native_origin):
@@ -106,6 +140,65 @@ def test_origin_rejects_other_material_or_borrowed_success(native_origin, fault)
         native_origin["tree"]["tree"]["sha"] = POLICY
     with pytest.raises(ValueError):
         renewal.verify_origin(**native_origin)
+
+
+@pytest.mark.parametrize("_fixed_release", ["main2f06"], indirect=True)
+@pytest.mark.parametrize(
+    "fault", ["event", "source-head", "attempt", "job-head", "job-failure", "OCI-owner", "missing"]
+)
+def test_crossrun_origin_cannot_borrow_publisher_or_another_producer(native_origin, fault):
+    source = native_origin["source"]
+    if fault == "event":
+        source["run"]["event"] = "workflow_dispatch"
+    elif fault == "source-head":
+        source["run"]["head_sha"] = POLICY
+    elif fault == "attempt":
+        source["run"]["run_attempt"] = 2
+    elif fault == "job-head":
+        source["jobs"]["jobs"][0]["head_sha"] = POLICY
+    elif fault == "job-failure":
+        source["jobs"]["jobs"][0]["conclusion"] = "skipped"
+    elif fault == "OCI-owner":
+        source["artifacts"]["artifacts"][0]["workflow_run"]["id"] = renewal.origin()["run_id"]
+    else:
+        native_origin["source"] = None
+    with pytest.raises(ValueError):
+        renewal.verify_origin(**native_origin)
+
+
+@pytest.mark.parametrize("_fixed_release", ["main2f06"], indirect=True)
+@pytest.mark.parametrize("borrow_producer", [False, True])
+def test_crossrun_image_signature_binds_original_publisher_invocation(
+    _fixed_release, borrow_producer, monkeypatch, tmp_path
+):
+    value = renewal.origin()
+    original_run = value["source_producer"]["run_id"] if borrow_producer else value["run_id"]
+    claims = renewal.build_certificate_claims(
+        value["repository"], renewal.PRODUCT, value["workflow"], str(original_run), "1"
+    )
+    for role, subject in value["images"].items():
+        entries = [
+            {
+                "verificationResult": {
+                    "signature": {"certificate": claims},
+                    "statement": {
+                        "predicateType": "https://slsa.dev/provenance/v1",
+                        "subject": [{"digest": {"sha256": subject.removeprefix("sha256:")}}],
+                    },
+                }
+            }
+        ]
+        write_json(tmp_path / f"{role}-origin-signature.json", entries)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["renewal", "origin-signatures", "--root", str(tmp_path), "--release", "main2f06"],
+    )
+    if borrow_producer:
+        with pytest.raises(ValueError, match="actual original invocation"):
+            renewal.main()
+    else:
+        renewal.main()
 
 
 @pytest.fixture
