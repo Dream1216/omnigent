@@ -6,6 +6,8 @@ import copy
 import importlib.util
 import json
 import shutil
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -22,7 +24,7 @@ spec.loader.exec_module(renewal)
 POLICY = "b" * 40
 
 
-@pytest.fixture(params=["m2c", "main4cb"])
+@pytest.fixture(params=["m2c", "main4cb", "main2f06"])
 def _fixed_release(request, monkeypatch):
     for name in (
         "PRODUCT",
@@ -61,6 +63,8 @@ def native_origin(_fixed_release):
                 "conclusion": "success",
                 "runner_group_name": "GitHub Actions",
                 "labels": ["ubuntu-24.04"],
+                "head_sha": renewal.PRODUCT,
+                "name": value.get("publisher_required_job_names", {}).get(str(job), "original"),
             }
             for job in value["required_jobs"]
         ]
@@ -75,15 +79,46 @@ def native_origin(_fixed_release):
                 "expired": False,
                 "workflow_run": {"id": value["run_id"], "head_sha": renewal.PRODUCT},
             }
-            for row in value["artifacts"].values()
+            for role, row in value["artifacts"].items()
+            if _fixed_release != "main2f06" or role == "signed"
         ]
     }
-    return {
+    native = {
         "run": run,
         "jobs": jobs,
         "artifacts": artifacts,
         "tree": {"sha": renewal.PRODUCT, "tree": {"sha": value["product_tree"]}},
     }
+    if _fixed_release == "main2f06":
+        producer = value["source_producer"]
+        source_run = {**run, "id": producer["run_id"], "event": "push"}
+        native["source"] = {
+            "run": source_run,
+            "jobs": {
+                "jobs": [
+                    {
+                        **jobs["jobs"][0],
+                        "id": int(job),
+                        "name": name,
+                        "run_id": producer["run_id"],
+                    }
+                    for job, name in producer["required_jobs"].items()
+                ]
+            },
+            "artifacts": {
+                "artifacts": [
+                    {
+                        **artifacts["artifacts"][0],
+                        "id": value["artifacts"]["oci"]["id"],
+                        "name": value["artifacts"]["oci"]["name"],
+                        "size_in_bytes": value["artifacts"]["oci"]["bytes"],
+                        "digest": "sha256:" + value["artifacts"]["oci"]["sha256"],
+                        "workflow_run": {"id": producer["run_id"], "head_sha": renewal.PRODUCT},
+                    }
+                ]
+            },
+        }
+    return native
 
 
 def test_actual_fixed_origin_native_bindings(native_origin):
@@ -106,6 +141,65 @@ def test_origin_rejects_other_material_or_borrowed_success(native_origin, fault)
         native_origin["tree"]["tree"]["sha"] = POLICY
     with pytest.raises(ValueError):
         renewal.verify_origin(**native_origin)
+
+
+@pytest.mark.parametrize("_fixed_release", ["main2f06"], indirect=True)
+@pytest.mark.parametrize(
+    "fault", ["event", "source-head", "attempt", "job-head", "job-failure", "OCI-owner", "missing"]
+)
+def test_crossrun_origin_cannot_borrow_publisher_or_another_producer(native_origin, fault):
+    source = native_origin["source"]
+    if fault == "event":
+        source["run"]["event"] = "workflow_dispatch"
+    elif fault == "source-head":
+        source["run"]["head_sha"] = POLICY
+    elif fault == "attempt":
+        source["run"]["run_attempt"] = 2
+    elif fault == "job-head":
+        source["jobs"]["jobs"][0]["head_sha"] = POLICY
+    elif fault == "job-failure":
+        source["jobs"]["jobs"][0]["conclusion"] = "skipped"
+    elif fault == "OCI-owner":
+        source["artifacts"]["artifacts"][0]["workflow_run"]["id"] = renewal.origin()["run_id"]
+    else:
+        native_origin["source"] = None
+    with pytest.raises(ValueError):
+        renewal.verify_origin(**native_origin)
+
+
+@pytest.mark.parametrize("_fixed_release", ["main2f06"], indirect=True)
+@pytest.mark.parametrize("borrow_producer", [False, True])
+def test_crossrun_image_signature_binds_original_publisher_invocation(
+    _fixed_release, borrow_producer, monkeypatch, tmp_path
+):
+    value = renewal.origin()
+    original_run = value["source_producer"]["run_id"] if borrow_producer else value["run_id"]
+    claims = renewal.build_certificate_claims(
+        value["repository"], renewal.PRODUCT, value["workflow"], str(original_run), "1"
+    )
+    for role, subject in value["images"].items():
+        entries = [
+            {
+                "verificationResult": {
+                    "signature": {"certificate": claims},
+                    "statement": {
+                        "predicateType": "https://slsa.dev/provenance/v1",
+                        "subject": [{"digest": {"sha256": subject.removeprefix("sha256:")}}],
+                    },
+                }
+            }
+        ]
+        write_json(tmp_path / f"{role}-origin-signature.json", entries)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["renewal", "origin-signatures", "--root", str(tmp_path), "--release", "main2f06"],
+    )
+    if borrow_producer:
+        with pytest.raises(ValueError, match="actual original invocation"):
+            renewal.main()
+    else:
+        renewal.main()
 
 
 @pytest.fixture
@@ -286,9 +380,37 @@ def test_protected_workflow_signs_only_new_evidence_for_its_fixed_origin(_fixed_
     assert "github.ref == 'refs/heads/main'" in job["if"]
     assert "inputs.policy_revision == github.sha" in job["if"]
     commands = "\n".join(step.get("run", "") for step in job["steps"])
-    assert f"git merge-base --is-ancestor {renewal.PRODUCT} HEAD" in commands
-    assert "--source-digest " + renewal.PRODUCT in commands
-    assert "'.images[$role]' " + renewal.ORIGIN_FILE.as_posix() + ")" in commands
+    if _fixed_release == "m2c":
+        assert f"git merge-base --is-ancestor {renewal.PRODUCT} HEAD" in commands
+        assert "--source-digest " + renewal.PRODUCT in commands
+        assert "'.images[$role]' " + renewal.ORIGIN_FILE.as_posix() + ")" in commands
+    else:
+        release_input = workflow["on"]["workflow_dispatch"]["inputs"]["release"]
+        assert release_input == {
+            "description": "Registered immutable signed product",
+            "required": True,
+            "type": "choice",
+            "default": "main4cb",
+            "options": ["main4cb", "main2f06"],
+        }
+        assert workflow["env"]["RELEASE"] == "${{ inputs.release || 'main4cb' }}"
+        selector = commands[commands.index('case "$RELEASE" in') : commands.index("\nesac") + 6]
+        selected = subprocess.run(
+            ["bash", "-c", selector + '\nprintf "%s\\n%s\\n" "$product" "$origin"'],
+            env={"RELEASE": _fixed_release},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert selected.stdout.splitlines() == [renewal.PRODUCT, renewal.ORIGIN_FILE.as_posix()]
+        for invalid in ("m2c", "../unregistered"):
+            rejected = subprocess.run(
+                ["bash", "-c", selector], env={"RELEASE": invalid}, capture_output=True
+            )
+            assert rejected.returncode != 0
+        assert 'git merge-base --is-ancestor "$product" HEAD' in commands
+        assert '--source-digest "$product"' in commands
+        assert "'.images[$role]' \"$origin\")" in commands
     assert '--image "server=$RUNNER_TEMP/origin/sealed/server-1.tar"' in commands
     assert '--image "host=$RUNNER_TEMP/origin/sealed/host-1.tar"' in commands
     signing = [
@@ -303,5 +425,6 @@ def test_protected_workflow_signs_only_new_evidence_for_its_fixed_origin(_fixed_
     assert all(access == "read" for access in independent["permissions"].values())
     verification = "\n".join(step.get("run", "") for step in independent["steps"])
     assert renewal.WORKFLOW in verification
-    assert commands.count("--release main4cb") == (4 if _fixed_release == "main4cb" else 0)
-    assert verification.count("--release main4cb") == (1 if _fixed_release == "main4cb" else 0)
+    if _fixed_release != "m2c":
+        assert commands.count('--release "$RELEASE"') == 4
+        assert verification.count('--release "$RELEASE"') == 1

@@ -1,4 +1,4 @@
-name: Refresh signed Main4cb current evidence
+name: Refresh signed Main current evidence
 'on':
   pull_request:
     paths:
@@ -13,17 +13,26 @@ name: Refresh signed Main4cb current evidence
   workflow_dispatch:
     inputs:
       policy_revision:
-        description: Exact approved Main controller SHA; product remains fixed Main4cb
+        description: Exact approved Main controller SHA; selected signed product stays fixed
         required: true
         type: string
+      release:
+        description: Registered immutable signed product
+        required: true
+        type: choice
+        default: main4cb
+        options:
+        - main4cb
+        - main2f06
 permissions:
   contents: read
 concurrency:
-  group: main4cb-current-evidence
+  group: main-current-evidence
   cancel-in-progress: false
 env:
   OMNIGENT_SKIP_WEB_UI: 'true'
   HELPER: .github/actions/compat-smoke-m2c-evidence-renewal/renewal.py
+  RELEASE: ${{ inputs.release || 'main4cb' }}
 jobs:
   verify-contract:
     runs-on: ubuntu-24.04
@@ -38,9 +47,11 @@ jobs:
     - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
     - run: uv sync --frozen --group dev --extra saas
     - name: Exercise only the renewal controller contract
-      run: uv run --no-sync pytest .github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py -q --reruns 0
+      run: uv run --no-sync pytest .github/actions/compat-smoke-m2c-evidence-renewal/test_renewal.py -q --reruns
+        0
   sign-current-evidence:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.policy_revision ==
+      github.sha
     needs: verify-contract
     environment: production-image
     runs-on: ubuntu-24.04
@@ -65,11 +76,28 @@ jobs:
     - name: Authenticate exact historical signed origin
       env:
         GH_TOKEN: ${{ github.token }}
-      run: "set -euo pipefail\ntest \"$GITHUB_WORKFLOW_SHA\" = \"$GITHUB_SHA\"\ngit merge-base --is-ancestor 4cb4d5581e30e1a85faac6ddf1c23b1d60110d81 HEAD\nuv run --no-sync python \"$HELPER\" origin --release main4cb --root \"$RUNNER_TEMP/origin\"\nmkdir -p evidence\nfor role in server host; do\n  image=$(jq -er --arg role \"$role\" '.images[$role]' .github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json)\n  gh attestation verify \"oci://ghcr.io/dream1216/omnigent-saas-${role}@${image}\" \\\n    --repo \"$GITHUB_REPOSITORY\" \\\n    --signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/saas-image-candidate.yml\" \\\n    --source-ref refs/heads/main --source-digest 4cb4d5581e30e1a85faac6ddf1c23b1d60110d81 \\\n    --deny-self-hosted-runners --format json > \"evidence/${role}-origin-signature.json\"\ndone\nuv run --no-sync python \"$HELPER\" origin-signatures --release main4cb --root evidence"
+      run: "set -euo pipefail\ntest \"$GITHUB_WORKFLOW_SHA\" = \"$GITHUB_SHA\"\ncase \"$RELEASE\" in\n  main4cb)\n\
+        \    product=4cb4d5581e30e1a85faac6ddf1c23b1d60110d81\n    origin=.github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json\n\
+        \    ;;\n  main2f06)\n    product=2f06f228540be7f5ef3df50fb77c542877b208c4\n    origin=.github/actions/compat-smoke-m2c-evidence-renewal/main2f06-origin.json\n\
+        \    ;;\n  *) echo \"Unsupported fixed release\" >&2; exit 1 ;;\nesac\ngit merge-base --is-ancestor \"$product\"\
+        \ HEAD\nuv run --no-sync python \"$HELPER\" origin --release \"$RELEASE\" --root \"$RUNNER_TEMP/origin\"\
+        \nmkdir -p evidence\nfor role in server host; do\n  image=$(jq -er --arg role \"$role\" '.images[$role]'\
+        \ \"$origin\")\n  gh attestation verify \"oci://ghcr.io/dream1216/omnigent-saas-${role}@${image}\" \\\n\
+        \    --repo \"$GITHUB_REPOSITORY\" \\\n    --signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/saas-image-candidate.yml\"\
+        \ \\\n    --source-ref refs/heads/main --source-digest \"$product\" \\\n    --deny-self-hosted-runners --format\
+        \ json > \"evidence/${role}-origin-signature.json\"\ndone\nuv run --no-sync python \"$HELPER\" origin-signatures\
+        \ --release \"$RELEASE\" --root evidence"
     - name: Scan same sealed archives once under normal official policy
       env:
         GH_TOKEN: ${{ github.token }}
-      run: "set -euo pipefail\nstarted=$(date -u +%Y-%m-%dT%H:%M:%SZ)\nuv run --no-sync python -m saas.scripts.scan_oci_candidates \\\n  --image \"server=$RUNNER_TEMP/origin/sealed/server-1.tar\" \\\n  --image \"host=$RUNNER_TEMP/origin/sealed/host-1.tar\" --output evidence/grype\ncp \"$RUNNER_TEMP/origin/sealed/oci-promotion-manifest.json\" evidence/\ncp \"$RUNNER_TEMP/origin/native-origin.json\" evidence/\nuv run --no-sync python \"$HELPER\" qualify --release main4cb \\\n  --root \"$RUNNER_TEMP/origin/sealed\" --scans evidence \\\n  --policy \"$GITHUB_SHA\" --run \"$GITHUB_RUN_ID\" --attempt \"$GITHUB_RUN_ATTEMPT\" \\\n  --started \"$started\" > evidence/current-scan-evidence.json\nuv run --no-sync python \"$HELPER\" predicate --release main4cb --root evidence \\\n  --policy \"$GITHUB_SHA\" --run \"$GITHUB_RUN_ID\" --attempt \"$GITHUB_RUN_ATTEMPT\" \\\n  > evidence/current-evidence-provenance.json"
+      run: "set -euo pipefail\nstarted=$(date -u +%Y-%m-%dT%H:%M:%SZ)\nuv run --no-sync python -m saas.scripts.scan_oci_candidates\
+        \ \\\n  --image \"server=$RUNNER_TEMP/origin/sealed/server-1.tar\" \\\n  --image \"host=$RUNNER_TEMP/origin/sealed/host-1.tar\"\
+        \ --output evidence/grype\ncp \"$RUNNER_TEMP/origin/sealed/oci-promotion-manifest.json\" evidence/\ncp \"\
+        $RUNNER_TEMP/origin/native-origin.json\" evidence/\nuv run --no-sync python \"$HELPER\" qualify --release\
+        \ \"$RELEASE\" \\\n  --root \"$RUNNER_TEMP/origin/sealed\" --scans evidence \\\n  --policy \"$GITHUB_SHA\"\
+        \ --run \"$GITHUB_RUN_ID\" --attempt \"$GITHUB_RUN_ATTEMPT\" \\\n  --started \"$started\" > evidence/current-scan-evidence.json\n\
+        uv run --no-sync python \"$HELPER\" predicate --release \"$RELEASE\" --root evidence \\\n  --policy \"$GITHUB_SHA\"\
+        \ --run \"$GITHUB_RUN_ID\" --attempt \"$GITHUB_RUN_ATTEMPT\" \\\n  > evidence/current-evidence-provenance.json"
     - name: Sign only new current evidence subject
       uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4
       with:
@@ -85,7 +113,8 @@ jobs:
         if-no-files-found: error
         retention-days: 90
   independent-current-readback:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.policy_revision == github.sha
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.policy_revision ==
+      github.sha
     needs: sign-current-evidence
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -109,7 +138,12 @@ jobs:
     - name: Independently read back signature, raw reports and current clock
       env:
         GH_TOKEN: ${{ github.token }}
-      run: "set -euo pipefail\ngh attestation verify evidence/current-scan-evidence.json --repo \"$GITHUB_REPOSITORY\" \\\n  --signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/saas-m-current-evidence-renewal.yml\" \\\n  --source-ref refs/heads/main --source-digest \"$GITHUB_SHA\" \\\n  --deny-self-hosted-runners --format json > evidence/current-signature.json\nuv run --no-sync python \"$HELPER\" verify --release main4cb --root evidence \\\n  --policy \"$GITHUB_SHA\" --run \"$GITHUB_RUN_ID\" --attempt \"$GITHUB_RUN_ATTEMPT\" \\\n  > evidence/independent-current-readback.json"
+      run: "set -euo pipefail\ngh attestation verify evidence/current-scan-evidence.json --repo \"$GITHUB_REPOSITORY\"\
+        \ \\\n  --signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/saas-m-current-evidence-renewal.yml\" \\\
+        \n  --source-ref refs/heads/main --source-digest \"$GITHUB_SHA\" \\\n  --deny-self-hosted-runners --format\
+        \ json > evidence/current-signature.json\nuv run --no-sync python \"$HELPER\" verify --release \"$RELEASE\"\
+        \ --root evidence \\\n  --policy \"$GITHUB_SHA\" --run \"$GITHUB_RUN_ID\" --attempt \"$GITHUB_RUN_ATTEMPT\"\
+        \ \\\n  > evidence/independent-current-readback.json"
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: m-independent-current-readback-${{ github.run_id }}-${{ github.run_attempt }}
