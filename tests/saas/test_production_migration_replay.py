@@ -615,6 +615,74 @@ def _startup_config(
     return config, {service: sa.create_engine(url) for service, url in urls.items()}
 
 
+@pytest.mark.parametrize("production_replay", ["admin", "projection"], indirect=True)
+def test_retained_bootstrap_preview_upgrade_and_projection(
+    production_replay: migration.ProductionPostgreSqlPlan,
+    tmp_path: Path,
+) -> None:
+    plan = production_replay
+    migration.run_production_postgresql_migration(plan)
+    official = sa.create_engine(plan.official_owner.url)
+    admin = sa.create_engine(
+        sa.make_url(os.environ["OMNIGENT_SAAS_PRODUCTION_REPLAY_POSTGRES_URL"]).set(
+            database="admission_replay", query=plan.saas_owner.url.query
+        )
+    )
+    try:
+        config = migration._migration_config("official")
+        with official.connect() as connection:
+            config.attributes["connection"] = connection
+            command.downgrade(config, "d0a1f879a01d")
+        with admin.begin() as connection:
+            connection.exec_driver_sql(
+                (Path(__file__).parent / "fixtures/production_preview_authority.sql").read_text()
+            )
+        upgraded = migration.run_production_postgresql_migration(plan)
+        assert upgraded.official_head == migration._expected_head("official")
+        assert upgraded.saas_head == "p0s000000018"
+        assert (
+            migration.run_production_postgresql_migration(plan, verify_only=True).catalog_sha256
+            == upgraded.catalog_sha256
+        )
+        projected = migration.run_production_postgresql_migration(
+            replace(plan, install_preview_authority=True)
+        )
+        assert projected.catalog_sha256 != upgraded.catalog_sha256
+        assert not any("alembic:applied" in phase for phase in projected.phases)
+        assert (
+            migration.run_production_postgresql_migration(plan, verify_only=True).catalog_sha256
+            == projected.catalog_sha256
+        )
+        with admin.connect() as connection:
+            assert (
+                len(
+                    migration._verify_preview_owner_lease_definers(
+                        connection, bootstrap_name="postgres"
+                    )
+                )
+                == 2
+            )
+        _verify_native_preview_owner(plan, admin, tmp_path)
+        with admin.begin() as connection:
+            connection.exec_driver_sql("CREATE TABLE public.replay_unreviewed_object (id integer)")
+        with pytest.raises(migration.PostgreSqlMigrationError) as extra:
+            migration.run_production_postgresql_migration(plan, verify_only=True)
+        assert extra.value.code == "public_schema_inventory_drifted"
+        with admin.begin() as connection:
+            connection.exec_driver_sql("DROP TABLE public.replay_unreviewed_object")
+            connection.exec_driver_sql(
+                "GRANT EXECUTE ON FUNCTION "
+                "public.saas_preview_owner_heartbeat_gateway_v1(text,text) "
+                "TO PUBLIC"
+            )
+        with pytest.raises(migration.PostgreSqlMigrationError) as grant:
+            migration.run_production_postgresql_migration(plan, verify_only=True)
+        assert grant.value.code == "saas_object_ownership_drifted"
+    finally:
+        official.dispose()
+        admin.dispose()
+
+
 def _verify_preview_deployment_and_startup(
     plan: migration.ProductionPostgreSqlPlan,
     clean_receipt: migration.PostgreSqlMigrationReceipt,
