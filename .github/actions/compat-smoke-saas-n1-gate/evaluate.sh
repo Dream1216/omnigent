@@ -71,6 +71,19 @@ is_reviewed_preview_authority_input() {
     [[ "$1" == "tests/saas/test_n1_merge_gate.py" && "$2" == "$POSTGRESQL_N1_PREVIEW_PREVIOUS_MERGE_TEST_SHA256" ]]
 }
 
+# Exact inherited input bytes independently reviewed for fixed 0.24 Main8bd.
+# This helper does not approve candidate-owned policy or arbitrary upgrade inputs.
+is_reviewed_upgrade024_input() {
+  case "$1|$2" in
+    "pyproject.toml|b1d822ce85550f2e6d8a65ee1dd7405492a63d78704019a48c24db6dfb705d0a") return 0 ;;
+    "uv.lock|f63bd23c4d8efd4ec1b66a895ea274c1670e074c7e93348e8b2576a4f50a56b8") return 0 ;;
+    "tests/conftest.py|388f743f923d409fe222e20d79b2dc61fb79fdd3d6ba40d8f68deb7708487f15") return 0 ;;
+    "tests/saas/test_image_supply_chain.py|fd7e8d62aa5736759225fa9a99ee932cee7fff35065380b56455bbf83b5f15ff") return 0 ;;
+    "tests/saas/test_n1_merge_gate_candidate.py|283cfeeae621fa2caa429df6801d2b4ca163c0b43fbfc059dd24b2342503d086") return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 POSTGRESQL_N1_PATHS=(
   ".github/actions/compat-smoke-saas-n1-gate/**"
   ".github/workflows/saas-n1-merge-gate.yml"
@@ -229,7 +242,8 @@ for trusted_input in "${POSTGRESQL_N1_TRUSTED_INPUTS[@]}" "${POSTGRESQL_N1_ACTIO
     | shasum -a 256 | awk '{print $1}')
   if [[ ",$trusted_sha256s," != *",$observed_sha256,"* ]] && \
     ! is_reviewed_aliyun_input "$trusted_path" "$observed_sha256" && \
-    ! is_reviewed_preview_authority_input "$trusted_path" "$observed_sha256"; then
+    ! is_reviewed_preview_authority_input "$trusted_path" "$observed_sha256" && \
+    ! is_reviewed_upgrade024_input "$trusted_path" "$observed_sha256"; then
     fail "PostgreSQL N-1 trusted input drift: $trusted_path"
   fi
 done
