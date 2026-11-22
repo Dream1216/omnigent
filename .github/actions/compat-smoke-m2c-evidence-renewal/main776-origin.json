@@ -1,0 +1,110 @@
+{
+  "artifacts": {
+    "oci": {
+      "bytes": 5444647798,
+      "id": 14739637344,
+      "name": "saas-oci-promotion-77658a81cb2a35e52ab8f390cde3257a1fc2f246",
+      "sha256": "f5797ce5b3a34b529a78d5ce36e825372bea401e09d333d8d3ef9e4450ad06f2"
+    },
+    "signed": {
+      "bytes": 4016547,
+      "id": 14740927651,
+      "name": "signed-release-candidate-77658a81cb2a35e52ab8f390cde3257a1fc2f246",
+      "sha256": "a5025859121c2531be0d5e0329b686a3cae7643ca139dce500aa6483a0f9aed1"
+    }
+  },
+  "attempt": 1,
+  "images": {
+    "host": "sha256:7365edf003b6caab0a7ff8a9d1ca3f52070ee6bcaa4264f964d0929c12245568",
+    "server": "sha256:641f993226b51b4a329ef5cfac052078e3f544ccb4124336884988216d0c3800"
+  },
+  "manifest_sha256": "af67c46a23e4766afa832432a5d50bf03e09d73b3c0bf1de67cab3da2979cda4",
+  "original_environment_review": {
+    "POST_transport": {
+      "bytes": 4314,
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-upgrade-024-20261120/qualification-024-worker-health-main776-20261122/P1.NORMAL-ENV-REVIEW.TRANSPORT.ACTUAL.PUBLIC.json",
+      "sha256": "775c6f6e11754f78d4642e168d3f140edd2ffc5c5778532d9ea040c9a4bb2b9f"
+    },
+    "actual_native_review_history": {
+      "bytes": 1784,
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-upgrade-024-20261120/qualification-024-worker-health-main776-20261122/P1.NORMAL-ENV-REVIEW.HISTORY.ORIGINAL.PUBLIC.json",
+      "sha256": "8d08c655159a8ead99111e5beff59d822cce1fa06eb19d937983df2161005fdb"
+    },
+    "approval_POST_count": 1,
+    "at_UTC": "2026-11-22T05:30:37.518143+00:00",
+    "environment": "production-image",
+    "no_rules_bypassed": true,
+    "normal_API_review": true,
+    "original_input": {
+      "bytes": 487,
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-upgrade-024-20261120/qualification-024-worker-health-main776-20261122/P1.NORMAL-ENV-REVIEW.INPUT.PUBLIC.json",
+      "sha256": "0467eeaf611a494d926bd579f7e888d41105d4d342e53c8d5109d16bb3d0dc94"
+    },
+    "original_intent": {
+      "bytes": 379,
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-upgrade-024-20261120/qualification-024-worker-health-main776-20261122/P1.NORMAL-ENV-REVIEW.INTENT.PUBLIC.json",
+      "sha256": "a84836582222719500cec771b02e040e69d58d5b78d1668e3ff5cc45886cb33d"
+    },
+    "product_revision": "77658a81cb2a35e52ab8f390cde3257a1fc2f246",
+    "protection_or_reviewer_configuration_changed": false,
+    "reviewer": "Dream1216",
+    "run": 44986918796,
+    "state": "PASS_NORMAL_PROTECTED_ENVIRONMENT_REVIEW_ACTUAL_NATIVE_HISTORY"
+  },
+  "original_main_ci": {
+    "expires_at": "2026-11-23T01:46:06+00:00",
+    "manual_CI_retry": 0,
+    "product_revision": "77658a81cb2a35e52ab8f390cde3257a1fc2f246",
+    "product_tree": "475a21bb1418e4b90874398a1a7e60baf8fb77cb",
+    "qualification_sha256": "e01a9940199ab22535cc1e78e3ddd16c6590cd0e886a32a0db591f6cbca7d7fc",
+    "required_workflow_count": 6
+  },
+  "platforms": {
+    "host-amd64": {
+      "config_digest": "sha256:74b055e89896d9e96a364333e4892379cb603adb39633308960146b892eec030",
+      "manifest_digest": "sha256:3bcc0908dfd1a6c1ef8949a28a0e673893a1dd427392e65d593271ce64865a52"
+    },
+    "host-arm64": {
+      "config_digest": "sha256:b88c4ca1497957a2afcdbfceeb031fb05895c2ada00896061159db30a4b49744",
+      "manifest_digest": "sha256:bad9a094984d1ca073c84c6b280f4a301eed04ad574ecf6f0a23d0a47085e2c2"
+    },
+    "server-amd64": {
+      "config_digest": "sha256:8602f854180b1707c369829f9ec44d5b88d0ea3a0f7fa86d7a38333248fdbe78",
+      "manifest_digest": "sha256:1c6d0c246188d6fe99058d4e3d38a419a0a3457909ac37459bf0d8a643d682e2"
+    },
+    "server-arm64": {
+      "config_digest": "sha256:2fdb7db0124f0699421655d636028251656d896893a4b8ce177305e5009b6b26",
+      "manifest_digest": "sha256:56e0ff4211466deeaef69aca17dc4dc71de9657dbc90f79007ddc782f5c0a29b"
+    }
+  },
+  "product_revision": "77658a81cb2a35e52ab8f390cde3257a1fc2f246",
+  "product_tree": "475a21bb1418e4b90874398a1a7e60baf8fb77cb",
+  "publisher_required_job_names": {
+    "137099482368": "publish-signed",
+    "137106319985": "verify-published-source"
+  },
+  "rebuilt": false,
+  "repository": "Dream1216/omnigent",
+  "required_jobs": [
+    137099482368,
+    137106319985
+  ],
+  "run_id": 44986918796,
+  "schema_version": 1,
+  "source_date_epoch": 1795313950,
+  "source_producer": {
+    "attempt": 1,
+    "event": "push",
+    "qualification_sha256": "d24e596693e5a150f5f579bb71022e11f9e89d0ee69fbfba56f5af4e583f9ffd",
+    "required_jobs": {
+      "137064455575": "source-context",
+      "137064587826": "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...",
+      "137064587841": "verify-candidate-preflight",
+      "137064588014": "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...",
+      "137066394862": "build-candidate"
+    },
+    "run_id": 44975527391
+  },
+  "source_qualification_sha256": "2d86e1609a1a452afc65995e0b38fae49980a632102b4b070f4f569b5ed9371d",
+  "workflow": ".github/workflows/saas-image-candidate.yml"
+}
