@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from uuid import UUID
@@ -251,3 +253,32 @@ def test_health_cli_uses_only_probe_policy_and_returns_content_blind_failure(
     path.chmod(0o644)
     assert main(["--mode", "readiness"], environ=environ, now_unix_ns=_START + 2) == 1
     assert capsys.readouterr().err == "production worker health probe failed\n"
+
+
+def test_health_cli_fresh_process_does_not_import_worker_runtime(tmp_path: Path) -> None:
+    path = tmp_path / "worker-health.json"
+    ProductionWorkerHealthStateWriter(path).write(
+        ProductionWorkerHealthState(
+            startup_unix_ns=_START,
+            last_loop_progress_unix_ns=_START + 1,
+            last_full_successful_cycle_unix_ns=_START + 1,
+            consecutive_failures=0,
+            failure_codes=(),
+        )
+    )
+    script = """
+import sys
+from saas.scripts.check_worker_health import main
+assert main(['--mode', 'readiness'], now_unix_ns=1_800_000_000_000_000_002) == 0
+for name in ('saas.production.worker', 'saas.production.server', 'sqlalchemy',
+             'fastapi', 'omnigent.db.db_models'):
+    assert name not in sys.modules, name
+"""
+    subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[2],
+        env={**os.environ, "OMNIGENT_SAAS_WORKER_HEALTH_STATE_FILE": str(path)},
+        check=True,
+        capture_output=True,
+        timeout=5,
+    )

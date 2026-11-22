@@ -6,7 +6,7 @@ import argparse
 import sys
 from collections.abc import Mapping, Sequence
 
-from saas.production.worker import (
+from saas.production.worker_health import (
     ProductionWorkerConfigError,
     ProductionWorkerHealthError,
     assert_production_worker_health,
