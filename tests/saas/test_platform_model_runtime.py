@@ -82,7 +82,8 @@ def test_managed_sandbox_stages_projected_model_key_owner_only(tmp_path: Path) -
     assert environment["OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_TTL_SECONDS"] == "28800"
 
 
-def test_fixed_host_defaults_to_eight_hours(tmp_path, monkeypatch):
+@pytest.mark.parametrize("server_still_ours", [None, lambda: False])
+def test_fixed_host_defaults_to_eight_hours(tmp_path, monkeypatch, server_still_ours):
     key = tmp_path / "signing-key"
     key.write_bytes(b"s" * 32)
     key.chmod(0o400)
@@ -94,8 +95,9 @@ def test_fixed_host_defaults_to_eight_hours(tmp_path, monkeypatch):
         host = host_factory(
             HostIdentity(host_id="0123456789abcdef0123456789abcdef", name="ttl-test"),
             server_url,
+            server_still_ours=server_still_ours,
         )
-        captured.append(host._platform_model_token_ttl)
+        captured.append(host)
 
     monkeypatch.setattr(platform_model_host, "activate_managed_host_environment", lambda: None)
     monkeypatch.setattr(platform_model_host, "run_host_process", run_host)
@@ -106,7 +108,9 @@ def test_fixed_host_defaults_to_eight_hours(tmp_path, monkeypatch):
             "OMNIGENT_SAAS_PLATFORM_MODEL_TOKEN_KEY_FILE": str(key),
         }
     )
-    assert captured == [28800]
+    assert len(captured) == 1
+    assert captured[0]._platform_model_token_ttl == 28800
+    assert captured[0]._server_still_ours is server_still_ours
 
 
 def test_projection_contains_no_secret_and_pi_defers_to_proxy_environment(

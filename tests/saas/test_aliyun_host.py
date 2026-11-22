@@ -98,13 +98,18 @@ def test_cloud_factory_keeps_managed_policy_and_model_authority(launch_files, mo
     activate = Mock()
     monkeypatch.setattr(platform_model_host, "activate_managed_host_environment", activate)
     captured = []
+    server_still_ours = Mock(return_value=False)
 
     def run_host(server_url, *, host_factory):
         from omnigent.host.identity import HostIdentity
 
         activate.assert_called_once_with()
         captured.append(
-            host_factory(HostIdentity(host_id=c.env[HOST_ID_ENV_VAR], name="test"), server_url)
+            host_factory(
+                HostIdentity(host_id=c.env[HOST_ID_ENV_VAR], name="test"),
+                server_url,
+                server_still_ours=server_still_ours,
+            )
         )
 
     monkeypatch.setattr(platform_model_host, "run_host_process", run_host)
@@ -114,6 +119,8 @@ def test_cloud_factory_keeps_managed_policy_and_model_authority(launch_files, mo
     assert isinstance(host, aliyun_host.AliyunHostProcess)
     assert host._platform_model_token_ttl == 300
     assert isinstance(host._platform_model_tokens, AliyunHostModelTokenIssuer)
+    assert host._server_still_ours is server_still_ours
+    server_still_ours.assert_not_called()
 
 
 @pytest.mark.parametrize("name", aliyun_host._SERVER_ONLY_ENV)

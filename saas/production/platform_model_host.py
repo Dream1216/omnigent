@@ -7,7 +7,7 @@ import json
 import os
 import stat
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from uuid import UUID
 
@@ -54,6 +54,7 @@ class PlatformModelHostProcess(HostProcess):
         *,
         lifecycle_lock: DaemonLifecycleLock | None = None,
         interactive_shells: list[str] | None = None,
+        server_still_ours: Callable[[], bool] | None = None,
         token_authority: PlatformModelTokenIssuer,
         token_ttl_seconds: int,
         gateway_base_url: str = PLATFORM_MODEL_GATEWAY_BASE_URL,
@@ -63,6 +64,7 @@ class PlatformModelHostProcess(HostProcess):
             server_url,
             lifecycle_lock=lifecycle_lock,
             interactive_shells=interactive_shells,
+            server_still_ours=server_still_ours,
         )
         self._platform_model_tokens = token_authority
         self._platform_model_token_ttl = token_ttl_seconds
@@ -201,12 +203,14 @@ def run_host_with_model_issuer(
         *,
         lifecycle_lock: DaemonLifecycleLock | None = None,
         interactive_shells: list[str] | None = None,
+        server_still_ours: Callable[[], bool] | None = None,
     ) -> PlatformModelHostProcess:
         return host_process_type(
             identity,
             resolved_server_url,
             lifecycle_lock=lifecycle_lock,
             interactive_shells=interactive_shells,
+            server_still_ours=server_still_ours,
             token_authority=authority,
             token_ttl_seconds=token_ttl,
             gateway_base_url=gateway_base_url,
