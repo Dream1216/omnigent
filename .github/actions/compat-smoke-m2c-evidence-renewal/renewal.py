@@ -79,6 +79,19 @@ _FIXED_RELEASES = {
         ".github/workflows/saas-m-current-evidence-renewal.yml",
         "same_signed_Main2f06_current_scan_evidence",
     ),
+    "main776": FixedRelease(
+        "77658a81cb2a35e52ab8f390cde3257a1fc2f246",
+        "475a21bb1418e4b90874398a1a7e60baf8fb77cb",
+        44986918796,
+        ORIGIN_FILE.with_name("main776-origin.json"),
+        ".github/workflows/saas-m-current-evidence-renewal.yml",
+        "same_signed_Main776_current_scan_evidence",
+    ),
+}
+
+_CROSS_RUN_ORIGIN_SHA256 = {
+    44858828179: "9d282a079cfff8fc158d9f98ebda39d1a49212b3972b6abd2e90ce4586997296",
+    44986918796: "6f8086f5bf99e68c0e4e38524a8dea70de0823d07f767df59652e4338ba2e1b9",
 }
 
 
@@ -99,10 +112,10 @@ def origin() -> dict:
     value = read_json(ORIGIN_FILE)
     extra = (
         {"source_qualification_sha256", "original_main_ci", "original_environment_review"}
-        if _FIXED_RUN in (43755049480, 44858828179)
+        if _FIXED_RUN == 43755049480 or _FIXED_RUN in _CROSS_RUN_ORIGIN_SHA256
         else set()
     )
-    if _FIXED_RUN == 44858828179:
+    if _FIXED_RUN in _CROSS_RUN_ORIGIN_SHA256:
         extra |= {"source_producer", "publisher_required_job_names"}
     require(
         set(value) == _ORIGIN_FIELDS | extra
@@ -133,12 +146,12 @@ def origin() -> dict:
             and value["original_environment_review"]["no_rules_bypassed"] is True,
             "original Source qualification, Main CI or normal environment differs",
         )
-    if _FIXED_RUN == 44858828179:
+    if _FIXED_RUN in _CROSS_RUN_ORIGIN_SHA256:
         require(
             hashlib.sha256(
                 json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
-            == "9d282a079cfff8fc158d9f98ebda39d1a49212b3972b6abd2e90ce4586997296",
+            == _CROSS_RUN_ORIGIN_SHA256[_FIXED_RUN],
             "fixed cross-run origin, Main CI or normal environment differs",
         )
     return value
@@ -180,13 +193,13 @@ def verify_origin(
             and "ubuntu-24.04" in job["labels"],
             "original required hosted job differs",
         )
-        if _FIXED_RUN == 44858828179:
+        if _FIXED_RUN in _CROSS_RUN_ORIGIN_SHA256:
             require(
                 job.get("head_sha") == PRODUCT
                 and job["name"] == value["publisher_required_job_names"][str(job_id)],
                 "original protected publisher job identity differs",
             )
-    if _FIXED_RUN == 44858828179:
+    if _FIXED_RUN in _CROSS_RUN_ORIGIN_SHA256:
         require(isinstance(source, dict), "original push producer evidence is required")
         producer = value["source_producer"]
         original = source["run"]
@@ -220,7 +233,7 @@ def verify_origin(
     for role, expected in value["artifacts"].items():
         artifact_run = value["run_id"]
         selected = actual
-        if _FIXED_RUN == 44858828179 and role == "oci":
+        if _FIXED_RUN in _CROSS_RUN_ORIGIN_SHA256 and role == "oci":
             artifact_run = value["source_producer"]["run_id"]
             selected = {item["id"]: item for item in source["artifacts"]["artifacts"]}
         item = selected[expected["id"]]
@@ -246,7 +259,7 @@ def download_origin(destination: Path) -> None:
         "tree": api(f"{prefix}/git/commits/{PRODUCT}"),
         "artifacts": api(f"{prefix}/actions/runs/{value['run_id']}/artifacts?per_page=100"),
     }
-    if _FIXED_RUN == 44858828179:
+    if _FIXED_RUN in _CROSS_RUN_ORIGIN_SHA256:
         producer = value["source_producer"]
         source_run = f"{prefix}/actions/runs/{producer['run_id']}"
         native["source"] = {
