@@ -87,9 +87,18 @@ _FIXED_RELEASES = {
         ".github/workflows/saas-m-current-evidence-renewal.yml",
         "same_signed_Main776_current_scan_evidence",
     ),
+    "mainfc12": FixedRelease(
+        "fc12c06bd4b17267ea7ce2db002189b69e15f4f7",
+        "aebcec6aadf322ef1f36af53ead2b81d8343a69d",
+        45084871705,
+        ORIGIN_FILE.with_name("mainfc12-origin.json"),
+        ".github/workflows/saas-m-current-evidence-renewal.yml",
+        "same_signed_Mainfc12_current_scan_evidence",
+    ),
 }
 
 _CROSS_RUN_ORIGIN_SHA256 = {
+    45084871705: "344b3d6ef4ca5020f58d0a019bb3edf41c5372124a4ea194f9d35cad2b08159c",
     44858828179: "9d282a079cfff8fc158d9f98ebda39d1a49212b3972b6abd2e90ce4586997296",
     44986918796: "6f8086f5bf99e68c0e4e38524a8dea70de0823d07f767df59652e4338ba2e1b9",
 }

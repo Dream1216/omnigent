@@ -1,0 +1,95 @@
+{
+  "artifacts": {
+    "oci": {
+      "bytes": 5444655537,
+      "id": 14779005319,
+      "name": "saas-oci-promotion-fc12c06bd4b17267ea7ce2db002189b69e15f4f7",
+      "sha256": "b1c3a48d93a8d4a6fc65d93b270d522e2d869c89fc5b75e9f0d515800041a28f"
+    },
+    "signed": {
+      "bytes": 4017593,
+      "id": 14779722126,
+      "name": "signed-release-candidate-fc12c06bd4b17267ea7ce2db002189b69e15f4f7",
+      "sha256": "ba44e62b4b3ec46c870512129fea6c2ee472c69d1a4b53bf58916d72c67ab707"
+    }
+  },
+  "attempt": 1,
+  "images": {
+    "host": "sha256:8093e6983d51828af8f4b8ca0ae68269fca78277bbfebe087cc8f565d19923e6",
+    "server": "sha256:69e37292e0f0a450caf9be5a033843cb6989701bcffdb9fea2c5d1f2a25a1fe1"
+  },
+  "manifest_sha256": "537203de8a1b5bae493be7487528b85473cfaa6bb2cb43c2b0b472264001171d",
+  "original_environment_review": {
+    "approval_POST_count": 1,
+    "decision": "PASS_NORMAL_REQUIRED_ENVIRONMENT_REVIEW_ORIGINAL_HISTORY_READBACK",
+    "environment": "production-image",
+    "environment_id": 19541282195,
+    "history": {
+      "bytes": 1857,
+      "path": "/Users/dream/BuildArtifacts/omniagent-cross-session-coordination-20261026/critical-path-20261027/ops-convergence-20261108/Source-upgrade-024-20261120/qualification-024-host-callback-pr306-20261123/P1.NORMAL-ENV-REVIEW.HISTORY.ORIGINAL.PUBLIC.json",
+      "sha256": "42ac3ca434603f196f8d10d1261261602d4112669f98e174aab5da8450848b3e"
+    },
+    "no_rules_bypassed": true,
+    "product_revision": "fc12c06bd4b17267ea7ce2db002189b69e15f4f7",
+    "readback_at_UTC": "2026-11-22T23:46:59.500386+00:00",
+    "reviewer": "Dream1216",
+    "run": 45084871705,
+    "signature_or_independent_OCI_readback_PASS": false
+  },
+  "original_main_ci": {
+    "expires_at": "2026-11-23T20:03:58+00:00",
+    "manual_CI_retry": 0,
+    "product_revision": "fc12c06bd4b17267ea7ce2db002189b69e15f4f7",
+    "product_tree": "aebcec6aadf322ef1f36af53ead2b81d8343a69d",
+    "qualification_sha256": "76aab838d732b7ebc0f5c7e54a69f31b65cb36343cffde97cbdfc9740aab9609",
+    "required_workflow_count": 6
+  },
+  "platforms": {
+    "host-amd64": {
+      "config_digest": "sha256:6f94dabe52426598bc1d74d460e2a25c9b90c879a42211f8709d146f2d57d00c",
+      "manifest_digest": "sha256:61d5491965d81157d3af0169980a861be926f0b0e82f6320f94a8b9ddf463378"
+    },
+    "host-arm64": {
+      "config_digest": "sha256:a51bf79f9811871ea6a655582599c4fe8a151a01e5ee32c36fd1f1e65bd07490",
+      "manifest_digest": "sha256:2d790962ca85681d076e7c8d14eead13339dca0cafc54c9215d034bbf3b4275d"
+    },
+    "server-amd64": {
+      "config_digest": "sha256:9ec0c187d14acd1b70d334624517bb7409375e29778219477cbc17de5eef9f1a",
+      "manifest_digest": "sha256:c3681800ce2f7de686f1a3bebdabc014965f8e51e42f033ef8bce0b1031ae34a"
+    },
+    "server-arm64": {
+      "config_digest": "sha256:08ad97f8f1086834ae0e38c81e62abad4c63f63946e9e79dea2f03061eaba60a",
+      "manifest_digest": "sha256:965b305f9cd44986c182b90f1172008f452efc74e406845f398e3fa9ce08dc3f"
+    }
+  },
+  "product_revision": "fc12c06bd4b17267ea7ce2db002189b69e15f4f7",
+  "product_tree": "aebcec6aadf322ef1f36af53ead2b81d8343a69d",
+  "publisher_required_job_names": {
+    "137401216624": "publish-signed",
+    "137410149795": "verify-published-source"
+  },
+  "rebuilt": false,
+  "repository": "Dream1216/omnigent",
+  "required_jobs": [
+    137401216624,
+    137410149795
+  ],
+  "run_id": 45084871705,
+  "schema_version": 1,
+  "source_date_epoch": 1795380417,
+  "source_producer": {
+    "attempt": 1,
+    "event": "push",
+    "qualification_sha256": "cf7863c4339f5dc04cf92ac01a8b08ac75095ea63df9aed5ed2b5ab23100479a",
+    "required_jobs": {
+      "137349552162": "source-context",
+      "137349675105": "verify-production-migration-replay (postgres:18.6-trixie@sha256:4ef4dbc939d61acea57712655ddb4b4ab...",
+      "137349675177": "verify-candidate-preflight",
+      "137349675472": "verify-production-migration-replay (postgres:16.14-bookworm@sha256:64154d0babcb1741988719e703419a...",
+      "137351648375": "build-candidate"
+    },
+    "run_id": 45068375334
+  },
+  "source_qualification_sha256": "dab142aff4a9194f94bd5c0a80852aba9a551dfb3248853a222b87b6ea422952",
+  "workflow": ".github/workflows/saas-image-candidate.yml"
+}

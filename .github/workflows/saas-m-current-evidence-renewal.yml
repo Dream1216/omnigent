@@ -25,6 +25,7 @@ name: Refresh signed Main current evidence
         - main4cb
         - main2f06
         - main776
+        - mainfc12
 permissions:
   contents: read
 concurrency:
@@ -81,6 +82,7 @@ jobs:
         \    product=4cb4d5581e30e1a85faac6ddf1c23b1d60110d81\n    origin=.github/actions/compat-smoke-m2c-evidence-renewal/main4cb-origin.json\n\
         \    ;;\n  main2f06)\n    product=2f06f228540be7f5ef3df50fb77c542877b208c4\n    origin=.github/actions/compat-smoke-m2c-evidence-renewal/main2f06-origin.json\n\
         \    ;;\n  main776)\n    product=77658a81cb2a35e52ab8f390cde3257a1fc2f246\n    origin=.github/actions/compat-smoke-m2c-evidence-renewal/main776-origin.json\n\
+        \    ;;\n  mainfc12)\n    product=fc12c06bd4b17267ea7ce2db002189b69e15f4f7\n    origin=.github/actions/compat-smoke-m2c-evidence-renewal/mainfc12-origin.json\n\
         \    ;;\n  *) echo \"Unsupported fixed release\" >&2; exit 1 ;;\nesac\ngit merge-base --is-ancestor\
         \ \"$product\" HEAD\nuv run --no-sync python \"$HELPER\" origin --release \"$RELEASE\" --root \"$RUNNER_TEMP/origin\"\
         \nmkdir -p evidence\nfor role in server host; do\n  image=$(jq -er --arg role \"$role\" '.images[$role]'\
