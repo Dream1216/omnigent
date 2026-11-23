@@ -24,7 +24,7 @@ spec.loader.exec_module(renewal)
 POLICY = "b" * 40
 
 
-@pytest.fixture(params=["m2c", "main4cb", "main2f06", "main776"])
+@pytest.fixture(params=["m2c", "main4cb", "main2f06", "main776", "mainfc12"])
 def _fixed_release(request, monkeypatch):
     for name in (
         "PRODUCT",
@@ -80,7 +80,7 @@ def native_origin(_fixed_release):
                 "workflow_run": {"id": value["run_id"], "head_sha": renewal.PRODUCT},
             }
             for role, row in value["artifacts"].items()
-            if _fixed_release not in {"main2f06", "main776"} or role == "signed"
+            if _fixed_release not in {"main2f06", "main776", "mainfc12"} or role == "signed"
         ]
     }
     native = {
@@ -89,7 +89,7 @@ def native_origin(_fixed_release):
         "artifacts": artifacts,
         "tree": {"sha": renewal.PRODUCT, "tree": {"sha": value["product_tree"]}},
     }
-    if _fixed_release in {"main2f06", "main776"}:
+    if _fixed_release in {"main2f06", "main776", "mainfc12"}:
         producer = value["source_producer"]
         source_run = {**run, "id": producer["run_id"], "event": "push"}
         native["source"] = {
@@ -143,7 +143,7 @@ def test_origin_rejects_other_material_or_borrowed_success(native_origin, fault)
         renewal.verify_origin(**native_origin)
 
 
-@pytest.mark.parametrize("_fixed_release", ["main2f06", "main776"], indirect=True)
+@pytest.mark.parametrize("_fixed_release", ["main2f06", "main776", "mainfc12"], indirect=True)
 @pytest.mark.parametrize(
     "fault", ["event", "source-head", "attempt", "job-head", "job-failure", "OCI-owner", "missing"]
 )
@@ -167,7 +167,7 @@ def test_crossrun_origin_cannot_borrow_publisher_or_another_producer(native_orig
         renewal.verify_origin(**native_origin)
 
 
-@pytest.mark.parametrize("_fixed_release", ["main2f06", "main776"], indirect=True)
+@pytest.mark.parametrize("_fixed_release", ["main2f06", "main776", "mainfc12"], indirect=True)
 @pytest.mark.parametrize("borrow_producer", [False, True])
 def test_crossrun_image_signature_binds_original_publisher_invocation(
     _fixed_release, borrow_producer, monkeypatch, tmp_path
@@ -391,7 +391,7 @@ def test_protected_workflow_signs_only_new_evidence_for_its_fixed_origin(_fixed_
             "required": True,
             "type": "choice",
             "default": "main4cb",
-            "options": ["main4cb", "main2f06", "main776"],
+            "options": ["main4cb", "main2f06", "main776", "mainfc12"],
         }
         assert workflow["env"]["RELEASE"] == "${{ inputs.release || 'main4cb' }}"
         selector = commands[commands.index('case "$RELEASE" in') : commands.index("\nesac") + 6]
