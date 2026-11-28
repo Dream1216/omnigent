@@ -25,7 +25,7 @@
   "source_intrusion_budget": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 287,
-    "max_upstream_net_added_loc": 14591,
+    "max_upstream_net_added_loc": 14652,
     "min_isolated_custom_code_ratio": 0.85
   },
   "upgrade_024_finite_approval": {
@@ -34,7 +34,18 @@
     "authority_turn": "01a1f7d0-0f8c-73e3-b220-91cdc28ff715",
     "authority_message": "01a1f7d0-100f-72a2-9d80-9a762712a75a",
     "authority_record_sha256": "dce3ded52bde2aa89d98df9b641ecefd3deeb18d6504eb473f343fe38a683644",
-    "scope": "Complete fixed 0.24 upgrade, retained private SaaS and necessary compatibility repairs; original runtime security budgets preserved."
+    "scope": "Complete fixed 0.24 upgrade, retained private SaaS and necessary compatibility repairs; original runtime security budgets preserved.",
+    "native_cli_environment_fix": {
+      "request_sha256": "e790e9136c6d95e832d924571547fec33ab4635718b912ce0bef1203c9b63e82",
+      "scope": "Requested minimal native CLI environment-field compatibility correction; original grants and isolation retained.",
+      "prior_scope_sha256": "c93a48a7178252651c2f7765fd279006749c862974a3a0d87ff119b3775c3794",
+      "changed_runtime_paths": [
+        "omnigent/harnesses/codex_native/executor_backend.py"
+      ],
+      "changed_test_paths": [
+        "tests/harnesses/codex_native/test_executor_backend.py"
+      ]
+    }
   },
   "controller_budget_scope": {
     "product_baseline": "saas/upstream-baseline.json",
@@ -42,6 +53,7 @@
     "fixed_upstream": "34570c6624af037c998dfaed774de83db72313f1",
     "current_controller_file_ceiling": 287,
     "same_final_Main_required": true,
-    "image_rebuild_or_origin_exception": false
+    "image_rebuild_or_origin_exception": false,
+    "current_controller_baseline_sha256": "3c47181ac3222c14e9435d87c4d1071915de8b4014b4c04256f22e64c522e82d"
   }
 }

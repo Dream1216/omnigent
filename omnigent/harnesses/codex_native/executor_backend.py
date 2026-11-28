@@ -38,6 +38,21 @@ from omnigent.runner.session_channels import SessionRelayChannel, session_ids_ma
 if TYPE_CHECKING:
     from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
 
+_NATIVE_CLI_LAUNCH_HINTS = frozenset(
+    {
+        "CODEX_THREAD_ID",
+        "CODEX_SANDBOX_NETWORK_DISABLED",
+        "CODEX_CI",
+        "TERM",
+        "NO_COLOR",
+        "GH_PAGER",
+        "LC_CTYPE",
+        "PAGER",
+        "COLORTERM",
+        "GIT_PAGER",
+    }
+)
+
 
 @dataclass
 class _ReadHandle:
@@ -452,11 +467,14 @@ class SessionExecutorBackend:
         requested = params.get("env", {})
         if (
             not isinstance(requested, dict)
-            or any(name not in allowed for name in requested)
             or any(not isinstance(value, str) for value in requested.values())
+            or any(
+                name not in allowed and name not in _NATIVE_CLI_LAUNCH_HINTS for name in requested
+            )
         ):
             raise ValueError("Client environment exceeds original grants")
-        env.update(requested)
+        # Ungranted native launch hints never become child environment grants.
+        env.update({name: value for name, value in requested.items() if name in allowed})
         return env
 
     async def _launch(

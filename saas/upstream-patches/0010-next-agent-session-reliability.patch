@@ -1014,10 +1014,9 @@ index 000000000..a57a06096
 +    main()
 diff --git a/omnigent/harnesses/codex_native/executor_backend.py b/omnigent/harnesses/codex_native/executor_backend.py
 new file mode 100644
-index 000000000..c0da2c48e
 --- /dev/null
 +++ b/omnigent/harnesses/codex_native/executor_backend.py
-@@ -0,0 +1,937 @@
+@@ -0,0 +1,955 @@
 +"""Session-bound required execution backend for the fixed native protocol."""
 +
 +from __future__ import annotations
@@ -1057,6 +1056,21 @@ index 000000000..c0da2c48e
 +
 +if TYPE_CHECKING:
 +    from omnigent.harnesses.codex_native.execution import CodexPrivateRuntime
++
++_NATIVE_CLI_LAUNCH_HINTS = frozenset(
++    {
++        "CODEX_THREAD_ID",
++        "CODEX_SANDBOX_NETWORK_DISABLED",
++        "CODEX_CI",
++        "TERM",
++        "NO_COLOR",
++        "GH_PAGER",
++        "LC_CTYPE",
++        "PAGER",
++        "COLORTERM",
++        "GIT_PAGER",
++    }
++)
 +
 +
 +@dataclass
@@ -1472,11 +1486,14 @@ index 000000000..c0da2c48e
 +        requested = params.get("env", {})
 +        if (
 +            not isinstance(requested, dict)
-+            or any(name not in allowed for name in requested)
 +            or any(not isinstance(value, str) for value in requested.values())
++            or any(
++                name not in allowed and name not in _NATIVE_CLI_LAUNCH_HINTS for name in requested
++            )
 +        ):
 +            raise ValueError("Client environment exceeds original grants")
-+        env.update(requested)
++        # Ungranted native launch hints never become child environment grants.
++        env.update({name: value for name, value in requested.items() if name in allowed})
 +        return env
 +
 +    async def _launch(
