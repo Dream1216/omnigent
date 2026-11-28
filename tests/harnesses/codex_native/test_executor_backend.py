@@ -131,6 +131,65 @@ def make_executor(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra_env", "accepted"),
+    [
+        ({}, True),
+        ({"LD_PRELOAD": "/untrusted/library.so"}, False),
+        ({"OPENAI_API_KEY": "ungranted"}, False),
+        ({"UNAPPROVED_CUSTOM_ENV": "ungranted"}, False),
+        ({"TERM": 7}, False),
+    ],
+)
+async def test_native_launch_hints_do_not_expand_environment_grants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authority, extra_env, accepted
+) -> None:
+    bound, channels = authority
+    executor, records, _ = make_executor(monkeypatch)
+    root = tmp_path / "backend"
+    root.mkdir(mode=0o700)
+    hints = {
+        "CODEX_THREAD_ID": str(uuid4()),
+        "CODEX_SANDBOX_NETWORK_DISABLED": "1",
+        "CODEX_CI": "1",
+        "TERM": "dumb",
+        "NO_COLOR": "1",
+        "GH_PAGER": "cat",
+        "LC_CTYPE": "C.UTF-8",
+        "PAGER": "cat",
+        "COLORTERM": "truecolor",
+        "GIT_PAGER": "cat",
+    }
+    async with httpx.AsyncClient(
+        base_url="https://original.test",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"result": "POLICY_ACTION_ALLOW"})
+        ),
+    ) as server:
+        backend = SessionExecutorBackend(bound, *channels, server, executor, root)
+        params = {
+            "processId": "native-tool",
+            "argv": ["/bin/sh", "-c", "pwd"],
+            "cwd": bound.cwd.as_uri(),
+            "env": {**hints, **extra_env},
+            "envPolicy": {"inherit": "all", "set": {}},
+        }
+        try:
+            if accepted:
+                await backend.dispatch("process/start", params)
+                plan = json.loads(backend.plans["native-tool"].read_text())
+                assert plan["env"] == dict(bound.environment)
+                assert not hints.keys() & plan["env"].keys()
+                assert plan["required"] == bound.required.to_jsonable()
+            else:
+                with pytest.raises(ValueError, match="exceeds original grants"):
+                    await backend.dispatch("process/start", params)
+                assert records == []
+        finally:
+            await backend.close()
+
+
+@pytest.mark.asyncio
 async def test_bound_backend_workspace_write_and_metadata_outside_refusal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

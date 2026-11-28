@@ -8,12 +8,23 @@
     "authority_turn": "01a1f7d0-0f8c-73e3-b220-91cdc28ff715",
     "authority_message": "01a1f7d0-100f-72a2-9d80-9a762712a75a",
     "authority_record_sha256": "dce3ded52bde2aa89d98df9b641ecefd3deeb18d6504eb473f343fe38a683644",
-    "scope": "Complete fixed 0.24 upgrade, retained private SaaS and necessary compatibility repairs; original runtime security budgets preserved."
+    "scope": "Complete fixed 0.24 upgrade, retained private SaaS and necessary compatibility repairs; original runtime security budgets preserved.",
+    "native_cli_environment_fix": {
+      "request_sha256": "e790e9136c6d95e832d924571547fec33ab4635718b912ce0bef1203c9b63e82",
+      "scope": "Requested minimal native CLI environment-field compatibility correction; original grants and isolation retained.",
+      "prior_scope_sha256": "c93a48a7178252651c2f7765fd279006749c862974a3a0d87ff119b3775c3794",
+      "changed_runtime_paths": [
+        "omnigent/harnesses/codex_native/executor_backend.py"
+      ],
+      "changed_test_paths": [
+        "tests/harnesses/codex_native/test_executor_backend.py"
+      ]
+    }
   },
   "budgets": {
     "max_active_patches": 9,
     "max_direct_upstream_files": 287,
-    "max_upstream_net_added_loc": 14591,
+    "max_upstream_net_added_loc": 14652,
     "min_isolated_custom_code_ratio": 0.85
   },
   "manifest_controls_sha256": {
@@ -278,8 +289,8 @@
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_backend.py",
-      "bytes": 39610,
-      "sha256": "180ae967a12614befb2e804c3f6d44e13065173ba0d7e799de08acac60d96436"
+      "bytes": 40097,
+      "sha256": "c045c67eb25132653ca19057ad0990d38def59e8af432a2efbd7cdc235a4d2b4"
     },
     {
       "path": "omnigent/harnesses/codex_native/executor_bwrap.py",
@@ -893,8 +904,8 @@
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_backend.py",
-      "bytes": 36351,
-      "sha256": "645fdd0da26bd6e61a1230408dfb8d08a9b4051b8e475e38bb284abff557d9c5"
+      "bytes": 38491,
+      "sha256": "a75a383ec78444f721d75b6bab9897d0ce84cf10ad460e2ee9a36c6bdef098a6"
     },
     {
       "path": "tests/harnesses/codex_native/test_executor_transport.py",
