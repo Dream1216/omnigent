@@ -1,0 +1,78 @@
+name: Aliyun glibc Linux source diagnostic
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - diagnostics/aliyun-glibc-linux/**
+      - .github/workflows/aliyun-glibc-linux-diagnostic.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aliyun-glibc-source-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  full-debian-source:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'codex/aliyun-linux-source-qualification-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        variant: [control, candidate]
+    env:
+      DIAGNOSTIC_REVISION: ${{ github.event.pull_request.head.sha }}
+      DIAGNOSTIC_VARIANT: ${{ matrix.variant }}
+    steps:
+      - name: Checkout the immutable diagnostic revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.DIAGNOSTIC_REVISION }}
+          persist-credentials: false
+      - name: Verify source and prepare public-only build context
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$DIAGNOSTIC_REVISION" ]]
+          available=$(df --output=avail -B1 "$RUNNER_TEMP" | tail -n1)
+          (( available > 18 * 1024 * 1024 * 1024 ))
+          context="$RUNNER_TEMP/glibc-public-context"
+          mkdir "$context"
+          cp -a diagnostics/aliyun-glibc-linux/. "$context/"
+          cp /etc/ssl/certs/ca-certificates.crt "$context/ca-certificates.crt"
+          mkdir "$RUNNER_TEMP/glibc-evidence"
+          chmod 0777 "$RUNNER_TEMP/glibc-evidence"
+      - name: Build the authenticated full Debian toolchain and source
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --progress=plain \
+            --tag "omnigent-glibc-diagnostic:${GITHUB_RUN_ID}" \
+            "$RUNNER_TEMP/glibc-public-context" \
+            2>&1 | tee "$RUNNER_TEMP/glibc-evidence/toolchain-build.log"
+      - name: Execute complete package build, original suites and native ABI consumers
+        timeout-minutes: 180
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network=none --cpus=2 \
+            --memory=6g --memory-swap=6g --pids-limit=4096 \
+            --security-opt=no-new-privileges:true --cap-drop=ALL \
+            --mount "type=bind,src=$RUNNER_TEMP/glibc-evidence,dst=/evidence" \
+            "omnigent-glibc-diagnostic:${GITHUB_RUN_ID}" \
+            --variant "$DIAGNOSTIC_VARIANT" --evidence /evidence
+      - name: Retain raw results, including failed or unsupported tests
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aliyun-glibc-linux-${{ env.DIAGNOSTIC_REVISION }}-${{ matrix.variant }}
+          path: ${{ runner.temp }}/glibc-evidence
+          if-no-files-found: error
+          retention-days: 3
